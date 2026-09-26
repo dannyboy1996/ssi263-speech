@@ -227,6 +227,22 @@ DEFAULTS = {
                         "Dev fricative "
                         "spectra (tools/fricative_spectra.py): S centroid 5.7 vs 5.95 kHz real; "
                         "SCH/J/HF 2.5-4 kHz as real but short of the real 4-6 kHz share"),
+    "noise_f2_injection": ("resonator", "SC01",
+                           "'resonator': the F2-path noise goes through F2's resonance (v0.12).  'shelf': "
+                           "MAME's SC-01 topology, the noise joins after F2 through a first-order shelf "
+                           "whose pole rises with F2 squared, so high-F2 fricatives (SCH, J) get less "
+                           "noise and low-F2 ones (F) more.  Reclaim 'changing' (Tomi's ear, 2026-09-26; "
+                           "blite_sweep analysis/fric_levels.py): with 'resonator' the add-on's T+SCH/D+J "
+                           "frication is +5..+11 dB and +60 ms against the unit, F -7 dB.  Python reference "
+                           "only so far: the C engine refuses 'shelf' (native.params_struct)"),
+    "noise_f2_inj_k": (259.7, "SC01",
+                       "shelf pole = k * nu_F2^2 + zero (cycles per tick): MAME's 2 pi c4 / c2t = "
+                       "2 pi 34270 / 829 for the SC-01's F2; the SSI-263's capacitors are not traced"),
+    "noise_f2_inj_zero": (0.003456, "SC01",
+                          "shelf zero, cycles per tick: MAME's c2t / (2 pi c2b) = 829 / (2 pi 38180)"),
+    "noise_f2_inj_gain": (1.0, "GUESS",
+                          "level of the F2-path noise into the shelf (the resonator's noise gain was a fit "
+                          "folded into noise_gain and noise_route_b02)"),
     "noise_gain": (0.012, "BL",
                    "noise level against the pulse train; set on dev lines (section B inv-r2 "
                    "reps 0-1) so vowels sit at the line maximum, as on the unit"),

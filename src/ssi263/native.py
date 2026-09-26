@@ -62,6 +62,9 @@ def _choice(p, name, one, choices):
 def params_struct(p):
     """params.py values -> ssi263_params.  Switches are strict: an unknown string raises."""
     s = _Params()
+    if p["noise_f2_injection"] != "resonator":
+        # not ported yet: refuse rather than silently render the old topology
+        raise ValueError("noise_f2_injection = %r: the C core knows only 'resonator'" % (p["noise_f2_injection"],))
     for name in ("xck_hz", "frame_xck_cycles", "pitch_xck_div", "glide_xck_cycles_per_count",
                  "art_amp_mult", "amp_slew_per_phoneme", "f4_ratio", "f5_ratio", "nas_f2_bw_gain",
                  "closure_delay_frames", "closure_release_frames", "closure_hold_delay_frames",

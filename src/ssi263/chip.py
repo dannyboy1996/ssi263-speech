@@ -74,6 +74,28 @@ class Resonator:
         return y
 
 
+class Shelf:
+    """First-order section H(s) = (w_z + s) / (w_p + s), H(inf) = 1, bilinear at the tick rate without
+    pre-warping (MAME's build_injection_filter: noise injected into F2 at the second op-amp, not
+    through F2's resonance).  set() takes the zero and pole in cycles per tick."""
+    __slots__ = ("a0", "a1", "b1", "x1", "y1")
+
+    def __init__(self):
+        self.a0, self.a1, self.b1 = 1.0, 0.0, 0.0
+        self.x1 = self.y1 = 0.0
+
+    def set(self, nu_z, nu_p):
+        wz, wp, m = 2 * math.pi * nu_z, 2 * math.pi * nu_p, 2.0
+        self.a0 = (wz + m) / (wp + m)
+        self.a1 = (wz - m) / (wp + m)
+        self.b1 = (wp - m) / (wp + m)
+
+    def __call__(self, x):
+        y = self.a0 * x + self.a1 * self.x1 - self.b1 * self.y1
+        self.x1, self.y1 = x, y
+        return y
+
+
 class Bandpass:
     """Two-pole band-pass, zeros at DC and fc/2, unit gain at the peak (noise shaper)."""
     __slots__ = ("g", "a1", "a2", "y1", "y2", "x1", "x2")
@@ -142,6 +164,9 @@ class SSI263:
             self.shaper = Bandpass(shp[1], shp[2])
         elif self.shaper_on:
             self.shaper.set_theta(2 * math.pi * shp[0], shp[1])
+        if self.p["noise_f2_injection"] not in ("resonator", "shelf"):
+            raise ValueError("noise_f2_injection = %r: 'resonator' or 'shelf'" % (self.p["noise_f2_injection"],))
+        self.inj = Shelf()           # F2 noise injection (params: noise_f2_injection 'shelf')
         self.hp_x1 = self.hp_y1 = 0.0
         self.out_pos = 0.0
         self.out_acc = 0.0
@@ -344,7 +369,7 @@ class SSI263:
                 self.trans = self.trans_target if abs(d) <= g else self.trans + math.copysign(g, d)
             self._latch_all()
         if True:                          # skipped output is discarded: no ringing or held samples survive it
-            for sec in list(self.sec) + [self.shaper]:
+            for sec in list(self.sec) + [self.shaper, self.inj]:
                 for attr in ("y1", "y2", "x1", "x2"):
                     if hasattr(sec, attr):
                         setattr(sec, attr, 0.0)
@@ -394,7 +419,14 @@ class SSI263:
         if changed:
             self.sec[0].set_theta(self._theta("F1", self.latch["F1"]), bw[0])
             b2 = bw[1] * (1.0 + self.p["nas_f2_bw_gain"] * self.latch["NAS"])
-            self.sec[1].set_theta(self._theta("F2", self.latch["F2"]), b2)
+            th2 = self._theta("F2", self.latch["F2"])
+            self.sec[1].set_theta(th2, b2)
+            if self.p["noise_f2_injection"] == "shelf":
+                # the shelf's pole rises with the square of F2 (MAME: w_p = fc (c1b c3 / c2t + c2t) / c2b,
+                # and F2^2 is proportional to c3), so a high F2 lets in less noise
+                nu0 = th2 / (2 * math.pi)
+                z = self.p["noise_f2_inj_zero"]
+                self.inj.set(z, self.p["noise_f2_inj_k"] * nu0 * nu0 + z)
             self.sec[2].set_theta(self._theta("F3", self.latch["F3"]), bw[2])
 
     def _run(self, max_out, stop_on_request=False):
@@ -424,6 +456,8 @@ class SSI263:
         precharge = p["fricative_precharge"]
         s1, s2, s3, s4, s5 = self.sec
         sh = self.shaper
+        inj = self.inj if p["noise_f2_injection"] == "shelf" else None
+        inj_g = p["noise_f2_inj_gain"]
         lfsr_top = p["lfsr_bits"] - 1
         lfsr_mask = (1 << p["lfsr_bits"]) - 1
         t = self._time
@@ -556,10 +590,15 @@ class SSI263:
                 if self.shaper_on:
                     nz = sh(nz)
                 # -- the cascade: F1 -> F2 (+noise) -> F3 -> F4 -> F5 (+noise) -------
-                if f5_post:
-                    x = s5(s4(s3(s2(s1(x) + n2 * nz)))) + n5 * nz
+                if inj is not None:
+                    # MAME's topology: the F2 noise enters after F2's resonance, through a shelf
+                    f2 = s2(s1(x)) + inj(inj_g * n2 * nz)
                 else:
-                    x = s5(s4(s3(s2(s1(x) + n2 * nz))) + n5 * nz)
+                    f2 = s2(s1(x) + n2 * nz)
+                if f5_post:
+                    x = s5(s4(s3(f2))) + n5 * nz
+                else:
+                    x = s5(s4(s3(f2)) + n5 * nz)
                 # -- high-pass with volume, then S/H ----------------------------------
                 hp = x - self.hp_x1 + hp_r * self.hp_y1
                 self.hp_x1, self.hp_y1 = x, hp
