@@ -157,6 +157,7 @@ class SSI263:
         self.trans_target = 0
         self.snap_pitch = False      # host request: the next CHANGE of pitch target lands at once
         self.phase = 0.0
+        self.held7 = False           # glide_field7 'freeze': the pitch is held by a field-7 write
         self.pending_pulse = 0.0
         self.gl_hist = [0.0] * len(self.p["glottal_wave"])   # recent pulse weights, newest first
         self.lfsr = 1
@@ -174,6 +175,8 @@ class SSI263:
             self.shaper.set_theta(2 * math.pi * shp[0], shp[1])
         if self.p["noise_f2_injection"] not in ("resonator", "shelf"):
             raise ValueError("noise_f2_injection = %r: 'resonator' or 'shelf'" % (self.p["noise_f2_injection"],))
+        if self.p["glide_field7"] not in ("glide", "freeze"):
+            raise ValueError("glide_field7 = %r: 'glide' or 'freeze'" % (self.p["glide_field7"],))
         self.inj = Shelf()           # F2 noise injection (params: noise_f2_injection 'shelf')
         self.hp_x1 = self.hp_y1 = 0.0
         self.out_pos = 0.0
@@ -310,6 +313,13 @@ class SSI263:
         self.imm = ((r2 >> 3) & 1) * 2048 + (r2 & 7)
         if self.mode == 3:
             new = (r1 >> 3) * 64
+            if self.p["glide_field7"] == "freeze":
+                # F01 (stacked '?', 2026-09-26): a write whose glide field is 7 holds the pitch where
+                # it is; the next write with another field lands at once (the next line starts at
+                # its base, no slide)
+                if (r1 & 7) != 7 and self.held7:
+                    self.trans = float(new)
+                self.held7 = (r1 & 7) == 7
             if self.snap_pitch and new != self.trans_target:
                 # A host feature, not chip behaviour: NVDA's capital-letter pitch must be
                 # heard on the letter, and the chip's glide would take most of it.
@@ -371,7 +381,7 @@ class SSI263:
                 self.amp_cur = self.amp_target if abs(d) <= astep else self.amp_cur + math.copysign(astep, d)
             self.clo = 0.0 if self.closing else 1.0
             d = self.trans_target - self.trans
-            if d:
+            if d and not self.held7:
                 rate = self.regs[2] >> 4
                 g = (p["glide_field_mult"][self.regs[1] & 7] * self.xck
                      / (p["glide_xck_cycles_per_count"] * (16 - rate))) * seconds
@@ -522,7 +532,7 @@ class SSI263:
                     if d:
                         self.amp_cur = self.amp_target if abs(d) <= astep else self.amp_cur + math.copysign(astep, d)
                 d = self.trans_target - self.trans
-                if d:
+                if d and not self.held7:
                     rate = self.regs[2] >> 4
                     gstep = (mult[self.regs[1] & 7] * self.xck
                              / (p["glide_xck_cycles_per_count"] * (16 - rate))) * dt

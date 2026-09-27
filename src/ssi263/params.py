@@ -38,6 +38,15 @@ DEFAULTS = {
     "glide_xck_cycles_per_count": (128, "BL",
                                    "field 0: one I count per 128 (16 - R) XCK cycles; "
                                    "slope x (16 - R) = 61-62 ms/s measured (candidate law)"),
+    "glide_field7": ("glide", "GUESS",
+                     "'freeze': an R1 write whose glide field (bits 2-0) is 7 holds the transitioned pitch where it "
+                     "is, and the next write with another field lands at once.  F01 (stacked '?', pitch 32 rate 10): "
+                     "the 5th '?' wraps R1 to 07h; the unit holds flat at ~535-560 Hz and the next line starts AT "
+                     "base 122 Hz with no slide, where 'glide' (field 7 = 2.462) keeps sliding.  'glide': the old "
+                     "behaviour.  EXPERIMENTAL and not right yet: at pitch 33 the FIRST '?' writes field 7 "
+                     "(9Fh) and the unit rose normally, and with a 6th '?' (22h, field 2) the unit keeps holding "
+                     "until the line-end reset, where 'freeze' snaps early.  The hold looks tied to the wrap "
+                     "onto target 0 (07h), not to field 7 (2026-09-28).  Python only; the C core refuses it"),
     "glide_field_mult": ((1.000, 0.962, 1.226, 2.462, 2.092, 2.462, 2.462, 2.462), "BL+ACCENT",
                          "fields 0 1 2 4 5 measured at rate 2 (4.46 4.29 5.47 9.33 10.98 ms/s; "
                          "direction confounded).  Fields 3 6 7 (only the Accent uses them: field 7 "
