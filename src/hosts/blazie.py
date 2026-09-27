@@ -54,8 +54,8 @@ class Blazie:
         """`board_lowpass_hz`: a roll-off after the chip that matches the unit's line out (None: off).
         The unit's line out has ~3 dB less at 4-8 kHz and ~12 dB less at 8-16 kHz than the chip
         model; a first-order 5 kHz low-pass matches it (octave error 4.6 -> 1.2 dB on Reclaim's
-        first sentence; Tomi's ear, 2026-09-27).  Fitted, not traced: whether it is the board's
-        output stage, the headphone socket or the recording chain is unknown (the Artic sample
+        first sentence; Tomi's ear, 2026-09-27).  Fitted, not traced: it may compensate for the
+        board's output stage, the headphone socket, the recording chain or chip-model error (the Artic sample
         schematic's AO network corners near 224 Hz, so it is no support).  Not the chip model."""
         self.chip = chip or SSI263(out_rate=out_rate)
         self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
