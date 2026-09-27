@@ -39,6 +39,9 @@ FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
 STATE = os.path.join(_ENGINE_DIR, "bl2_2003_warm.state")
 UNIT_VOLUME = 6         # the unit's factory volume; NVDA's slider is applied digitally
 MAKEUP = 2.0            # +6 dB so volume 6 sits at a normal level
+# The unit's own output roll-off after the chip (hosts/blazie.py): first order at 5 kHz matched
+# its line out on Reclaim and the MASTER sentences, and won Tomi's A/B ("9E really wins").
+BOARD_LOWPASS_HZ = 5000.0
 # Factory settings after a warm reset (MASTER, confirmed on tape): rate 11, tone 7, and
 # r1 = 45h (81.4 Hz, the pitch of Tomi's Braille 'n Speak 2000 recording).  NVDA's slider
 # midpoints map onto them, and nothing is sent until a slider moves.
@@ -345,7 +348,8 @@ class SynthDriver(SynthDriver):
         # 8M/10M (tools/boot_gaps.py); below a 2.5M start it never reaches speech-box mode.
         # The emulator is deterministic, so this holds on every machine.
         unit = Blazie(EXE, FIRMWARE, STATE, chip=SSI263C(out_rate=OUT_RATE), out_rate=OUT_RATE,
-                      menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000)
+                      menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
+                      board_lowpass_hz=BOARD_LOWPASS_HZ)
         unit.send(b"\x18")
         unit.send(b"\r\x06")
         unit.run(0.3)

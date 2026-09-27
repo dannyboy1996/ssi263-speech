@@ -57,7 +57,7 @@ SWITCHES = [
     {"fricative_precharge": False},
     {"lookahead_lead_frames": 1.5},
     {"closure_onto_silence": False},
-    {"field_speed_mult": (2.25, 1.0, 1.0, 1.0, 1.0, 1.0)},
+    {"field_speed_mult": (1.0,) * 6, "glottal_wave": (1.0,)},          # v0.12's source and speeds
     {"field_speed_mult": (0.7, 1.3, 1.0, 2.0, 0.5, 1.5)},
     {"glottal_wave": sc01_glottal_wave(4)},
     {"glottal_wave": (0.0, 0.5, -0.25), "field_speed_mult": (2.25, 1.0, 1.0, 1.0, 1.0, 1.0)},

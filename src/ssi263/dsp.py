@@ -26,6 +26,12 @@ def get(name=None):
     return _backends[name]
 
 
+def onepole_coeffs(hz, fs):
+    """First-order low-pass, bilinear with prewarping: scipy's butter(1, hz, fs=fs) as (b0, b1, a1)."""
+    k = math.tan(math.pi * hz / fs)
+    return k / (1.0 + k), k / (1.0 + k), (k - 1.0) / (k + 1.0)
+
+
 def _numpy():
     try:
         import numpy
@@ -66,6 +72,32 @@ class _Numpy:
         np = self.np
         return (np.clip(np.asarray(y) * gain, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
 
+    def onepole(self, hz, fs):
+        return _PyOnePole(self.np, hz, fs)
+
+
+class _PyOnePole:
+    """The reference for ssi_onepole: the same recurrence, sample by sample."""
+
+    def __init__(self, np, hz, fs):
+        self.np = np
+        self.b0, self.b1, self.a1 = onepole_coeffs(hz, fs)
+        self.reset()
+
+    def reset(self):
+        self.x1 = self.y1 = 0.0
+
+    def process(self, block):
+        out = self.np.array(block, dtype=self.np.float64)
+        b0, b1, a1, x1, y1 = self.b0, self.b1, self.a1, self.x1, self.y1
+        for i in range(len(out)):
+            x = out[i]
+            y1 = b0 * x + b1 * x1 - a1 * y1
+            x1 = x
+            out[i] = y1
+        self.x1, self.y1 = x1, y1
+        return out
+
 
 class _NumpyDecimator:
     def __init__(self, np, fir, os_):
@@ -102,6 +134,9 @@ class _C:
                                          ctypes.POINTER(ctypes.c_double), ctypes.c_int,
                                          ctypes.POINTER(ctypes.c_double), ctypes.POINTER(ctypes.c_int),
                                          ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        lib.ssi_onepole.restype = None
+        lib.ssi_onepole.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_double,
+                                    ctypes.c_double, ctypes.c_double, ctypes.POINTER(ctypes.c_double)]
         lib.ssi_pcm16.restype = None
         lib.ssi_pcm16.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int, ctypes.c_double,
                                   ctypes.POINTER(ctypes.c_short)]
@@ -124,6 +159,9 @@ class _C:
     def decimator(self, fir, os_):
         return _CDecimator(self.lib, fir, os_)
 
+    def onepole(self, hz, fs):
+        return _COnePole(self.lib, hz, fs)
+
     def zeros(self):
         return array("d")
 
@@ -141,6 +179,23 @@ class _C:
         dst = array("h", bytes(2 * n))
         self.lib.ssi_pcm16(_ptr(src, ctypes.c_double), n, gain, _ptr(dst, ctypes.c_short))
         return dst.tobytes()
+
+
+class _COnePole:
+    def __init__(self, lib, hz, fs):
+        self.lib = lib
+        self.b0, self.b1, self.a1 = onepole_coeffs(hz, fs)
+        self.state = array("d", [0.0, 0.0])
+
+    def reset(self):
+        self.state = array("d", [0.0, 0.0])
+
+    def process(self, block):
+        out = array("d", block)
+        if len(out):
+            self.lib.ssi_onepole(_ptr(out, ctypes.c_double), len(out), self.b0, self.b1, self.a1,
+                                 _ptr(self.state, ctypes.c_double))
+        return out
 
 
 class _CDecimator:

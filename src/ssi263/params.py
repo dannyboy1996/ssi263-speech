@@ -13,6 +13,17 @@ A parameter set is a plain dict, so a fit or an alternative reading is just a
 dict of overrides.  Nothing in chip.py may hard-code a number that belongs here.
 """
 
+def _glottal_9e():
+    """v0.13's voice source: 0.8 of the impulse plus 0.2 of MAME's SC-01 glottal wave (4 filter-clock
+    ticks per level), the wave normalised to unit area first (chip.sc01_glottal_wave builds the same)."""
+    levels = (0.0, -4 / 7, 1.0, 6 / 7, 5 / 7, 4 / 7, 3 / 7, 2 / 7, 1 / 7)
+    wave = [v for v in levels for _ in range(4)]
+    area = sum(wave)
+    out = [0.2 * v / area for v in wave]
+    out[0] += 0.8
+    return tuple(out)
+
+
 DEFAULTS = {
     # ---- clock and timing ------------------------------------------------------
     "xck_hz": (1_000_000.0, "BL",
@@ -45,14 +56,15 @@ DEFAULTS = {
                             "the frame clock (A: 'all internal attribute transitioning is performed "
                             "relative to the Speech Rate Register').  Setting 5 = 4.0 (berry and very, dev); the "
                             "other settings are GUESS"),
-    "field_speed_mult": ((1.0, 1.0, 1.0, 1.0, 1.0, 1.0), "GUESS",
+    "field_speed_mult": ((2.25, 1.0, 1.0, 1.0, 1.0, 1.0), "BL+EAR",
                          "per-field transition speed, times art_codes_per_frame (and art_amp_mult for VA/FA), "
-                         "in chip.FIELDS order (F1, F2, F3, NAS, VA, FA).  All 1.0 = v0.12.  Lead (Tomi's ear, "
+                         "in chip.FIELDS order (F1, F2, F3, NAS, VA, FA).  All 1.0 = v0.12.  v0.13: F1 2.25 "
+                         "alone fixes 'file' (AH -> E step -1.7 dB vs the unit's -0.9) with F2 untouched; Tomi: "
+                         "'you fixed it!' (2026-09-26).  Lead (Tomi's ear, "
                          "2026-09-26, blite_sweep analysis/va_law2.py): on the unit 'file' stays even where ours "
                          "jumps at AH -> E, and its F1 is at AH's height from the vowel's start while F2 glides "
                          "smoothly; speeding ALL fields (articulation 5: 4.0 -> 9.0) fixed the jump but made F2 "
-                         "step audibly ('staircase', 'flutter' in 'engineering').  Python reference only: the "
-                         "C engine refuses anything but all 1.0 (native.params_struct)"),
+                         "step audibly ('staircase', 'flutter' in 'engineering').  In the C core since 0a64e64"),
     "art_amp_mult": (6.0, "BL",
                      "VA and FA counters move this many times faster than the formant counters: "
                      "x3 is MAME's SC-01 tick ratio (amplitudes 625 Hz, formants 208 Hz).  Dev "
@@ -201,12 +213,15 @@ DEFAULTS = {
     # ---- sources ------------------------------------------------------------------
     "pulse_place": ("fractional", "GUESS",
                     "glottal pulse split between the two nearest fc samples, or 'nearest'"),
-    "glottal_wave": ((1.0,), "GUESS",
+    "glottal_wave": (_glottal_9e(), "BL+EAR",
                      "the voice source's shape, one level per filter-clock tick after each pitch "
                      "pulse, normalised to the pulse's area (unity gain at DC).  (1.0,) = the "
                      "impulse the engine has always used.  MAME's SC-01 wave (0, -4/7, 1, 6/7 ... "
-                     "1/7, each level held 4 ticks) is sc01_glottal_wave(4).  Experimental, "
-                     "Python only: the C core refuses anything but (1.0,)"),
+                     "1/7, each level held 4 ticks) is sc01_glottal_wave(4).  v0.13: 0.8 impulse + 0.2 "
+                     "of that wave (area-normalised), chosen with the Braille Lite's 5 kHz board roll-off "
+                     "(hosts/blazie.py) on Reclaim's first sentence (dev): octave error vs the unit 4.6 -> "
+                     "1.2 dB; the MAME wave alone cut 1-4 kHz by 4-6 dB (too dark).  Tomi's A/B: '9E really "
+                     "wins' (2026-09-27).  In the C core since 0a64e64"),
     "va_law": ("linear15", "SC01", "gain = VA / 15 (the law chip.py uses; not switchable yet)"),
     "fa_law": ("linear15", "SC01", "gain = FA / 15 (the law chip.py uses; not switchable yet)"),
     "lfsr_bits": (15, "SC01", "noise shift register length"),

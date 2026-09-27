@@ -49,8 +49,15 @@ def boot_keys(menu=(), start=None, gap=None):
 
 
 class Blazie:
-    def __init__(self, exe, firmware, state, chip=None, out_rate=44100, menu=(), key_start=None, key_gap=None):
+    def __init__(self, exe, firmware, state, chip=None, out_rate=44100, menu=(), key_start=None, key_gap=None,
+                 board_lowpass_hz=None):
+        """`board_lowpass_hz`: the Braille Lite's own output roll-off, after the chip (None: off).
+        The unit's line out has ~3 dB less at 4-8 kHz and ~12 dB less at 8-16 kHz than the chip
+        model; a first-order 5 kHz low-pass matches it (octave error 4.6 -> 1.2 dB on Reclaim's
+        first sentence, 4.4 -> 3.0 on six MASTER sentences; Tomi's ear, 2026-09-27).  It is the
+        board's, like the smoothing RC on AO in SSI-263 application circuits -- not the chip's."""
         self.chip = chip or SSI263(out_rate=out_rate)
+        self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
         keys, boot_instr = boot_keys(menu, key_start, key_gap)
         for c in keys:
@@ -216,4 +223,5 @@ class Blazie:
             speed = self.turbo if self.preparing else 1.0
             self._cmd("R %d" % max(1, int(CLOCK_HZ * dt * speed)))
             t += dt
-        return self.chip.dsp.concat(out)
+        y = self.chip.dsp.concat(out)
+        return self.board.process(y) if self.board else y

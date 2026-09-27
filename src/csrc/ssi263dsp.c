@@ -63,3 +63,20 @@ EXPORT void ssi_pcm16(const double *y, int n, double gain, short *out)
         out[i] = (short)(v * 32767.0);
     }
 }
+
+/* A first-order low-pass, bilinear (as scipy's butter(1, hz, fs=...)), in place, its state
+   [x1, y1] carried between blocks.  For a device's own output stage -- the Braille Lite's
+   smoothing roll-off (hosts/blazie.py), not the chip. */
+EXPORT void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state)
+{
+    int i;
+    double x1 = state[0], y1 = state[1];
+    for (i = 0; i < n; i++) {
+        double y = b0 * x[i] + b1 * x1 - a1 * y1;
+        x1 = x[i];
+        y1 = y;
+        x[i] = y;
+    }
+    state[0] = x1;
+    state[1] = y1;
+}
