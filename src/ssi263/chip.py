@@ -182,6 +182,8 @@ class SSI263:
         self.out_acc = 0.0
         self.pend_v = 0.0            # held value not yet fully emitted (host block boundary)
         self.pend_rem = 0.0
+        self.pend_cl = 0.0           # clock-line amplitude and tick length of that held sample (clock_line_rel_db)
+        self.pend_dt = 0.0
         # host-rate output: area-sample the held S/H value at os x the host rate,
         # then low-pass and decimate, as a DAC/ADC chain would (no image folding)
         self.os = int(self.p["output_oversample"])
@@ -397,7 +399,7 @@ class SSI263:
             self.gl_hist = [0.0] * len(self.gl_hist)
             # the host-rate stage still holds audio from before the skip: drop it too
             self.dec.reset()
-            self.pend_v = self.pend_rem = 0.0
+            self.pend_v = self.pend_rem = self.pend_cl = 0.0
             self.out_acc = self.out_pos = 0.0
         self._time += seconds
         if end_now:
@@ -469,6 +471,9 @@ class SSI263:
         c8 = 0.1 * 10 ** (p["carrier_rel_db"] / 20.0)
         c4 = c8 * 10 ** (p["carrier_h2_db"] / 20.0)
         carrier_off = p["carrier_when_powered_down"]
+        # the fc line (clock_line_rel_db): A sin(2 pi u / dt) over each tick, u the time into the tick
+        cl_amp = 0.0 if p["clock_line_rel_db"] is None else 0.1 * math.sqrt(2.0) * 10 ** (p["clock_line_rel_db"] / 20.0)
+        cl_guard = 0.45 * self.out_rate * self.os
         gain = p["output_gain"]
         clo_va = p["closure_target"] == "va"
         clo_pre_hp = p["closure_point"] == "before_hp"
@@ -492,9 +497,14 @@ class SSI263:
         t = self._time
         # finish the held sample a previous call stopped inside
         rem, v = self.pend_rem, self.pend_v
+        ca, cdt = self.pend_cl, self.pend_dt
         while rem > 0.0 and len(out) < max_out:
             take = min(rem, to - self.out_pos)
             self.out_acc += v * take
+            if ca:
+                u = cdt - rem
+                self.out_acc += ca * cdt / (2 * math.pi) * (math.cos(2 * math.pi * u / cdt)
+                                                            - math.cos(2 * math.pi * (u + take) / cdt))
             self.out_pos += take
             rem -= take
             if self.out_pos >= to - 1e-15:
@@ -656,15 +666,21 @@ class SSI263:
             if powered or carrier_off:
                 k = self.tick & 7
                 v += c8 * math.sin(2 * math.pi * k / 8.0) + c4 * math.sin(2 * math.pi * k / 4.0)
+            ca = cl_amp if (cl_amp and (powered or carrier_off) and fc < cl_guard) else 0.0
             self.tick += 1
             # -- area-sample the held value to the host rate ------------------------
             rem = dt
             while rem > 0.0:
                 if len(out) >= max_out:
                     self.pend_v, self.pend_rem = v, rem
+                    self.pend_cl, self.pend_dt = ca, dt
                     break
                 take = min(rem, to - self.out_pos)
                 self.out_acc += v * take
+                if ca:
+                    u = dt - rem
+                    self.out_acc += ca * dt / (2 * math.pi) * (math.cos(2 * math.pi * u / dt)
+                                                               - math.cos(2 * math.pi * (u + take) / dt))
                 self.out_pos += take
                 rem -= take
                 if self.out_pos >= to - 1e-15:

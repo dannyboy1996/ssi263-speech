@@ -299,6 +299,15 @@ DEFAULTS = {
                        "-57 to -66 dB, the same at volumes 2, 4, 6 (so after the volume stage)"),
     "carrier_h2_db": (-10.0, "BL", "fc/4 line re the fc/8 line"),
     "carrier_when_powered_down": (False, "GUESS", "A: power-down turns the analog circuits off"),
+    "clock_line_rel_db": (None, "GUESS",
+                          "None: off.  A value: a line at the filter clock fc itself, RMS in dB re a loud vowel (as "
+                          "carrier_rel_db), phase-locked to each clock tick: one Fourier component of the sub-tick "
+                          "switching interference seen on Tomi's unit (W01: the fc line in every speech gap, tones 1-21; "
+                          "Astra Reply 61: a whole-tick held value cannot carry fc, so it is integrated exactly inside the "
+                          "area sampling, outside the hold).  Added only while fc < 0.45 x the fine rate (out_rate x "
+                          "output_oversample), so it cannot alias into 11 or 22 kHz output; at those rates it is never in "
+                          "band.  An empirical, per-device experiment (Reply 62), not a claimed oscillator.  Python only; "
+                          "the C core refuses it"),
     "output_oversample": (4, "GUESS", "area-sampling rate / host rate before the anti-alias FIR"),
     "output_lowpass_hz": (20000.0, "GUESS",
                           "anti-alias cutoff of the host-rate conversion (a listener's DAC/ADC)"),

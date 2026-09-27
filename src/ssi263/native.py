@@ -68,6 +68,8 @@ def params_struct(p):
         raise ValueError("noise_f2_injection = %r: the C core knows only 'resonator'" % (p["noise_f2_injection"],))
     if p["closure_point"] != "after_hp":
         raise ValueError("closure_point = %r: the C core knows only 'after_hp'" % (p["closure_point"],))
+    if p["clock_line_rel_db"] is not None:
+        raise ValueError("clock_line_rel_db = %r: the C core has no clock line" % (p["clock_line_rel_db"],))
     if p["closure_noise_lead_ms"] is not None:
         raise ValueError("closure_noise_lead_ms = %r: the C core has no bounded precharge" % (p["closure_noise_lead_ms"],))
     wave = tuple(p["glottal_wave"])
