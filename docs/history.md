@@ -209,7 +209,7 @@ study the analog side on a real chip.
 - **Engine v0.13, by ear.** F1 now glides 2.25 times as fast, which fixed a jump Tomi heard in
   "file" without making F2 step. The voice source became 0.8 of the old impulse plus 0.2 of
   MAME's SC-01 stepped glottal wave. After it, the Braille Lite add-on applies a gentle
-  5 kHz roll-off, the unit's own line-out filter. Against the unit's long-term spectrum the
+  5 kHz roll-off that matches the unit's line out (where that roll-off comes from isn't traced). Against the unit's long-term spectrum the
   error fell from 4.6 to 1.2 dB. Tomi's verdict on the A/B: "9E really wins."
 
 ## Engine versions at a glance

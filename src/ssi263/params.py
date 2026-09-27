@@ -218,7 +218,7 @@ DEFAULTS = {
                      "pulse, normalised to the pulse's area (unity gain at DC).  (1.0,) = the "
                      "impulse the engine has always used.  MAME's SC-01 wave (0, -4/7, 1, 6/7 ... "
                      "1/7, each level held 4 ticks) is sc01_glottal_wave(4).  v0.13: 0.8 impulse + 0.2 "
-                     "of that wave (area-normalised), chosen with the Braille Lite's 5 kHz board roll-off "
+                     "of that wave (area-normalised), chosen with a 5 kHz roll-off after the chip "
                      "(hosts/blazie.py) on Reclaim's first sentence (dev): octave error vs the unit 4.6 -> "
                      "1.2 dB; the MAME wave alone cut 1-4 kHz by 4-6 dB (too dark).  Tomi's A/B: '9E really "
                      "wins' (2026-09-27).  In the C core since 0a64e64"),
