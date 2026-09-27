@@ -190,6 +190,28 @@ study the analog side on a real chip.
   under x64 emulation, patched it, and a tester confirmed it on their ARM machine.
 - **Public.** The repository went public with the 0.5.0 add-ons.
 
+## 2026-09-26 and 27: listeners, a new die image, and a fuller voice
+
+- **A faster top rate.** A listener found the Braille Lite "quite slow, even at rate 100 %".
+  The firmware takes its rate command modulo 16, so rate 16 spoke at rate 10's speed. The
+  top of NVDA's scale is now rate 15.
+- **Two tester reports, both found in the code.** With number processing on, "$25" lost its
+  "dollars": the digits became words first, and the firmware drops a "$" in front of words.
+  Money now goes to the firmware as it is. And an utterance's last syllable sometimes came
+  out with the next one. A slider fuzz test showed why: a cancel after the unit had finished
+  left its flush line held, and the next utterance then ended at its first long pause.
+- **A second, sharper die photo.** siliconpr0n's SSI-263P map (photograph by Ogun, 2011,
+  CC BY-SA) is about three times the resolution of the Visual6502 image. Astra found
+  countable unit-capacitor arrays in it; Claude checked the counts from separate crops.
+  They are counts, not yet capacitor ratios.
+- **The clock lines, confirmed.** In the unit's idle output, lines at fc/4 and 15fc/64 sit
+  within 0.1 Hz of the prediction at 22 of the 25 tones.
+- **Engine v0.13, by ear.** F1 now glides 2.25 times as fast, which fixed a jump Tomi heard in
+  "file" without making F2 step. The voice source became 0.8 of the old impulse plus 0.2 of
+  MAME's SC-01 stepped glottal wave. After it, the Braille Lite add-on applies a gentle
+  5 kHz roll-off, the unit's own line-out filter. Against the unit's long-term spectrum the
+  error fell from 4.6 to 1.2 dB. Tomi's verdict on the A/B: "9E really wins."
+
 ## Engine versions at a glance
 
 | Version | Heard by | Change |
@@ -206,6 +228,7 @@ study the analog side on a real chip.
 | v0.10 | Astra's predicted consequence | Burst and aspiration rule; closure scaled to length |
 | v0.11 | Tomi: "program", "manager" | Early release only into an open phoneme |
 | v0.12 | A listener: a click in "still" | A stop that starts on silence closes at once |
+| v0.13 | Tomi: the jump in "file"; the unit's fuller low end | F1 glides ×2.25; a partly stepped voice source; the Braille Lite's 5 kHz roll-off |
 
 ## Add-on releases at a glance
 
@@ -228,6 +251,7 @@ with each release.
 | 0.3.5 | Tomi: the Braille Lite stopped mid-post | Long lines no longer end speech early; **the Accent-mini joins** as a third add-on |
 | 0.3.6–0.4.0 | Tomi: the Accent-mini froze while scrolling, and went silent after a variant change | Accent-mini only: both freezes fixed, numbers as words, faster long items, first sound in about 25 ms instead of 600 |
 | 0.5.0 | Tomi, and listeners | **The Accent SA** as a second Accent voice; engine v0.11 and v0.12; Windows on ARM fixed; the repository goes public |
+| 0.6.0 | Tomi, a listener, and a tester | Engine v0.13; the Braille Lite's top rates fixed, its dollar amounts read, and no utterance cut short after a cancel |
 
 ## Withdrawn along the way
 

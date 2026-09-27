@@ -16,7 +16,7 @@ import zipfile
 
 from build_common import NVDA_RANGE, check_native, copy_engine, repo_paths, rm, zip_build
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 ENGINE = os.path.join(REPO, "src")

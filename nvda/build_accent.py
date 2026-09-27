@@ -15,7 +15,7 @@ import sys
 from build_common import IGN, NVDA_RANGE, check_native, copy_engine, copy_unicorn_license, rm, zip_build
 from build_speakout import UNICORN_BUILD
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 ENGINE = os.path.join(REPO, "src")
