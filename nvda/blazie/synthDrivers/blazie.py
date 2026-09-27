@@ -62,6 +62,29 @@ def _clean(text):
     return "".join(out)
 
 
+def _numbers(text):
+    """Numbers as words, except money: the firmware says "$25" as "twenty five dollars" and
+    "$1,234.56" with its cents, but drops a "$" in front of words, so "$twenty five" was
+    "twenty five" (a tester, 0.5.0).  Dollar amounts go to the firmware as they are, up to
+    $999,999,999,999; from a trillion up the firmware says "billion" (measured), so those
+    become words here."""
+    parts = numwords.MONEY.split(text)
+    return "".join(_money(p) if k % 2 else numwords.normalise(p) for k, p in enumerate(parts))
+
+
+def _money(amount):
+    whole, _, cents = amount[1:].partition(".")
+    whole = whole.replace(",", "")
+    if len(whole.lstrip("0")) <= 12:
+        return amount
+    out = numwords.normalise(whole) + " dollars"
+    if len(cents) == 2:
+        out += " " + numwords.cardinal(int(cents)) + " cents"
+    elif cents:
+        out += " point " + numwords.digits(cents)
+    return out
+
+
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -101,6 +124,10 @@ def _lines(text, max_words=14, pack=True):
 
 LEAD_THRESHOLD = 0.003      # chip output; the idle carrier is ~1e-4, speech ~0.1-0.7
 LEAD_PREROLL = 220          # samples (5 ms) kept before the first sound
+
+
+def _nothing():
+    """onDone for the end-of-utterance flush: the call is what matters, not the callback."""
 
 
 def _trim_lead(y):
@@ -402,9 +429,9 @@ class SynthDriver(SynthDriver):
                 continue
             text = _clean(value)
             if self._numbers:
-                # the firmware says 5 digits and up one digit at a time: 12345 is "one two
-                # three four five", 1,234,567 "one two three four five six seven"
-                text = numwords.normalise(text)
+                # with the add-on's boot the firmware counts to 999,999,999,999 and says a
+                # trillion as "one billion" (measured); this is for those
+                text = _numbers(text)
             lines = _lines(text, pack=self._short)
             if not lines:
                 continue
@@ -431,11 +458,18 @@ class SynthDriver(SynthDriver):
                 if not unit.busy():
                     self._pitch_dirty = False    # the unit has read everything sent so far
                     break
-        if not self._cancelFlag.is_set() and self._queue.empty():
-            try:
+        if self._cancelFlag.is_set():
+            return
+        try:
+            if self._queue.empty():
                 self._player.idle()
-            except Exception:
-                pass
+            else:
+                # NVDA 2021-2023's buffered player holds blocks until it has 300 ms of them,
+                # unless a feed carries onDone: without this the last one waited there
+                # and came out at the head of the next utterance (a tester, 0.5.0)
+                self._player.feed(b"", onDone=_nothing)
+        except Exception:
+            pass
 
     def _resend_pitch(self):
         """A cancel drops whatever the unit has not read yet, pitch commands with it: a

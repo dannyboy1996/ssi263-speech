@@ -16,7 +16,6 @@ This add-on carries Aicom's driver and firmware; see AICOM.txt beside them.
 
 import os
 import queue
-import re
 import sys
 import threading
 import time
@@ -74,16 +73,13 @@ def _clean(text):
     return "".join(out)
 
 
-_MONEY = re.compile(r"(\$\d[\d,]*(?:\.\d+)?|\$\.\d+)")
-
-
 def _numbers(text):
     """Numbers as words.  The Accent reads 100 as "one zero zero" and anything of five
     digits or more digit by digit; only comma-grouped numbers get hundreds and thousands
     (manual 4.1.4).  Dollar amounts stay with the Accent, which reads them properly
     ("$30.50": "thirty dollars and fifty cents", 4.1.3) once the dollars carry the commas
     it counts by: "$6723" alone is "six seven two three dollars"."""
-    parts = _MONEY.split(text)
+    parts = numwords.MONEY.split(text)
     return "".join(_grouped(p) if k % 2 else numwords.normalise(p) for k, p in enumerate(parts))
 
 
@@ -97,6 +93,10 @@ def _grouped(money):
 
 LEAD_THRESHOLD = 0.003      # chip output; the idle carrier is ~1e-4, speech ~0.1-0.7
 LEAD_PREROLL = 220          # samples (5 ms) kept before the first sound
+
+
+def _nothing():
+    """onDone for the end-of-utterance flush: the call is what matters, not the callback."""
 
 
 def _trim_lead(y):
@@ -524,11 +524,18 @@ class SynthDriver(SynthDriver):
                                 % (quiet, box.state()))
                     raise RuntimeError("card stalled")
             _dbg("item %s: %d blocks, %.2f s audio" % (why, blocks, audio))
-        if not self._cancelFlag.is_set() and self._queue.empty():
-            try:
+        if self._cancelFlag.is_set():
+            return
+        try:
+            if self._queue.empty():
                 self._player.idle()
-            except Exception:
-                pass
+            else:
+                # NVDA 2021-2023's buffered player holds blocks until it has 300 ms of them,
+                # unless a feed carries onDone: without this the last one waited there
+                # and came out at the head of the next utterance (a tester, 0.5.0)
+                self._player.feed(b"", onDone=_nothing)
+        except Exception:
+            pass
 
     def _resend_pitch(self):
         """A cancel drops whatever the driver has not taken yet, pitch commands with it;

@@ -223,12 +223,22 @@ def digits(s, lang="en"):
 #: hundred ninety two point one six eight.0.1" -- half converted, which is
 #: worse than either extreme.  A bare `.5` is deliberately not matched either,
 #: because it cannot be told apart from the end of a sentence.
+#: A full stop after a number is allowed (`(?!\.\w)`, not `(?![\w.])`): a
+#: sentence ending "1,234,567." fell through to the plain-digits branch at
+#: "234,567" and was read "one thousand two hundred thirty four,five hundred
+#: sixty seven", and one ending "3.5." was not read as a number at all.
 _NUMBER = re.compile(r"""
     (?P<ord>  (?<![\w.])  \d+ (?:st|nd|rd|th)  \b )
-  | (?P<num>  (?<![\w.])  -? \d{1,3}(?:,\d{3})+ (?:\.\d+)? (?![\w.])
-            | (?<![\w.])  -? \d+  \.\d+                    (?![\w.])
-            | (?<![\w.])  -? \d+                           (?![\w])  (?!\.\d) )
+  | (?P<num>  (?<![\w.])  -? \d{1,3}(?:,\d{3})+ (?:\.\d+)? (?!\w) (?!\.\w)
+            | (?<![\w.])  -? \d+  \.\d+                    (?!\w) (?!\.\w)
+            | (?<![\w.])  -? \d+                           (?!\w) (?!\.\d) )
 """, re.VERBOSE | re.IGNORECASE)
+
+#: A dollar amount: "$25", "$1,234.56", "$.50".  `normalise` does not treat
+#: money specially; a driver whose firmware reads money itself splits these
+#: out first.  (Words after a "$" lose it: the Braille Lite reads "$twenty
+#: five" as "twenty five".)
+MONEY = re.compile(r"(\$\d[\d,]*(?:\.\d+)?|\$\.\d+)")
 
 
 def normalise(text, spell_out=False, lang="en"):

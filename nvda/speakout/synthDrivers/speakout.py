@@ -54,6 +54,10 @@ LEAD_THRESHOLD = 0.003      # chip output; the idle carrier is ~1e-4, speech ~0.
 LEAD_PREROLL = 220          # samples (5 ms) kept before the first sound
 
 
+def _nothing():
+    """onDone for the end-of-utterance flush: the call is what matters, not the callback."""
+
+
 def _trim_lead(y):
     """Drop the silence at the head of an utterance: the unit reading its line and a stop's
     closure are silent, and a listener hears them only as delay.  Returns (audio, found)."""
@@ -346,11 +350,18 @@ class SynthDriver(SynthDriver):
                 if not box.busy():
                     self._pitch_dirty = False    # the box has read everything sent so far
                     break
-        if not self._cancelFlag.is_set() and self._queue.empty():
-            try:
+        if self._cancelFlag.is_set():
+            return
+        try:
+            if self._queue.empty():
                 self._player.idle()
-            except Exception:
-                pass
+            else:
+                # NVDA 2021-2023's buffered player holds blocks until it has 300 ms of them,
+                # unless a feed carries onDone: without this the last one waited there
+                # and came out at the head of the next utterance (a tester, 0.5.0)
+                self._player.feed(b"", onDone=_nothing)
+        except Exception:
+            pass
 
     def _resend_pitch(self):
         """A cancel drops whatever the box has not read yet, pitch commands with it: a
