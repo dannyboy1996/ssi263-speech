@@ -14,10 +14,10 @@ import subprocess
 import sys
 import zipfile
 
-from build_common import NVDA_RANGE, check_native, copy_engine, repo_paths, rm, zip_build
+from build_common import read_manifest, check_native, copy_engine, repo_paths, rm, zip_build
 
-VERSION = "0.6.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
+MANIFEST, VERSION = read_manifest(os.path.join(HERE, "blazie"))   # nvda/blazie/manifest.ini
 REPO = os.path.dirname(HERE)
 ENGINE = os.path.join(REPO, "src")
 Z180 = repo_paths.external("Z180EMU")
@@ -31,20 +31,6 @@ LINK = ["-O3", "-fcommon", "-std=gnu89", "-static", "-s"]
 BUILD = os.path.join(HERE, "dist", "blazie-build")
 OBJ = os.path.join(HERE, "dist", "bns32-obj")
 OUT = os.path.join(HERE, "dist", "blazie-ssi263-%s.nvda-addon" % VERSION)
-
-MANIFEST = f'''name = blazie_ssi263
-summary = "Braille Lite / Braille 'n Speak (SSI-263 emulation)"
-description = """A Blazie Braille Lite 2000 in speech-box mode, emulated: the unit's own June 2003 firmware runs in z180emu and drives a register-level model of the Silicon Systems SSI-263 speech chip, whose A/R request drives the firmware back. The rules, number reading and inflection are the firmware's own, live. Nothing is recorded or concatenated.
-
-Settings map to the unit's own: rate 1-16, pitch 1-63, tone 1-25 as the variant; the defaults are the unit's factory settings (rate 11, pitch 16, tone 7). Volume is applied digitally.
-
-Runs on NVDA 2021.1 and later, 32- or 64-bit, Windows 7 and later; no numpy and no Visual C++ runtime needed.
-
-This add-on carries the Braille Lite's own firmware, shared with permission. It is not ours; it is here so the unit can speak again, and it will be removed if its rights holders ask. z180emu is GPLv2; its complete source for this build is included as z180emu-source.zip. Source: https://github.com/tgeczy/ssi263-speech"""
-author = "tgeczy (SSI-263 chip engine and driver, with Claude)"
-url = "https://github.com/tgeczy/ssi263-speech"
-version = {VERSION}
-''' + NVDA_RANGE
 
 
 def build_bns32(out_exe):

@@ -10,30 +10,16 @@ import os
 import shutil
 import sys
 
-from build_common import IGN, NVDA_RANGE, check_native, copy_engine, copy_unicorn_license, rm, zip_build
+from build_common import IGN, read_manifest, check_native, copy_engine, copy_unicorn_license, rm, zip_build
 
-VERSION = "0.6.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
+MANIFEST, VERSION = read_manifest(os.path.join(HERE, "speakout"))   # nvda/speakout/manifest.ini
 REPO = os.path.dirname(HERE)
 ENGINE = os.path.join(REPO, "src")
 FIRMWARE = os.path.join(REPO, "firmware", "gw-micro-speakout", "SPEAKOUT.HEX")
 
 BUILD = os.path.join(HERE, "dist", "speakout-build")
 OUT = os.path.join(HERE, "dist", "speakout-ssi263-%s.nvda-addon" % VERSION)
-
-MANIFEST = f'''name = speakout_ssi263
-summary = "Speak-Out (SSI-263 emulation)"
-description = """The 1995 Speak-Out talking box, emulated: its own firmware (letter-to-sound rules, numbers, settings) runs inside NVDA and drives a register-level model of the Silicon Systems SSI-263 speech chip. Nothing is recorded or concatenated; the chip model generates the sound.
-
-Settings map to the box's own: rate 0-9, pitch 0-9, and tone A-Z as the variant (default I). Volume is applied digitally, with the box at full volume.
-
-Runs on NVDA 2021.1 and later, 32- or 64-bit, Windows 7 and later; no numpy and no Visual C++ runtime needed.
-
-This add-on carries the Speak-Out's own firmware (hardware Daniel Weirich, software Douglas Geoffray, GW Micro). It is not ours; it is here so the box can speak again, and it will be removed if its rights holders ask. The firmware runs in Unicorn (GPLv2; see UNICORN-BUILD.txt). Source: https://github.com/tgeczy/ssi263-speech"""
-author = "tgeczy (SSI-263 chip engine and driver, with Claude)"
-url = "https://github.com/tgeczy/ssi263-speech"
-version = {VERSION}
-''' + NVDA_RANGE
 
 UNICORN_BUILD = """unicorn.dll (bin/x64, bin/x86): Unicorn 2.1.4, GPLv2, x86 core only, static.
 

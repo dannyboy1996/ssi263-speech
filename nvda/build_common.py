@@ -6,6 +6,7 @@ add-on loads in NVDA 2021.1 on Windows 7 (32-bit Python 3.7) up to NVDA 2026 (64
 Python 3.13).  check_native() refuses to package anything else.
 """
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -21,7 +22,17 @@ FORMATS = {"x64": "pei-x86-64", "x86": "pei-i386"}
 # research-only modules left out of the add-ons (drivers.py needs csv, absent from NVDA 2021-2023)
 IGN = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "drivers.py")
 
-NVDA_RANGE = "minimumNVDAVersion = 2021.1\nlastTestedNVDAVersion = 2026.1\n"
+
+
+def read_manifest(addon_dir):
+    """An add-on's manifest.ini, kept in its own folder (nvda/<name>/manifest.ini) so add-on crawlers
+    find it in the repo; the build copies it into the package as is.  Returns (text, version)."""
+    with open(os.path.join(addon_dir, "manifest.ini"), encoding="utf-8") as f:
+        text = f.read()
+    m = re.search(r"^version\s*=\s*(\S+)\s*$", text, re.M)
+    if not m:
+        raise SystemExit("%s: no version line in manifest.ini" % addon_dir)
+    return text, m.group(1)
 
 
 def rm(path):
