@@ -193,6 +193,8 @@ class SSI263:
         self.fir = self.dsp.firwin(48 * self.os + 1, cutoff, fs=self.out_rate * self.os)
         self.dec = self.dsp.decimator(self.fir, self.os)
         self.log = []                # (time_s, event) for sidecars
+        self.noise_lead_log = []     # (time_s, phoneme, lead_s) per stop, closure_noise_lead_ms only
+        self.lead_logged = False
         self._time = 0.0
         self._set_fixed_sections()
         self._latch_all(force=True)
@@ -300,6 +302,7 @@ class SSI263:
             self.g2 = max(self.g2, prev_fa * pw2)
             self.g5 = max(self.g5, prev_fa * pw5)
         self.released = False
+        self.lead_logged = False
         self.early_req = False
         self.apply_due = False
         self.pending = []
@@ -472,6 +475,7 @@ class SSI263:
         look = p["release_lookahead"]
         lead = p["lookahead_lead_frames"]
         precharge = p["fricative_precharge"]
+        noise_lead = None if p["closure_noise_lead_ms"] is None else p["closure_noise_lead_ms"] / 1000.0
         s1, s2, s3, s4, s5 = self.sec
         sh = self.shaper
         fmult = dict(zip(FIELDS, p["field_speed_mult"]))
@@ -605,6 +609,17 @@ class SSI263:
                             if pe is not None and pe["closure_clear"] and pe["FA"] > 0:
                                 w = p["noise_route_b02"][pe["class2"]] if p["noise_route"] == "b02" else (self.w2, self.w5)
                                 t2, t5 = pe["FA"] * w[0], pe["FA"] * w[1]
+                        elif (noise_lead is not None and look and self.releases and not self.released
+                              and self.elapsed >= (self.duration - p["closure_release_frames"] * frame * scale
+                                                   - noise_lead)
+                              and self._pending_open()):
+                            # Astra (Reply 59): a bounded precharge, the stop's own noise building behind
+                            # the closed gate over its last noise_lead before the release point
+                            t2, t5 = self.target["FA"] * self.w2, self.target["FA"] * self.w5
+                            if not self.lead_logged:
+                                self.lead_logged = True
+                                self.noise_lead_log.append((round(t, 6), self.phoneme, round(
+                                    self.duration - p["closure_release_frames"] * frame * scale - self.elapsed, 6)))
                     elif (burst_hold is not None and self.closing and self.releases
                           and self.elapsed >= self.duration - (p["closure_release_frames"] - burst_hold) * frame * scale):
                         t2, t5 = t2 * p["burst_tail_level"], t5 * p["burst_tail_level"]

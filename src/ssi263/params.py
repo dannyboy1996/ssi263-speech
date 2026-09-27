@@ -208,6 +208,13 @@ DEFAULTS = {
                       "so far) or 'before_hp', so the tract's DC steps at closure and release pass through the "
                       "output high-pass as a short transient (Astra Reply 58, Q1: a candidate for the unit's B "
                       "release burst with FA 0).  Experimental; Python only; the C core refuses 'before_hp'"),
+    "closure_noise_lead_ms": (None, "GUESS",
+                              "None: a releasing stop's noise is held at zero until its release (closure_noise_at_release).  "
+                              "A value: the stop's own noise may build behind the closed gate over the last this-many ms "
+                              "before the release point, once the pending phoneme is known to be open (Astra Reply 59: a "
+                              "bounded precharge; the unbounded one, closure_noise_at_release=False, clicked in 'status' "
+                              "to Tomi's ear).  Capped by the lookahead: the effective lead per stop is in "
+                              "chip.noise_lead_log.  Experimental; Python only; the C core refuses it"),
     "closure_ramp_ms": (4.0, "GUESS", "ramp time down (closure) and back up (next phoneme)"),
     "closure_reopen": (False, "BL",
                        "True: a closure phoneme reopens the tract during its delay (the cloud "
