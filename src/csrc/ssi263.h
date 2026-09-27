@@ -78,7 +78,12 @@ typedef struct ssi263_params {
     double late_release_burst;           /* a held stop's noise is the burst at the next load */
     double fricative_precharge;          /* a stop held before a fricative charges its noise */
     double closure_onto_silence;         /* a closure loaded onto silence closes at once */
+    double field_speed_mult[6];          /* per-field transition speed: F1 F2 F3 NAS VA FA */
+    double glottal_n;                    /* glottal_wave: length, 1..SSI263_GLOTTAL_MAX */
+    double glottal_wave[64];             /* levels per filter-clock tick; (1.0) = impulse */
 } ssi263_params;
+
+#define SSI263_GLOTTAL_MAX 64
 
 /* One ROM entry per phoneme code 0-63, 9 bytes: F1 F2 F3 NAS VA FA (4-bit fields as
    read by the candidate decode), then the flags closure_clear (b00), class1 (b01),

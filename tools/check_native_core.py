@@ -22,7 +22,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 from ssi263 import SSI263                 # noqa: E402
-from ssi263.chip import FIELDS            # noqa: E402
+from ssi263.chip import FIELDS, sc01_glottal_wave   # noqa: E402
 from ssi263.native import SSI263C         # noqa: E402
 
 AUDIO_TOL = 1e-9          # absolute, on samples of order 0.1-1
@@ -57,6 +57,14 @@ SWITCHES = [
     {"fricative_precharge": False},
     {"lookahead_lead_frames": 1.5},
     {"closure_onto_silence": False},
+    {"field_speed_mult": (2.25, 1.0, 1.0, 1.0, 1.0, 1.0)},
+    {"field_speed_mult": (0.7, 1.3, 1.0, 2.0, 0.5, 1.5)},
+    {"glottal_wave": sc01_glottal_wave(4)},
+    {"glottal_wave": (0.0, 0.5, -0.25), "field_speed_mult": (2.25, 1.0, 1.0, 1.0, 1.0, 1.0)},
+    {"glottal_wave": tuple([0.8 + 0.2 * v / sum(sc01_glottal_wave(4)) if i == 0
+                            else 0.2 * v / sum(sc01_glottal_wave(4))
+                            for i, v in enumerate(sc01_glottal_wave(4))]),
+     "field_speed_mult": (2.25, 1.0, 1.0, 1.0, 1.0, 1.0)},
 ]
 
 

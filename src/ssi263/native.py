@@ -49,6 +49,7 @@ class _Params(ctypes.Structure):
         ("release_lookahead", _c_double), ("lookahead_lead_frames", _c_double),
         ("late_release_burst", _c_double), ("fricative_precharge", _c_double),
         ("closure_onto_silence", _c_double),
+        ("field_speed_mult", _c_double * 6), ("glottal_n", _c_double), ("glottal_wave", _c_double * 64),
     ]
 
 
@@ -65,10 +66,14 @@ def params_struct(p):
     if p["noise_f2_injection"] != "resonator":
         # not ported yet: refuse rather than silently render the old topology
         raise ValueError("noise_f2_injection = %r: the C core knows only 'resonator'" % (p["noise_f2_injection"],))
-    if tuple(p["field_speed_mult"]) != (1.0,) * 6:
-        raise ValueError("field_speed_mult = %r: the C core knows only all 1.0" % (tuple(p["field_speed_mult"]),))
-    if tuple(p["glottal_wave"]) != (1.0,):
-        raise ValueError("glottal_wave: the C core knows only the impulse (1.0,)")
+    wave = tuple(p["glottal_wave"])
+    if not 1 <= len(wave) <= 64:
+        raise ValueError("glottal_wave: 1 to 64 levels, got %d" % len(wave))
+    for i, v in enumerate(p["field_speed_mult"]):
+        s.field_speed_mult[i] = v
+    s.glottal_n = float(len(wave))
+    for i, v in enumerate(wave):
+        s.glottal_wave[i] = v
     for name in ("xck_hz", "frame_xck_cycles", "pitch_xck_div", "glide_xck_cycles_per_count",
                  "art_amp_mult", "amp_slew_per_phoneme", "f4_ratio", "f5_ratio", "nas_f2_bw_gain",
                  "closure_delay_frames", "closure_release_frames", "closure_hold_delay_frames",

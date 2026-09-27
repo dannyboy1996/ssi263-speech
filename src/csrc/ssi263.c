@@ -49,6 +49,9 @@ struct ssi263 {
     int trans_target;
     int snap_pitch;
     double phase, pending_pulse;
+    int gw_n, shaped;                 /* glottal_wave: length, and whether it is not the impulse */
+    double gw[SSI263_GLOTTAL_MAX];    /* the wave normalised to unity DC gain */
+    double gl_hist[SSI263_GLOTTAL_MAX]; /* recent pulse weights, newest first */
     unsigned long long lfsr;          /* Python's int is unbounded; lfsr_bits up to 63 here */
     double noise_phase, noise_val;
     unsigned long long tick;
@@ -344,6 +347,19 @@ SSI263_API ssi263 *ssi263_new(const ssi263_params *p, const unsigned char *rom, 
         return NULL;
     c->p = *p;
     memcpy(c->rom, rom, SSI263_ROM_BYTES);
+    c->gw_n = (int)p->glottal_n;
+    if (c->gw_n < 1 || c->gw_n > SSI263_GLOTTAL_MAX)
+        c->gw_n = 1;
+    c->shaped = !(c->gw_n == 1 && p->glottal_wave[0] == 1.0);
+    {
+        double area = 0.0;                      /* summed in order, as chip.py's sum() */
+        for (i = 0; i < c->gw_n; i++)
+            area += p->glottal_wave[i];
+        if (area == 0.0)
+            area = 1.0;
+        for (i = 0; i < c->gw_n; i++)
+            c->gw[i] = p->glottal_wave[i] / area;
+    }
     c->out_rate = out_rate;
     c->xck = p->xck_hz;
     c->regs[3] = 0x80;                               /* A: CTL set at power-up */
@@ -532,7 +548,7 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
             for (f = 0; f < NFIELDS; f++) {
                 d = c->target[f] - c->cur[f];
                 if (d != 0.0) {
-                    double st = (f == VA || f == FA) ? step * amp_mult : step;
+                    double st = ((f == VA || f == FA) ? step * amp_mult : step) * p->field_speed_mult[f];
                     c->cur[f] = fabs(d) <= st ? (double)c->target[f] : c->cur[f] + copysign(st, d);
                 }
             }
@@ -597,6 +613,16 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
                 ph -= n;
             }
             c->phase = ph;
+            if (c->shaped) {
+                /* the source wave, restarted by every pulse: a FIR over the pulse weights */
+                double acc = 0.0;
+                int j;
+                memmove(&c->gl_hist[1], &c->gl_hist[0], sizeof(double) * (size_t)(c->gw_n - 1));
+                c->gl_hist[0] = pulse;
+                for (j = 0; j < c->gw_n; j++)
+                    acc += c->gw[j] * c->gl_hist[j];
+                pulse = acc;
+            }
             x = pulse * la[VA] / 15.0;
             if (clo_va)
                 x *= c->clo;
@@ -734,7 +760,7 @@ SSI263_API void ssi263_skip(ssi263 *c, double seconds)
         frame = p->frame_xck_cycles * (16 - (c->regs[2] >> 4)) / c->xck;
         step = p->art_codes_per_frame[(c->regs[3] >> 4) & 7] * seconds / frame;
         for (f = 0; f < NFIELDS; f++) {
-            double st = (f == VA || f == FA) ? step * p->art_amp_mult : step;
+            double st = ((f == VA || f == FA) ? step * p->art_amp_mult : step) * p->field_speed_mult[f];
             d = c->target[f] - c->cur[f];
             c->cur[f] = fabs(d) <= st ? (double)c->target[f] : c->cur[f] + copysign(st, d);
         }
@@ -761,6 +787,7 @@ SSI263_API void ssi263_skip(ssi263 *c, double seconds)
     c->shaper.y1 = c->shaper.y2 = c->shaper.x1 = c->shaper.x2 = 0.0;
     c->hp_x1 = c->hp_y1 = 0.0;
     c->pending_pulse = 0.0;
+    memset(c->gl_hist, 0, sizeof c->gl_hist);
     memset(c->fir_tail, 0, sizeof(double) * (size_t)c->ntaps);
     c->pend_v = c->pend_rem = 0.0;
     c->out_acc = c->out_pos = 0.0;
