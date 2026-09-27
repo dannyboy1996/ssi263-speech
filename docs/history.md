@@ -33,6 +33,13 @@ way, and those withdrawals are part of the record too.
 - **1984.** Silicon Systems' SSI-263 is described at ISSCC (Maeding, Austin and Maimone).
   It descends from Votrax's SC-01, and Votrax sells it as the SC-02. The chip photographed
   later is marked "SSI 263P / P 8404".
+- **1991.** The Braille 'n Speak 640 ships, around October, and work begins on the
+  pronunciation fixes in its firmware, reaching users in the first updates (1991 or summer
+  1992). **Cathy Hall** wrote them. Few people outside the company knew her work, and a
+  former colleague asked, in 2026, that her name be recorded. Heading the list of
+  mispronounced words she was given was "David", then said with a short a. The June 2003
+  Braille Lite firmware this project runs still carries her fix: "David" comes out
+  D A A E V I D, with a long a.
 - **Visual6502.org** photographs an SSI-263P die from chips an anonymous donor sent: Greg
   James shoots 203 images, Christian Sattler stitches them, and a 7000 × 5803 picture goes
   online with the data sheets.
