@@ -60,5 +60,7 @@ for first, second in ((94, 95), (95, 94)):
         after = [p for t, p in loads if t == "B"]
         text_a = " ".join(p for t, p in loads if t == "A" and not p.startswith("<"))
         text_b = " ".join(after[1:])
-        print("rate %d -> %d, cancel at %.2f s:\n   A: %s\n   B: %s" % (first, second, delay, text_a, text_b))
+        print("rate %d -> %d, cancel at %.2f s" % (first, second, delay))
+        print("   A = %s" % text_a)
+        print("   B = %s" % text_b)
 d.terminate()
