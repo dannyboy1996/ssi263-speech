@@ -212,6 +212,20 @@ study the analog side on a real chip.
   5 kHz roll-off that matches the unit's line out (where that roll-off comes from isn't traced). Against the unit's long-term spectrum the
   error fell from 4.6 to 1.2 dB. Tomi's verdict on the A/B: "9E really wins."
 
+## 2026-09-28: the unit's two speech-box modes, and listeners in an A/B
+
+- **Two ways into speech-box mode.** All six dots without space enters it in word mode, which
+  was Tomi's habit and how the MASTER recordings were made. Space plus all six dots, then L,
+  gives line mode, which is what the add-on uses. A short recording in each mode (M03, the same
+  30 lines, predictions written down first) settled an old puzzle. In word mode almost every "?"
+  rise and "." fall is lost, and sentences come out with about twice as much silence. In line
+  mode every question rises and every statement falls, and the add-on's pitch and timing follow
+  the unit through them. The "questions never rise" finding from MASTER was the mode, not the
+  chip.
+- **Listeners compared the unit and the add-on word by word** (M04, Tomi's clip). Several said
+  they doubt they could tell them apart blind. Their precise notes are nearly all about stops
+  (B, G, final T and D), which is the next thing being measured.
+
 ## Engine versions at a glance
 
 | Version | Heard by | Change |
