@@ -245,25 +245,25 @@ if WHICH == "blazie":
              "ok" if rate_ok else "FAILED"))
     d._set_rate(50)
 
-# the "Higher sample rate" check box: checked (22 kHz) by default, 11 kHz unchecked; each gets its own player and the
-# same speech (length and level)
+# the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402
-srate_default = d._out_rate == 22050 and d._get_higherSampleRate() is True
+srate_default = d._out_rate == 22050 and d._get_sampleRate() == "22050"
 srate = {}
-for v, r in ((True, 22050), ("False", 11025), ("True", 22050), (False, 11025)):   # strings: an older config
-    d._set_higherSampleRate(v)
+for r in ("11025", "22050", "44100"):
+    d._set_sampleRate(r)
     mark = len(notified)
     d.speak(["Hello there, this is a sample rate test."])
     ok = wait_idle()
     pcm = array("h", b"".join(d._player.chunks))
-    rms = (sum(x * x for x in pcm) / max(1, len(pcm))) ** 0.5
-    srate[(str(v), r)] = (ok, d._player.rate, len(pcm) / float(r), rms)
-ref = srate[("False", 11025)]
-srate_ok = srate_default and d._get_higherSampleRate() is False and all(
-    ok and rate == r and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
-    for (v, r), (ok, rate, secs, rms) in srate.items())
-print("sample rate: default 22 kHz %s; %s: %s" % (srate_default, ", ".join("%s->%d %.2f s rms %.0f" % (k[0], k[1], x[2], x[3])
-                                                                     for k, x in srate.items()), "ok" if srate_ok else "FAILED"))
+    rms = (sum(v * v for v in pcm) / max(1, len(pcm))) ** 0.5
+    srate[r] = (ok, d._player.rate, len(pcm) / float(r), rms)
+d._set_sampleRate("8000")                      # not offered: ignored
+ref = srate["44100"]
+srate_ok = srate_default and d._get_sampleRate() == "44100" and all(
+    ok and rate == int(r) and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
+    for r, (ok, rate, secs, rms) in srate.items())
+print("sample rate: default 22 kHz %s; %s: %s" % (srate_default, ", ".join("%s %.2f s rms %.0f" % (r, v[2], v[3])
+                                                                     for r, v in srate.items()), "ok" if srate_ok else "FAILED"))
 
 # cancel mid-sentence, then speak again
 mark = len(notified)
