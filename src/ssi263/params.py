@@ -203,6 +203,11 @@ DEFAULTS = {
     "closure_target": ("vol", "ISSCC",
                        "'vol' (ISSCC draws closure ramp -> VOL) or 'va' (voiced path only); "
                        "neither fits every stop on dev levels (see tools/compare_dev.py)"),
+    "closure_point": ("after_hp", "GUESS",
+                      "where the closure gain (closure_target 'vol') multiplies the output: 'after_hp' (the engine "
+                      "so far) or 'before_hp', so the tract's DC steps at closure and release pass through the "
+                      "output high-pass as a short transient (Astra Reply 58, Q1: a candidate for the unit's B "
+                      "release burst with FA 0).  Experimental; Python only; the C core refuses 'before_hp'"),
     "closure_ramp_ms": (4.0, "GUESS", "ramp time down (closure) and back up (next phoneme)"),
     "closure_reopen": (False, "BL",
                        "True: a closure phoneme reopens the tract during its delay (the cloud "

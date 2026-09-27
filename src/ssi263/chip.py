@@ -172,6 +172,8 @@ class SSI263:
             self.shaper = Bandpass(shp[1], shp[2])
         elif self.shaper_on:
             self.shaper.set_theta(2 * math.pi * shp[0], shp[1])
+        if self.p["closure_point"] not in ("after_hp", "before_hp"):
+            raise ValueError("closure_point = %r: 'after_hp' or 'before_hp'" % (self.p["closure_point"],))
         if self.p["noise_f2_injection"] not in ("resonator", "shelf"):
             raise ValueError("noise_f2_injection = %r: 'resonator' or 'shelf'" % (self.p["noise_f2_injection"],))
         self.inj = Shelf()           # F2 noise injection (params: noise_f2_injection 'shelf')
@@ -461,6 +463,7 @@ class SSI263:
         carrier_off = p["carrier_when_powered_down"]
         gain = p["output_gain"]
         clo_va = p["closure_target"] == "va"
+        clo_pre_hp = p["closure_point"] == "before_hp"
         look = p["release_lookahead"]
         lead = p["lookahead_lead_frames"]
         precharge = p["fricative_precharge"]
@@ -622,10 +625,14 @@ class SSI263:
                 else:
                     x = s5(s4(s3(f2)) + n5 * nz)
                 # -- high-pass with volume, then S/H ----------------------------------
+                if clo_pre_hp and not clo_va:
+                    # Astra (Reply 58, Q1): the closure gate BEFORE the output high-pass, so its steps
+                    # on the tract's DC level pass through the high-pass as a release transient
+                    x *= self.clo
                 hp = x - self.hp_x1 + hp_r * self.hp_y1
                 self.hp_x1, self.hp_y1 = x, hp
                 amp = round(self.amp_cur) / 15.0
-                v = gain * hp * amp * (1.0 if clo_va else self.clo)
+                v = gain * hp * amp * (1.0 if (clo_va or clo_pre_hp) else self.clo)
             if powered or carrier_off:
                 k = self.tick & 7
                 v += c8 * math.sin(2 * math.pi * k / 8.0) + c4 * math.sin(2 * math.pi * k / 4.0)

@@ -66,6 +66,8 @@ def params_struct(p):
     if p["noise_f2_injection"] != "resonator":
         # not ported yet: refuse rather than silently render the old topology
         raise ValueError("noise_f2_injection = %r: the C core knows only 'resonator'" % (p["noise_f2_injection"],))
+    if p["closure_point"] != "after_hp":
+        raise ValueError("closure_point = %r: the C core knows only 'after_hp'" % (p["closure_point"],))
     wave = tuple(p["glottal_wave"])
     if not 1 <= len(wave) <= 64:
         raise ValueError("glottal_wave: 1 to 64 levels, got %d" % len(wave))
