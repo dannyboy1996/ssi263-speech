@@ -24,7 +24,7 @@ import traceback
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from autoSettingsUtils.utils import StringParameterInfo
-from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from logHandler import log
 import speech.commands
 
@@ -150,7 +150,7 @@ class SynthDriver(SynthDriver):
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digit-by-digit numbers)", defaultVal=True),
-        DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
+        BooleanDriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=False),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -179,7 +179,8 @@ class SynthDriver(SynthDriver):
         self._pitch_dirty = False
         self._snap_until_speech = False
         self._sent = DEFAULTS   # the driver boots with these; nothing is sent until one changes
-        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
+        self._higher = rates.saved(self.name)
+        self._out_rate = self._want_rate = rates.rate(self._higher)   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -310,15 +311,13 @@ class SynthDriver(SynthDriver):
         if v in {str(n) for n in range(10)}:
             self._voice_char = v
 
-    def _get_availableSamplerates(self):
-        return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
+    def _get_higherSampleRate(self):
+        return self._higher
 
-    def _get_sampleRate(self):
-        return str(self._want_rate)
-
-    def _set_sampleRate(self, v):
+    def _set_higherSampleRate(self, v):
         # the worker applies it before the next utterance: new player, card rebooted at the new rate
-        self._want_rate = rates.parse(v) or self._want_rate
+        self._higher = rates.parse(v)
+        self._want_rate = rates.rate(self._higher)
 
     def _get_availableVoices(self):
         names = dict(VOICES)

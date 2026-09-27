@@ -17,7 +17,7 @@ import threading
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from autoSettingsUtils.utils import StringParameterInfo
-from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from logHandler import log
 import speech.commands
 
@@ -91,7 +91,7 @@ class SynthDriver(SynthDriver):
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("shortPauses", "S&horten pauses between sentences", defaultVal=True),
-        DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
+        BooleanDriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=False),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -111,7 +111,8 @@ class SynthDriver(SynthDriver):
         self._snap_until_speech = False
         self._tone = "i"      # box tone i, its default
         self._sent = None     # settings last sent to the box
-        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
+        self._higher = rates.saved(self.name)
+        self._out_rate = self._want_rate = rates.rate(self._higher)   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -230,15 +231,13 @@ class SynthDriver(SynthDriver):
         if v in TONES:
             self._tone = v
 
-    def _get_availableSamplerates(self):
-        return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
+    def _get_higherSampleRate(self):
+        return self._higher
 
-    def _get_sampleRate(self):
-        return str(self._want_rate)
-
-    def _set_sampleRate(self, v):
+    def _set_higherSampleRate(self, v):
         # the worker applies it before the next utterance: new player, box rebooted at the new rate
-        self._want_rate = rates.parse(v) or self._want_rate
+        self._higher = rates.parse(v)
+        self._want_rate = rates.rate(self._higher)
 
     def _get_availableVoices(self):
         return {"speakout": VoiceInfo("speakout", "Speak-Out", "en")}
