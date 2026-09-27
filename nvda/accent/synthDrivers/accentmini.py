@@ -24,7 +24,7 @@ import traceback
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from autoSettingsUtils.utils import StringParameterInfo
-from autoSettingsUtils.driverSetting import BooleanDriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting
 from logHandler import log
 import speech.commands
 
@@ -37,12 +37,12 @@ from ._ssi263_accent.accent_host import Accent
 from ._ssi263_accent.accent_sa_host import AccentSA
 from ._ssi263_accent.ssi263.native import SSI263C      # the chip in C
 from ._ssi263_accent import ssi263_numwords as numwords
+from ._ssi263_accent import ssi263_rates as rates
 
 # Developer switch: True writes a step-by-step "Accent:" trace to NVDA's log (at debug level)
 # and starts a thread that reports a stuck worker.  Off for everyone else; not a setting.
 DEBUG_LOG = False
 
-OUT_RATE = 44100
 BLOCK_S = 0.03
 DRIVER = os.path.join(_ENGINE_DIR, "SPKEMS.DVC")
 STATE = os.path.join(_ENGINE_DIR, "SPKEMS.state")
@@ -150,6 +150,7 @@ class SynthDriver(SynthDriver):
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digit-by-digit numbers)", defaultVal=True),
+        DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -178,6 +179,7 @@ class SynthDriver(SynthDriver):
         self._pitch_dirty = False
         self._snap_until_speech = False
         self._sent = DEFAULTS   # the driver boots with these; nothing is sent until one changes
+        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -192,7 +194,7 @@ class SynthDriver(SynthDriver):
 
     def _makePlayer(self):
         import config
-        base = dict(channels=1, samplesPerSec=OUT_RATE, bitsPerSample=16)
+        base = dict(channels=1, samplesPerSec=self._out_rate, bitsPerSample=16)
         try:
             from nvwave import AudioPurpose
             purpose = {"purpose": AudioPurpose.SPEECH}
@@ -308,6 +310,16 @@ class SynthDriver(SynthDriver):
         if v in {str(n) for n in range(10)}:
             self._voice_char = v
 
+    def _get_availableSamplerates(self):
+        return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
+
+    def _get_sampleRate(self):
+        return str(self._want_rate)
+
+    def _set_sampleRate(self, v):
+        # the worker applies it before the next utterance: new player, card rebooted at the new rate
+        self._want_rate = rates.parse(v) or self._want_rate
+
     def _get_availableVoices(self):
         names = dict(VOICES)
         return {v: VoiceInfo(v, names[v], "en") for v in self._present()}
@@ -359,18 +371,30 @@ class SynthDriver(SynthDriver):
         t = time.monotonic()
         model = self._model
         if model == "sa":
-            box = AccentSA(SA_ROMS, chip=SSI263C(out_rate=OUT_RATE), out_rate=OUT_RATE)
+            box = AccentSA(SA_ROMS, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
             box.keep_writes = False
             box.trace = lambda msg: _dbg("SA: " + msg)
             box.boot()
         else:
-            box = Accent(DRIVER, chip=SSI263C(out_rate=OUT_RATE), out_rate=OUT_RATE)
+            box = Accent(DRIVER, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
             box.keep_writes = False
             box.trace = lambda msg: _dbg("card: " + msg)
             box.boot(state=self._saved_state())
         self._booted = model
         _dbg("%s booted in %.0f ms" % (model, (time.monotonic() - t) * 1e3))
         return box
+
+    def _switch_rate(self):
+        """A new sample rate: the chip renders at the host rate, so a new player and a rebooted card."""
+        self._out_rate = self._want_rate
+        old, self._player = self._player, self._makePlayer()
+        try:
+            old.close()
+        except Exception:
+            pass
+        self._box = self._boot()
+        self._sent = DEFAULTS
+        self._pitch_dirty = False
 
     @staticmethod
     def _saved_state():
@@ -400,6 +424,12 @@ class SynthDriver(SynthDriver):
             if job is None:
                 break
             self._cancelFlag.clear()
+            if self._want_rate != self._out_rate:
+                self._set_phase("switching sample rate")
+                try:
+                    self._switch_rate()
+                except Exception:
+                    log.error("Accent: could not switch the sample rate", exc_info=True)
             if self._model != self._booted:
                 self._set_phase("switching voice")
                 try:
@@ -500,7 +530,7 @@ class SynthDriver(SynthDriver):
                 self._set_phase("running the card")
                 y = box.run(BLOCK_S)
                 blocks += 1
-                audio += len(y) / float(OUT_RATE)
+                audio += len(y) / float(self._out_rate)
                 if self._lead:
                     y, found = _trim_lead(y)
                     self._lead = not found

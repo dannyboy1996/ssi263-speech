@@ -83,6 +83,7 @@ sys.modules["autoSettingsUtils"] = asu
 sys.modules["autoSettingsUtils.utils"] = asu_utils
 asu_ds = types.ModuleType("autoSettingsUtils.driverSetting")
 asu_ds.BooleanDriverSetting = lambda *a, **k: None
+asu_ds.DriverSetting = lambda *a, **k: None
 sys.modules["autoSettingsUtils.driverSetting"] = asu_ds
 lh = types.ModuleType("logHandler")
 

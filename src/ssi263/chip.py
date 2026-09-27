@@ -185,7 +185,12 @@ class SSI263:
         # host-rate output: area-sample the held S/H value at os x the host rate,
         # then low-pass and decimate, as a DAC/ADC chain would (no image folding)
         self.os = int(self.p["output_oversample"])
-        self.fir = self.dsp.firwin(48 * self.os + 1, self.p["output_lowpass_hz"], fs=self.out_rate * self.os)
+        # at host rates below 40 kHz (11025, 22050) the cutoff would sit past the host Nyquist
+        # and alias: hold it at 90 % of Nyquist there (44.1 kHz is unchanged)
+        cutoff = self.p["output_lowpass_hz"]
+        if cutoff >= 0.5 * self.out_rate:
+            cutoff = 0.45 * self.out_rate
+        self.fir = self.dsp.firwin(48 * self.os + 1, cutoff, fs=self.out_rate * self.os)
         self.dec = self.dsp.decimator(self.fir, self.os)
         self.log = []                # (time_s, event) for sidecars
         self._time = 0.0

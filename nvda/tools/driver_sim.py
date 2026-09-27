@@ -33,6 +33,7 @@ import types      # noqa: E402
 class FakePlayer:
     def __init__(self, *a, **k):
         self.kwargs = sorted(k)
+        self.rate = k.get("samplesPerSec")
         self.chunks, self.events, self.lock = [], [], threading.Lock()
         self.samples = 0
         self.feeds = []            # (wall time, samples) per non-empty feed
@@ -95,7 +96,7 @@ module("synthDriverHandler", SynthDriver=Base, VoiceInfo=lambda *a: a,
        synthIndexReached=Notifier("index"), synthDoneSpeaking=Notifier("done"))
 module("autoSettingsUtils")
 module("autoSettingsUtils.utils", StringParameterInfo=lambda *a: a)
-module("autoSettingsUtils.driverSetting", BooleanDriverSetting=lambda *a, **k: None)
+module("autoSettingsUtils.driverSetting", BooleanDriverSetting=lambda *a, **k: None, DriverSetting=lambda *a, **k: None)
 
 
 class _Log:
@@ -162,7 +163,7 @@ if WHICH == "both":
         n0 = len(d._player.chunks)
         d.speak(["Hello from the %s." % w])
         ok = wait_idle()
-        audio = sum(len(c) for c in d._player.chunks[n0:]) / 2 / 44100.0
+        audio = sum(len(c) for c in d._player.chunks[n0:]) / 2 / float(d._player.rate)
         d.terminate()
         print("both: %-8s chip from %s (own %s), spoke %.2f s, done %s"
               % (w, m.SSI263C.__module__, own, audio, ok))
@@ -198,7 +199,7 @@ def scenario(label, seq, setup=None):
     open(fn, "wb").write(pcm)
     results.append({"label": label, "ok": ok, "pcm": fn, "notified": notified[mark:],
                     "first_feed_ms": (feeds[0][0] - ts) * 1e3 if feeds else None,
-                    "wall_s": time.perf_counter() - ts, "audio_s": len(pcm) / 2 / 44100.0})
+                    "wall_s": time.perf_counter() - ts, "audio_s": len(pcm) / 2 / float(d._player.rate), "rate": d._player.rate})
 
 
 def join_off():
@@ -244,6 +245,25 @@ if WHICH == "blazie":
              "ok" if rate_ok else "FAILED"))
     d._set_rate(50)
 
+# the Sample rate combo box: each rate gets its own player and the same speech (length and level)
+from array import array  # noqa: E402
+srate = {}
+for r in ("11025", "22050", "44100"):
+    d._set_sampleRate(r)
+    mark = len(notified)
+    d.speak(["Hello there, this is a sample rate test."])
+    ok = wait_idle()
+    pcm = array("h", b"".join(d._player.chunks))
+    rms = (sum(v * v for v in pcm) / max(1, len(pcm))) ** 0.5
+    srate[r] = (ok, d._player.rate, len(pcm) / float(r), rms)
+d._set_sampleRate("8000")                      # not offered: ignored
+ref = srate["44100"]
+srate_ok = d._get_sampleRate() == "44100" and all(
+    ok and rate == int(r) and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
+    for r, (ok, rate, secs, rms) in srate.items())
+print("sample rate: %s: %s" % (", ".join("%s %.2f s rms %.0f" % (r, v[2], v[3]) for r, v in srate.items()),
+                                "ok" if srate_ok else "FAILED"))
+
 # cancel mid-sentence, then speak again
 mark = len(notified)
 n0 = len(d._player.chunks)
@@ -262,7 +282,7 @@ json.dump({"which": WHICH, "tag": TAG, "python": sys.version.split()[0], "bits":
            "player_kwargs": player_kwargs, "modules": sorted(m for m in sys.modules if m.split(".")[0] in
                                                              ("numpy", "unicorn", "csv"))},
           open(os.path.join(HERE, "sim_%s_%s.json" % (WHICH, TAG)), "w"), indent=1)
-all_ok = all(r["ok"] for r in results) and rate_ok
+all_ok = all(r["ok"] for r in results) and rate_ok and srate_ok
 print("%s %s: python %s %d-bit, %d scenarios, all ok %s, player kwargs %s, numpy/unicorn/csv loaded: %s"
       % (WHICH, TAG, sys.version.split()[0], 8 * struct.calcsize("P"), len(results),
          all_ok, player_kwargs,

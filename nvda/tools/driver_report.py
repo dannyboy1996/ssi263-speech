@@ -6,11 +6,11 @@ import sys
 import numpy as np
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
-SR = 44100
+SR = 44100          # runs from before the Sample rate setting carry no "rate"
 
 
-def gaps(y, thr_db=-45):
-    h = int(0.01 * SR)
+def gaps(y, sr=SR, thr_db=-45):
+    h = int(0.01 * sr)
     env = np.array([20 * np.log10(np.sqrt(np.mean(y[k:k + h] ** 2)) + 1e-9) for k in range(0, len(y) - h, h)])
     loud = env > thr_db
     on = np.where(loud)[0]
@@ -25,18 +25,18 @@ def gaps(y, thr_db=-45):
     return out
 
 
-def f0(y):
-    h = int(0.04 * SR)
+def f0(y, sr=SR):
+    h = int(0.04 * sr)
     best = []
-    for k in range(0, len(y) - h, int(0.02 * SR)):
+    for k in range(0, len(y) - h, int(0.02 * sr)):
         x = y[k:k + h]
         if np.sqrt(np.mean(x ** 2)) < 0.05 * (np.abs(y).max() + 1e-9):
             continue
         x = x - x.mean()
         ac = np.correlate(x, x, "full")[len(x) - 1:]
-        i = int(SR / 260) + np.argmax(ac[int(SR / 260):int(SR / 55)])
+        i = int(sr / 260) + np.argmax(ac[int(sr / 260):int(sr / 55)])
         if ac[i] > 0.45 * ac[0]:
-            best.append(SR / i)
+            best.append(sr / i)
     return np.median(best) if best else float("nan")
 
 
@@ -47,13 +47,13 @@ for t, r in runs.items():
           % (which, t, r["python"], r["bits"], r["player_kwargs"], r["cancel_events"], r["modules"]))
     for s in r["results"]:
         y = np.frombuffer(open(s["pcm"], "rb").read(), dtype="<i2").astype(float) / 32767
-        extra = ""
+        extra, sr = "", s.get("rate", SR)
         if "a" in s["label"].split()[-1:] or s["label"].startswith(("plain", "capital")):
-            extra = " F0 %.1f Hz" % f0(y)
+            extra = " F0 %.1f Hz" % f0(y, sr)
         print("  %-17s ok %-5s audio %.2f s, wall %.2f s, first feed %s ms, gaps %s, notified %s%s"
               % (s["label"], s["ok"], s["audio_s"], s["wall_s"],
                  "%.0f" % s["first_feed_ms"] if s["first_feed_ms"] is not None else "-",
-                 gaps(y), s["notified"], extra))
+                 gaps(y, sr), s["notified"], extra))
 if len(tags) >= 2:
     a, b = runs[tags[0]], runs[tags[1]]
     for sa, sb in zip(a["results"], b["results"]):

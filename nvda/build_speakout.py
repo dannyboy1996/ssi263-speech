@@ -75,6 +75,7 @@ def main():
     copy_engine(ENGINE, eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "speakout.py"), os.path.join(eng, "speakout_host.py"))
     shutil.copy2(os.path.join(ENGINE, "hosts", "ucmini.py"), eng)
+    shutil.copy2(os.path.join(HERE, "shared", "ssi263_rates.py"), eng)
     shutil.copytree(os.path.join(ENGINE, "hosts", "bin"), os.path.join(eng, "bin"), ignore=IGN)
     for arch in ("x64", "x86"):
         check_native(os.path.join(eng, "bin", arch, "unicorn.dll"), arch)

@@ -19,7 +19,7 @@ import threading
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from autoSettingsUtils.utils import StringParameterInfo
-from autoSettingsUtils.driverSetting import BooleanDriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting
 from logHandler import log
 import speech.commands
 
@@ -30,9 +30,9 @@ _ENGINE_DIR = os.path.join(_HERE, "_ssi263_blazie")
 # the Speak-Out add-on ships an `ssi263` too, and one process has one module per name.
 from ._ssi263_blazie.blazie_host import Blazie
 from ._ssi263_blazie import ssi263_numwords as numwords
+from ._ssi263_blazie import ssi263_rates as rates
 from ._ssi263_blazie.ssi263.native import SSI263C      # the chip in C
 
-OUT_RATE = 44100
 BLOCK_S = 0.03
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
@@ -167,6 +167,7 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("shortPauses", "S&horten pauses between sentences", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digits above a trillion)", defaultVal=True),
+        DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -187,6 +188,7 @@ class SynthDriver(SynthDriver):
         self._snap_until_speech = False
         self._tone = str(DEFAULT_TONE)
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
+        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -197,7 +199,7 @@ class SynthDriver(SynthDriver):
 
     def _makePlayer(self):
         import config
-        base = dict(channels=1, samplesPerSec=OUT_RATE, bitsPerSample=16)
+        base = dict(channels=1, samplesPerSec=self._out_rate, bitsPerSample=16)
         try:
             from nvwave import AudioPurpose
             purpose = {"purpose": AudioPurpose.SPEECH}
@@ -311,6 +313,16 @@ class SynthDriver(SynthDriver):
         if v in {str(t) for t in range(1, 26)}:
             self._tone = v
 
+    def _get_availableSamplerates(self):
+        return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
+
+    def _get_sampleRate(self):
+        return str(self._want_rate)
+
+    def _set_sampleRate(self, v):
+        # the worker applies it before the next utterance: new player, unit rebooted at the new rate
+        self._want_rate = rates.parse(v) or self._want_rate
+
     def _get_availableVoices(self):
         return {"blazie": VoiceInfo("blazie", "Braille Lite 2000 (June 2003)", "en")}
 
@@ -347,7 +359,7 @@ class SynthDriver(SynthDriver):
         # to 0.25 s.  The unit then writes exactly what it did with the MASTER harness's
         # 8M/10M (tools/boot_gaps.py); below a 2.5M start it never reaches speech-box mode.
         # The emulator is deterministic, so this holds on every machine.
-        unit = Blazie(EXE, FIRMWARE, STATE, chip=SSI263C(out_rate=OUT_RATE), out_rate=OUT_RATE,
+        unit = Blazie(EXE, FIRMWARE, STATE, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate,
                       menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
                       board_lowpass_hz=BOARD_LOWPASS_HZ)
         unit.send(b"\x18")
@@ -368,6 +380,11 @@ class SynthDriver(SynthDriver):
             if job is None:
                 break
             self._cancelFlag.clear()
+            if self._want_rate != self._out_rate:
+                try:
+                    self._switch_rate()
+                except Exception:
+                    log.error("Blazie: could not switch the sample rate", exc_info=True)
             try:
                 self._speakJob(job)
             except Exception:
@@ -395,6 +412,18 @@ class SynthDriver(SynthDriver):
                 synthDoneSpeaking.notify(synth=self)
         if self._unit is not None:
             self._unit.close()
+
+    def _switch_rate(self):
+        """A new sample rate: the chip renders at the host rate, so a new player and a rebooted unit."""
+        self._out_rate = self._want_rate
+        old, self._player = self._player, self._makePlayer()
+        try:
+            old.close()
+        except Exception:
+            pass
+        self._unit = self._boot()
+        self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)
+        self._pitch_dirty = False
 
     def _speakJob(self, items):
         unit = self._unit

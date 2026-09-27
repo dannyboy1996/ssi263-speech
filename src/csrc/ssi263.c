@@ -390,7 +390,9 @@ SSI263_API ssi263 *ssi263_new(const ssi263_params *p, const unsigned char *rom, 
         ssi263_free(c);
         return NULL;
     }
-    firwin(c->fir, c->ntaps, p->output_lowpass_hz, c->out_rate * c->os);
+    /* as chip.py: below 40 kHz hold the cutoff at 90 % of the host Nyquist (44.1 kHz unchanged) */
+    firwin(c->fir, c->ntaps, p->output_lowpass_hz >= 0.5 * c->out_rate ? 0.45 * c->out_rate : p->output_lowpass_hz,
+           c->out_rate * c->os);
     /* constants of _run */
     c->hp_r = 1.0 - 2.0 * M_PI * p->hp_ratio;
     {

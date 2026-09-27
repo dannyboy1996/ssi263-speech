@@ -78,6 +78,7 @@ def main():
     copy_engine(ENGINE, eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "blazie.py"), os.path.join(eng, "blazie_host.py"))
     shutil.copy2(os.path.join(HERE, "shared", "ssi263_numwords.py"), eng)
+    shutil.copy2(os.path.join(HERE, "shared", "ssi263_rates.py"), eng)
     build_bns32(os.path.join(eng, "bns_live.exe"))
     shutil.copy2(FIRMWARE, os.path.join(eng, "BL2ENG.BNS"))
     shutil.copy2(STATE, eng)

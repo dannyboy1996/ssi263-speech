@@ -17,7 +17,7 @@ import threading
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
 from autoSettingsUtils.utils import StringParameterInfo
-from autoSettingsUtils.driverSetting import BooleanDriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting
 from logHandler import log
 import speech.commands
 
@@ -27,9 +27,9 @@ _ENGINE_DIR = os.path.join(_HERE, "_ssi263_speakout")
 # The engine is this add-on's own package, imported relatively and never through sys.path:
 # the Braille Lite add-on ships an `ssi263` too, and one process has one module per name.
 from ._ssi263_speakout.speakout_host import SpeakOut
+from ._ssi263_speakout import ssi263_rates as rates
 from ._ssi263_speakout.ssi263.native import SSI263C    # the chip in C
 
-OUT_RATE = 44100
 BLOCK_S = 0.03
 FIRMWARE = os.path.join(_ENGINE_DIR, "SPEAKOUT.HEX")
 TONES = "abcdefghijklmnopqrstuvwxyz"
@@ -91,6 +91,7 @@ class SynthDriver(SynthDriver):
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("shortPauses", "S&horten pauses between sentences", defaultVal=True),
+        DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -110,6 +111,7 @@ class SynthDriver(SynthDriver):
         self._snap_until_speech = False
         self._tone = "i"      # box tone i, its default
         self._sent = None     # settings last sent to the box
+        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -120,7 +122,7 @@ class SynthDriver(SynthDriver):
 
     def _makePlayer(self):
         import config
-        base = dict(channels=1, samplesPerSec=OUT_RATE, bitsPerSample=16)
+        base = dict(channels=1, samplesPerSec=self._out_rate, bitsPerSample=16)
         try:
             from nvwave import AudioPurpose
             purpose = {"purpose": AudioPurpose.SPEECH}
@@ -228,6 +230,16 @@ class SynthDriver(SynthDriver):
         if v in TONES:
             self._tone = v
 
+    def _get_availableSamplerates(self):
+        return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
+
+    def _get_sampleRate(self):
+        return str(self._want_rate)
+
+    def _set_sampleRate(self, v):
+        # the worker applies it before the next utterance: new player, box rebooted at the new rate
+        self._want_rate = rates.parse(v) or self._want_rate
+
     def _get_availableVoices(self):
         return {"speakout": VoiceInfo("speakout", "Speak-Out", "en")}
 
@@ -250,7 +262,7 @@ class SynthDriver(SynthDriver):
 
     # -- worker: the only thread that touches the emulated box -----------------
     def _boot(self):
-        box = SpeakOut(FIRMWARE, chip=SSI263C(out_rate=OUT_RATE), out_rate=OUT_RATE)
+        box = SpeakOut(FIRMWARE, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
         box.keep_writes = False
         box.boot()
         box.say("\x05Mn")        # punctuation: none -- NVDA speaks symbols itself
@@ -268,6 +280,11 @@ class SynthDriver(SynthDriver):
             if job is None:
                 break
             self._cancelFlag.clear()
+            if self._want_rate != self._out_rate:
+                try:
+                    self._switch_rate()
+                except Exception:
+                    log.error("Speak-Out: could not switch the sample rate", exc_info=True)
             try:
                 self._speakJob(job)
             except Exception:
@@ -293,6 +310,18 @@ class SynthDriver(SynthDriver):
                     pass
             else:
                 synthDoneSpeaking.notify(synth=self)
+
+    def _switch_rate(self):
+        """A new sample rate: the chip renders at the host rate, so a new player and a rebooted box."""
+        self._out_rate = self._want_rate
+        old, self._player = self._player, self._makePlayer()
+        try:
+            old.close()
+        except Exception:
+            pass
+        self._box = self._boot()
+        self._sent = None
+        self._pitch_dirty = False
 
     def _speakJob(self, items):
         box = self._box
