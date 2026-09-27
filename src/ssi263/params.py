@@ -201,6 +201,12 @@ DEFAULTS = {
     # ---- sources ------------------------------------------------------------------
     "pulse_place": ("fractional", "GUESS",
                     "glottal pulse split between the two nearest fc samples, or 'nearest'"),
+    "glottal_wave": ((1.0,), "GUESS",
+                     "the voice source's shape, one level per filter-clock tick after each pitch "
+                     "pulse, normalised to the pulse's area (unity gain at DC).  (1.0,) = the "
+                     "impulse the engine has always used.  MAME's SC-01 wave (0, -4/7, 1, 6/7 ... "
+                     "1/7, each level held 4 ticks) is sc01_glottal_wave(4).  Experimental, "
+                     "Python only: the C core refuses anything but (1.0,)"),
     "va_law": ("linear15", "SC01", "gain = VA / 15 (the law chip.py uses; not switchable yet)"),
     "fa_law": ("linear15", "SC01", "gain = FA / 15 (the law chip.py uses; not switchable yet)"),
     "lfsr_bits": (15, "SC01", "noise shift register length"),

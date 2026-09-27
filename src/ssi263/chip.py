@@ -37,6 +37,13 @@ MODE_NAMES = {3: "phoneme timing, transitioned inflection",
 PENDING_MAX = 256            # writes held for a stop's end (release_lookahead); more flush at once
 
 
+def sc01_glottal_wave(ticks_per_level=4):
+    """MAME's SC-01 glottal wave (0, -4/7, 1, 6/7 ... 1/7), each level held `ticks_per_level`
+    filter-clock ticks: a value for params 'glottal_wave'."""
+    levels = (0.0, -4 / 7, 1.0, 6 / 7, 5 / 7, 4 / 7, 3 / 7, 2 / 7, 1 / 7)
+    return tuple(v for v in levels for _ in range(ticks_per_level))
+
+
 def _open(entry):
     """A phoneme a stop may release into early: closure-clear, voiced and noiseless (vowels,
     R L W M N, KV).  Not PA, not a fricative, not a closure (params: release_lookahead)."""
@@ -151,6 +158,7 @@ class SSI263:
         self.snap_pitch = False      # host request: the next CHANGE of pitch target lands at once
         self.phase = 0.0
         self.pending_pulse = 0.0
+        self.gl_hist = [0.0] * len(self.p["glottal_wave"])   # recent pulse weights, newest first
         self.lfsr = 1
         self.noise_phase = 0.0
         self.noise_val = 1.0
@@ -376,6 +384,7 @@ class SSI263:
                         setattr(sec, attr, 0.0)
             self.hp_x1 = self.hp_y1 = 0.0
             self.pending_pulse = 0.0
+            self.gl_hist = [0.0] * len(self.gl_hist)
             # the host-rate stage still holds audio from before the skip: drop it too
             self.dec.reset()
             self.pend_v = self.pend_rem = 0.0
@@ -458,6 +467,12 @@ class SSI263:
         s1, s2, s3, s4, s5 = self.sec
         sh = self.shaper
         fmult = dict(zip(FIELDS, p["field_speed_mult"]))
+        gw = tuple(p["glottal_wave"])
+        shaped = gw != (1.0,)
+        if shaped:
+            gw_area = sum(gw) or 1.0
+            gw = [v / gw_area for v in gw]                 # unity gain at DC: F1's level is unchanged
+            gl = self.gl_hist
         inj = self.inj if p["noise_f2_injection"] == "shelf" else None
         inj_g = p["noise_f2_inj_gain"]
         lfsr_top = p["lfsr_bits"] - 1
@@ -553,6 +568,11 @@ class SSI263:
                             pulse += 1.0
                     ph -= n
                 self.phase = ph
+                if shaped:
+                    # the source wave, restarted by every pulse: a FIR over the pulse weights
+                    gl.pop()
+                    gl.insert(0, pulse)
+                    pulse = sum(w * h for w, h in zip(gw, gl))
                 x = pulse * la["VA"] / 15.0
                 if clo_va:
                     x *= self.clo

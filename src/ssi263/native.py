@@ -67,6 +67,8 @@ def params_struct(p):
         raise ValueError("noise_f2_injection = %r: the C core knows only 'resonator'" % (p["noise_f2_injection"],))
     if tuple(p["field_speed_mult"]) != (1.0,) * 6:
         raise ValueError("field_speed_mult = %r: the C core knows only all 1.0" % (tuple(p["field_speed_mult"]),))
+    if tuple(p["glottal_wave"]) != (1.0,):
+        raise ValueError("glottal_wave: the C core knows only the impulse (1.0,)")
     for name in ("xck_hz", "frame_xck_cycles", "pitch_xck_div", "glide_xck_cycles_per_count",
                  "art_amp_mult", "amp_slew_per_phoneme", "f4_ratio", "f5_ratio", "nas_f2_bw_gain",
                  "closure_delay_frames", "closure_release_frames", "closure_hold_delay_frames",
