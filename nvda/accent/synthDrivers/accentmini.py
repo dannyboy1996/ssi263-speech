@@ -150,7 +150,7 @@ class SynthDriver(SynthDriver):
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digit-by-digit numbers)", defaultVal=True),
-        BooleanDriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=False),
+        BooleanDriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=rates.DEFAULT),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}

@@ -245,10 +245,10 @@ if WHICH == "blazie":
              "ok" if rate_ok else "FAILED"))
     d._set_rate(50)
 
-# the "Higher sample rate" check box: 11 kHz by default, 22 kHz checked; each gets its own player and the
+# the "Higher sample rate" check box: checked (22 kHz) by default, 11 kHz unchecked; each gets its own player and the
 # same speech (length and level)
 from array import array  # noqa: E402
-srate_default = d._out_rate == 11025 and d._get_higherSampleRate() is False
+srate_default = d._out_rate == 22050 and d._get_higherSampleRate() is True
 srate = {}
 for v, r in ((True, 22050), ("False", 11025), ("True", 22050), (False, 11025)):   # strings: an older config
     d._set_higherSampleRate(v)
@@ -262,7 +262,7 @@ ref = srate[("False", 11025)]
 srate_ok = srate_default and d._get_higherSampleRate() is False and all(
     ok and rate == r and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
     for (v, r), (ok, rate, secs, rms) in srate.items())
-print("sample rate: default 11 kHz %s; %s: %s" % (srate_default, ", ".join("%s->%d %.2f s rms %.0f" % (k[0], k[1], x[2], x[3])
+print("sample rate: default 22 kHz %s; %s: %s" % (srate_default, ", ".join("%s->%d %.2f s rms %.0f" % (k[0], k[1], x[2], x[3])
                                                                      for k, x in srate.items()), "ok" if srate_ok else "FAILED"))
 
 # cancel mid-sentence, then speak again

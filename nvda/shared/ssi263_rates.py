@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """The output sample rate the drivers offer (NVDA's "Higher sample rate" check box), shared by all three.
 
-11 kHz by default: what most people remember from the unit's own speaker.  Checked, 22 kHz: the chip's filters
-are clocked at 1 MHz / (2 (32 - tone)), 20 kHz at tone 7, so its own band ends near 10 kHz and 22050 keeps it to
-9.9 kHz; Tomi's A/B found no new highs at 44.1 kHz, so it is not offered.  The chip model renders at the rate
-directly: below 40 kHz its anti-alias low-pass sits at 90 % of the host Nyquist (ssi263/chip.py)."""
+Checked by default, 22 kHz: the chip's filters are clocked at 1 MHz / (2 (32 - tone)), 20 kHz at tone 7 and
+83 kHz at tone 26, so its range climbs with the tone, and 22050 keeps it to 9.9 kHz.  Tomi's A/B: no new highs at
+44.1 kHz, so it is not offered; at tone 26 "I could hear something with 'synthesizer' in the 22K one, I could
+not understand a word at the 11K one".  Unchecked, 11 kHz: the sound of the unit's own speaker at low tones.
+The chip model renders at the rate directly: below 40 kHz its anti-alias low-pass sits at 90 % of the host
+Nyquist (ssi263/chip.py)."""
 
 LOW, HIGH = 11025, 22050
 SETTING_ID = "higherSampleRate"
 SETTING_LABEL = "Higher sample &rate (22 kHz instead of 11 kHz)"
+DEFAULT = True
 
 
 def rate(higher):
@@ -29,4 +32,4 @@ def saved(driver_name):
         import config
         return parse(config.conf["speech"][driver_name][SETTING_ID])
     except Exception:
-        return False
+        return DEFAULT
