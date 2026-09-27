@@ -350,8 +350,9 @@ class SSI263:
             self.elapsed += seconds
             frame = p["frame_xck_cycles"] * (16 - (self.regs[2] >> 4)) / self.xck
             step = p["art_codes_per_frame"][(self.regs[3] >> 4) & 7] * seconds / frame
+            fm = dict(zip(FIELDS, p["field_speed_mult"]))
             for f in self.cur:
-                st = step * p["art_amp_mult"] if f in ("VA", "FA") else step
+                st = (step * p["art_amp_mult"] if f in ("VA", "FA") else step) * fm[f]
                 d = self.target[f] - self.cur[f]
                 self.cur[f] = self.target[f] if abs(d) <= st else self.cur[f] + math.copysign(st, d)
             self.g2 = self.target["FA"] * self.w2
@@ -456,6 +457,7 @@ class SSI263:
         precharge = p["fricative_precharge"]
         s1, s2, s3, s4, s5 = self.sec
         sh = self.shaper
+        fmult = dict(zip(FIELDS, p["field_speed_mult"]))
         inj = self.inj if p["noise_f2_injection"] == "shelf" else None
         inj_g = p["noise_f2_inj_gain"]
         lfsr_top = p["lfsr_bits"] - 1
@@ -497,7 +499,7 @@ class SSI263:
                 for f in FIELDS:
                     d = self.target[f] - self.cur[f]
                     if d:
-                        st = step * amp_mult if f in ("VA", "FA") else step
+                        st = (step * amp_mult if f in ("VA", "FA") else step) * fmult[f]
                         self.cur[f] = self.target[f] if abs(d) <= st else self.cur[f] + math.copysign(st, d)
                 if self.duration > 0:
                     astep = 15.0 * p["amp_slew_per_phoneme"] * dt / self.duration

@@ -45,6 +45,14 @@ DEFAULTS = {
                             "the frame clock (A: 'all internal attribute transitioning is performed "
                             "relative to the Speech Rate Register').  Setting 5 = 4.0 (berry and very, dev); the "
                             "other settings are GUESS"),
+    "field_speed_mult": ((1.0, 1.0, 1.0, 1.0, 1.0, 1.0), "GUESS",
+                         "per-field transition speed, times art_codes_per_frame (and art_amp_mult for VA/FA), "
+                         "in chip.FIELDS order (F1, F2, F3, NAS, VA, FA).  All 1.0 = v0.12.  Lead (Tomi's ear, "
+                         "2026-09-26, blite_sweep analysis/va_law2.py): on the unit 'file' stays even where ours "
+                         "jumps at AH -> E, and its F1 is at AH's height from the vowel's start while F2 glides "
+                         "smoothly; speeding ALL fields (articulation 5: 4.0 -> 9.0) fixed the jump but made F2 "
+                         "step audibly ('staircase', 'flutter' in 'engineering').  Python reference only: the "
+                         "C engine refuses anything but all 1.0 (native.params_struct)"),
     "art_amp_mult": (6.0, "BL",
                      "VA and FA counters move this many times faster than the formant counters: "
                      "x3 is MAME's SC-01 tick ratio (amplitudes 625 Hz, formants 208 Hz).  Dev "
