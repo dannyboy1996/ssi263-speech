@@ -163,7 +163,14 @@ class Blazie:
         input, held flush line and its ^F included; the unit may still move on to a
         word it had already prepared, so keep cutting every 20 ms, audio discarded,
         until nothing has loaded for `quiet` s.  Afterwards nothing is held, so every
-        ^F sent counts as answered.  Returns the emulated seconds it took."""
+        ^F sent counts as answered -- unless every line had already echoed: then the unit
+        holds its flush line, ^X leaves it held (measured), and its ^F comes with the next
+        text.  Counted as answered (0.5.0), that ^F was taken for the next line's own
+        echo, and the next utterance ended at its first word gap longer than `quiet`,
+        the rest held until the one after (a tester: at NVDA's slower rates, "the last
+        syllable is cut off, then joined to the next utterance").  Returns the emulated
+        seconds it took."""
+        holding = self.owed() == 0              # every line echoed: the flush line is held
         self._cmd("D")                          # drop what the unit has not taken yet
         self.preparing = False
         t = 0.0
@@ -175,7 +182,7 @@ class Blazie:
             if (t >= 0.04 and self.chip.time - self.last_speech > quiet
                     and (self.owed() <= 0 or t >= 1.0)):
                 break
-        self.echo_f = self.sent_f
+        self.echo_f = self.sent_f - 1 if holding else self.sent_f
         return t
 
     def skip(self, seconds):
