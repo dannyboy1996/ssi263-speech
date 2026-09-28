@@ -123,12 +123,23 @@ def _ptr(buf, ctype):
     return ctypes.cast(buf.buffer_info()[0], ctypes.POINTER(ctype))
 
 
+def lib_path():
+    """ssi263.dll on Windows (bl.dll imports it); elsewhere the one library holding the chip and the hosts,
+    libssi263speech.so (build_linux.sh).  SSI263_LIB overrides both."""
+    if os.environ.get("SSI263_LIB"):
+        return os.environ["SSI263_LIB"]
+    if os.name == "nt":
+        return os.path.join(_HERE, "_bin", "x64" if struct.calcsize("P") == 8 else "x86", "ssi263.dll")
+    import platform
+    import sys
+    return os.path.join(_HERE, "_bin", "%s-%s" % (sys.platform, platform.machine()), "libssi263speech.so")
+
+
 class _C:
     name = "c"
 
     def __init__(self):
-        arch = "x64" if struct.calcsize("P") == 8 else "x86"
-        lib = ctypes.CDLL(os.path.join(_HERE, "_bin", arch, "ssi263.dll"))
+        lib = ctypes.CDLL(lib_path())
         lib.ssi_fir_decimate.restype = ctypes.c_int
         lib.ssi_fir_decimate.argtypes = [ctypes.POINTER(ctypes.c_double), ctypes.c_int,
                                          ctypes.POINTER(ctypes.c_double), ctypes.c_int,
