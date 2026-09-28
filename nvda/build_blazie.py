@@ -24,30 +24,20 @@ Z180 = repo_paths.external("Z180EMU")
 FIRMWARE = os.path.join(REPO, "firmware", "blazie", "BL2ENG.BNS")
 STATE = os.path.join(REPO, "firmware", "blazie", "bl2_2003_warm.state")
 GCC32 = repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False)   # never the PATH's x86_64 gcc
-CORE = ("z180", "z180dasm", "z80daisy", "z80scc", "z180asci")
 CFLAGS = ["-O3", "-fcommon", "-DSOCKETCONSOLE", "-std=gnu89"]
 LINK = ["-O3", "-fcommon", "-std=gnu89", "-static", "-s"]
 
 BUILD = os.path.join(HERE, "dist", "blazie-build")
-OBJ = os.path.join(HERE, "dist", "bns32-obj")
 OUT = os.path.join(HERE, "dist", "blazie-ssi263-%s.nvda-addon" % VERSION)
 
 
 def build_bns32(out_exe):
-    """i686 static bns_live.exe from the z180emu tree; objects go to dist/bns32-obj."""
-    if os.path.isdir(OBJ):
-        rm(OBJ)
-    os.makedirs(OBJ)
+    """i686 static bns_live.exe from the z180emu tree, as one translation unit (bns_unity.c): the compiler
+    inlines bns.c's per-instruction hook into the core, ~1.6x faster than separate objects, same writes."""
     env = dict(os.environ, PATH=GCC32 + os.pathsep + os.environ["PATH"])
     gcc = os.path.join(GCC32, "gcc.exe")
-    objs = []
-    for name in CORE:
-        o = os.path.join(OBJ, name + ".o")
-        subprocess.run([gcc] + CFLAGS + ["-o", o, "-c", name + ".c"], cwd=os.path.join(Z180, "z180"),
-                       env=env, check=True, stderr=subprocess.DEVNULL)
-        objs.append(o)
-    subprocess.run([gcc] + LINK + ["-o", out_exe, "bns.c"] + objs, cwd=Z180, env=env, check=True,
-                   stderr=subprocess.DEVNULL)
+    subprocess.run([gcc] + CFLAGS + LINK[3:] + ["-I.", "-Iz180", "-o", out_exe, "bns_unity.c"], cwd=Z180, env=env,
+                   check=True, stderr=subprocess.DEVNULL)
     check_native(out_exe, "x86")
 
 
@@ -75,7 +65,7 @@ def main():
             shutil.copy2(os.path.join(spa, name), eng)
     # GPLv2: the complete corresponding source of bns_live.exe
     with zipfile.ZipFile(os.path.join(eng, "z180emu-source.zip"), "w", zipfile.ZIP_DEFLATED) as z:
-        for fn in ("bns.c", "COPYING", "README.md", "Makefile", "sconsole.h", "z180dbg.h"):
+        for fn in ("bns.c", "bns_unity.c", "COPYING", "README.md", "Makefile", "sconsole.h", "z180dbg.h"):
             p = os.path.join(Z180, fn)
             if os.path.isfile(p):
                 z.write(p, fn)
@@ -84,11 +74,8 @@ def main():
                 if fn.endswith((".c", ".h")):
                     p = os.path.join(root, fn)
                     z.write(p, os.path.relpath(p, Z180))
-        z.writestr("BUILD.txt", "Built with w64devkit GCC 16.2, i686 (32-bit):\n"
-                   "  cd z180; for each of %s:\n"
-                   "    gcc %s -o ../<name>.o -c <name>.c\n"
-                   "  gcc %s -o bns_live.exe bns.c %s\n"
-                   % (", ".join(CORE), " ".join(CFLAGS), " ".join(LINK), " ".join(n + ".o" for n in CORE)))
+        z.writestr("BUILD.txt", "Built with w64devkit GCC 16.2, i686 (32-bit), as one translation unit:\n"
+                   "  gcc %s -I. -Iz180 -o bns_live.exe bns_unity.c\n" % " ".join(CFLAGS + LINK[3:]))
     shutil.copy2(os.path.join(Z180, "COPYING"), os.path.join(eng, "COPYING.z180emu"))
     # NVDA 2024.4+: the add-on's symbol dictionary (manifest [symbolDictionaries]) sends stacked '?' to the unit
     shutil.copytree(os.path.join(HERE, "blazie", "locale"), os.path.join(BUILD, "locale"))
