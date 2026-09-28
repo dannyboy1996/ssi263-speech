@@ -277,6 +277,18 @@ if WHICH == "blazie":
     infl_ok = r1_on > r1_off and d._get_voiceInflection() is True
     print("blazie inflection: '?' raises R1 to %02X with it on, %02X with it off: %s" % (r1_on, r1_off, "ok" if infl_ok else "FAILED"))
     rate_ok = rate_ok and infl_ok
+    # the unit's hiss / whine (hosts/blazie.py whine_wave): each choice speaks, and switches the chip's carrier
+    whine_ok = sorted(d._get_availableWhines()) == ["hiss", "off", "whine"]
+    for w in ("whine", "hiss", "off"):
+        d._set_whine(w)
+        mark = len(notified)
+        n0 = len(d._player.chunks)
+        d.speak(["Hello there."])
+        whine_ok = whine_ok and wait_idle() and d._unit.whine == (None if w == "off" else w)
+    d._set_whine("bogus")                     # not offered: ignored
+    whine_ok = whine_ok and d._get_whine() == "off"
+    print("blazie whine: off / hiss / whine each speak, the host follows: %s" % ("ok" if whine_ok else "FAILED"))
+    rate_ok = rate_ok and whine_ok
 
 # the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402

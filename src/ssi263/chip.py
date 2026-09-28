@@ -481,6 +481,8 @@ class SSI263:
         lead = p["lookahead_lead_frames"]
         precharge = p["fricative_precharge"]
         noise_lead = None if p["closure_noise_lead_ms"] is None else p["closure_noise_lead_ms"] / 1000.0
+        gate_from_load = p["gate_close_from_load"]          # diagnostic gate-only overrides (Astra, Reply 69)
+        gate_hold = p["gate_hold_to_next_load"]
         s1, s2, s3, s4, s5 = self.sec
         sh = self.shaper
         fmult = dict(zip(FIELDS, p["field_speed_mult"]))
@@ -566,9 +568,13 @@ class SSI263:
                     if rel_now and not self.released:
                         self.released = self._pending_open()
                     rel_now = rel_now and self.released
-                if (self.closing and self.elapsed >= cdel * frame * scale and not rel_now):
+                # the GATE's own schedule; the diagnostic overrides touch only it, never the lookahead, the
+                # release decision or the noise timing (rel_now keeps its meaning everywhere else)
+                gate_cdel = 0.0 if gate_from_load else cdel
+                rel_gate = False if gate_hold else rel_now
+                if (self.closing and self.elapsed >= gate_cdel * frame * scale and not rel_gate):
                     self.clo = max(clo_floor, self.clo - cstep)
-                elif (p["closure_reopen"] or not self.closing or rel_now) and self.clo < 1.0:
+                elif (p["closure_reopen"] or not self.closing or rel_gate) and self.clo < 1.0:
                     self.clo = min(1.0, self.clo + cstep)
                 self._latch_all()
                 la = self.latch

@@ -215,6 +215,13 @@ DEFAULTS = {
                               "bounded precharge; the unbounded one, closure_noise_at_release=False, clicked in 'status' "
                               "to Tomi's ear).  Capped by the lookahead: the effective lead per stop is in "
                               "chip.noise_lead_log.  Experimental; Python only; the C core refuses it"),
+    "gate_close_from_load": (False, "GUESS",
+                             "DIAGNOSTIC (Astra, Reply 69): the closure gate starts closing at the stop's load (no "
+                             "closure_delay_frames), touching only the gate: the lookahead, release decision and noise "
+                             "timing are unchanged.  Python only; the C core refuses it"),
+    "gate_hold_to_next_load": (False, "GUESS",
+                               "DIAGNOSTIC (Astra, Reply 69): the gate stays shut until the next phoneme loads instead "
+                               "of reopening at the release point; only the gate.  Python only; the C core refuses it"),
     "closure_ramp_ms": (4.0, "GUESS", "ramp time down (closure) and back up (next phoneme)"),
     "closure_reopen": (False, "BL",
                        "True: a closure phoneme reopens the tract during its delay (the cloud "

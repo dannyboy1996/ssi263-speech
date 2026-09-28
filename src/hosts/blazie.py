@@ -52,6 +52,65 @@ def boot_keys(menu=(), start=None, gap=None, status=()):
     return keys, start + len(codes) * gap
 
 
+# ---- the optional idle whine, generated from the chip's own clock (Tomi's unit, blite_sweep W03, 2026-09-27) ----
+# On the unit a faint whine rides under the speech and the pauses until the click-off.  Its lines sit at n * fc/64
+# and obey one rule at every tone (404 of 406 measured lines): a mod-64 counter steps by N = 32 - tone on each
+# filter-clock tick, and a fixed 64-value function g of its state leaks out.  g is fitted once (its DFT magnitude
+# per component m, below) with a smooth output path (a 2nd-order roll-off at 4 kHz); then any tone's lines follow
+# from the counter.  Blind test: fitted on half the odd tones, it predicts the other half's lines to a median 1.9 dB.
+# Two classes, as Tomi hears them on the unit: EVEN volumes (6, the factory volume this host uses) give a slight hiss,
+# ODD volumes the actual whine, about 20 dB louder.  Each is one fitted waveform plus an output path: the hiss from
+# the volume-6 row (median of each component; 2nd order at 4 kHz; blind on half the odd tones: 1.9 dB median), the
+# whine from the volume-7 row (75th percentile, since the loud lines are the ones heard; 2nd order at 7 kHz; blind on
+# the audible lines, >= -70 dB: 2.2 dB median, 90 % within 10.6 dB).  g's PHASES were not measured: a pseudo-random
+# set (WHINE_SEED) chosen to fit the tones where the counter visits only some states (0, 4, ... 24); blind on 2, 6,
+# ... 26 the levels are within ~8 dB (blite_sweep analysis/whine_counter.py, whine_phases.py).  The chip's own
+# two-sine carrier (carrier_rel_db) is switched off while this runs, since the model carries those lines.
+# An empirical model of the recorded output, not a traced circuit.
+WHINE_MODELS = {       # class: (|G(m)| dB re a loud vowel's mean square, m = 0..32; roll-off order; corner Hz)
+    "hiss": ((None, -76.7, -72.5, -73.3, -74.8, -75.1, -78.1, -81.5, -62.6, -82.7, -68.5, None, None, None, -81.6,
+              -82.6, -67.7, -85.1, -83.4, None, None, -58.8, -79.9, -81.6, -64.4, -80.3, -78.9, None, None, None,
+              -77.7, -78.7, -65.9), 2, 4000.0),
+    "whine": ((None, -75.9, -59.9, -72.1, -70.2, -63.7, -65.1, -71.8, -52.5, -72.0, -65.9, -74.0, -75.1, -72.0, -70.2,
+               -77.1, -65.1, -68.4, -68.4, -67.8, -72.1, -72.8, -68.4, -73.9, -57.6, -75.1, -66.9, -73.6, -77.0, -74.4,
+               -66.9, -74.9, -72.1), 2, 7000.0),
+}
+WHINE_VOWEL_RMS = 0.0426                 # this host's loud vowel at unit volume 6, after the board pole
+WHINE_TABLE = 1024
+WHINE_SEED = 392
+
+
+def whine_wave(r4, out_rate, mode="whine", xck=1e6):
+    """One 64-tick period of the hiss or whine at tone register r4, band-limited under 0.45 x out_rate: (fc, table)."""
+    g_db, order, corner = WHINE_MODELS[mode]
+    import cmath
+    import math
+    n_div = 256 - r4
+    if n_div <= 0:
+        return None, None
+    fc = xck / (2.0 * n_div)
+    seed, ph = WHINE_SEED, []
+    for m in range(33):
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+        ph.append(2 * math.pi * seed / 0x7FFFFFFF)
+    amp = [0.0 if (m == 0 or g is None) else math.sqrt(2.0) * 10 ** (g / 20.0) for m, g in enumerate(g_db)]
+    g64 = [sum(amp[m] * math.cos(2 * math.pi * m * s / 64.0 + ph[m]) for m in range(1, 33)) for s in range(64)]
+    x = [g64[(k * n_div) % 64] for k in range(64)]
+    lines = []
+    for n in range(1, 64):
+        f = n * fc / 64.0
+        if f >= 0.45 * out_rate:
+            break
+        X = sum(x[k] * cmath.exp(-2j * math.pi * n * k / 64.0) for k in range(64))
+        a = abs(X) / 64.0 * (1.0 if n == 32 else 2.0)
+        if a <= 0.0:
+            continue
+        h = (1.0 + (f / corner) ** 2) ** (-order / 2.0)
+        lines.append((n, a * h * WHINE_VOWEL_RMS, cmath.phase(X)))
+    tab = [sum(a * math.cos(2 * math.pi * n * j / WHINE_TABLE + p) for n, a, p in lines) for j in range(WHINE_TABLE)]
+    return fc, tab
+
+
 class Blazie:
     def __init__(self, exe, firmware, state, chip=None, out_rate=44100, menu=(), key_start=None, key_gap=None,
                  board_lowpass_hz=None, status=()):
@@ -63,6 +122,8 @@ class Blazie:
         schematic's AO network corners near 224 Hz, so it is no support).  Not the chip model."""
         self.chip = chip or SSI263(out_rate=out_rate)
         self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
+        self.whine = None            # None, "hiss" or "whine" (whine_wave); the driver sets it
+        self._whine_key, self._whine_fc, self._whine_tab, self._whine_ph = None, None, None, 0.0
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
         keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
         for c in keys:
@@ -229,4 +290,34 @@ class Blazie:
             self._cmd("R %d" % max(1, int(CLOCK_HZ * dt * speed)))
             t += dt
         y = self.chip.dsp.concat(out)
-        return self.board.process(y) if self.board else y
+        y = self.board.process(y) if self.board else y
+        return self._add_whine(y) if self.whine else y
+
+    def _add_whine(self, y):
+        """The whine under this block, phase-continuous; silent while the chip is powered down or clicked off
+        (R3 = 00: on the unit everything, whine included, stops there)."""
+        regs = self.chip.regs
+        rate = self.chip.out_rate
+        key = (regs[4], rate, self.whine)
+        if key != self._whine_key:
+            self._whine_key = key
+            self._whine_fc, self._whine_tab = whine_wave(regs[4], rate, self.whine)
+        if self._whine_tab is None or not len(y):
+            return y
+        inc = self._whine_fc / 64.0 / rate
+        ph = self._whine_ph
+        if (regs[3] & 0x80) or not (regs[3] & 0x70):
+            self._whine_ph = (ph + inc * len(y)) % 1.0
+            return y
+        tab, size = self._whine_tab, WHINE_TABLE
+        out = self.chip.dsp.concat([y])
+        for i in range(len(out)):
+            pos = ph * size
+            j = int(pos)
+            fr = pos - j
+            out[i] += tab[j % size] * (1.0 - fr) + tab[(j + 1) % size] * fr
+            ph += inc
+            if ph >= 1.0:
+                ph -= 1.0
+        self._whine_ph = ph
+        return out

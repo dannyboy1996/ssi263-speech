@@ -51,6 +51,9 @@ DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE = 11, 16, 7
 # send more than the chords allow; Tomi hears 17-26 on the unit that way.  0-26 (27-31 put the filter clock
 # at 100-500 kHz).
 TONES = range(0, 27)
+# The unit's idle sound, generated from the chip's clock (hosts/blazie.py whine_wave): off, the slight hiss of even
+# volumes (the unit's factory volume 6), or the whine of odd volumes (Tomi's recordings, 2026-09-27).
+WHINES = (("off", "Off"), ("hiss", "Hiss (even volumes, as the factory setting)"), ("whine", "Whine (odd volumes)"))
 # The firmware takes ^E n E modulo 16 (measured on the unit, and the same emulated): rate 16
 # speaks at rate 10's speed, so the fastest rate is 15.
 MAX_RATE = 15
@@ -173,6 +176,7 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("shortPauses", "S&horten pauses between sentences", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digits above a trillion)", defaultVal=True),
         BooleanDriverSetting("voiceInflection", "Voice &inflection (the unit's own on/off)", defaultVal=True),
+        DriverSetting("whine", "Unit &hiss and whine", defaultVal="off"),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
@@ -196,6 +200,7 @@ class SynthDriver(SynthDriver):
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
         self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
         self._infl = self._want_infl = self._saved_inflection()     # likewise to _want_infl
+        self._whine = self._want_whine = self._saved_whine()
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -331,6 +336,34 @@ class SynthDriver(SynthDriver):
         # applies it before the next utterance by starting the unit again with the menu keys (silently)
         self._want_infl = str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
 
+    def _get_availableWhines(self):
+        return {k: StringParameterInfo(k, label) for k, label in WHINES}
+
+    def _get_whine(self):
+        return self._want_whine
+
+    def _set_whine(self, v):
+        # the host's measured whine (hosts/blazie.py whine_wave) replaces the chip's two-sine carrier, a chip
+        # parameter, so the worker restarts the unit (silently) before the next utterance
+        if v in dict(WHINES):
+            self._want_whine = v
+
+    def _saved_whine(self):
+        try:
+            import config
+            v = config.conf["speech"][self.name]["whine"]
+            return v if v in dict(WHINES) else "off"
+        except Exception:
+            return "off"
+
+    def _saved_bool(self, key, default):
+        try:
+            import config
+            v = config.conf["speech"][self.name][key]
+            return str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
+        except Exception:
+            return default
+
     def _saved_inflection(self):
         try:
             import config
@@ -382,7 +415,8 @@ class SynthDriver(SynthDriver):
         # to 0.25 s.  The unit then writes exactly what it did with the MASTER harness's
         # 8M/10M (tools/boot_gaps.py); below a 2.5M start it never reaches speech-box mode.
         # The emulator is deterministic, so this holds on every machine.
-        unit = Blazie(EXE, FIRMWARE, STATE, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate,
+        chip = SSI263C(params={"carrier_rel_db": -300.0} if self._whine != "off" else None, out_rate=self._out_rate)
+        unit = Blazie(EXE, FIRMWARE, STATE, chip=chip, out_rate=self._out_rate,
                       menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
                       board_lowpass_hz=BOARD_LOWPASS_HZ,
                       # the snapshot has inflection on; only turning it off needs the status-menu keys
@@ -392,6 +426,7 @@ class SynthDriver(SynthDriver):
         unit.run(0.3)
         unit.send(b"\x05%dV" % UNIT_VOLUME)
         unit.run(0.05)
+        unit.whine = None if self._whine == "off" else self._whine
         return unit
 
     def _run(self):
@@ -405,7 +440,7 @@ class SynthDriver(SynthDriver):
             if job is None:
                 break
             self._cancelFlag.clear()
-            if self._want_rate != self._out_rate or self._want_infl != self._infl:
+            if self._want_rate != self._out_rate or self._want_infl != self._infl or self._want_whine != self._whine:
                 try:
                     self._switch_rate()
                 except Exception:
@@ -449,6 +484,7 @@ class SynthDriver(SynthDriver):
             except Exception:
                 pass
         self._infl = self._want_infl
+        self._whine = self._want_whine
         self._unit = self._boot()
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)
         self._pitch_dirty = False
