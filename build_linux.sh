@@ -39,6 +39,8 @@ $CC $BOARD -c -o "$OUT/obj/bl_voice.o" "$SRC/blazie/bl_voice.c"
 # only the API is exported (SSI263_API / BL_API mark it); the Z180 core's globals stay inside
 $CC -shared -o "$OUT/libssi263speech.so" "$OUT"/obj/*.o -lm
 $CC $BOARD -o "$OUT/test_bl_board" "$SRC/blazie/test_bl_board.c" "$OUT/obj/bl_unity.o" -lm
+# the speech-dispatcher module: one static-linked program (no .so to install beside it)
+$CC $BOARD -o "$OUT/sd_ssi263" "$ROOT/src/platforms/speechd/sd_ssi263.c" "$OUT"/obj/*.o -lm
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"
