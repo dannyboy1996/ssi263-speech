@@ -53,27 +53,77 @@ def boot_keys(menu=(), start=None, gap=None, status=()):
 
 
 # ---- the optional idle whine, generated from the chip's own clock (Tomi's unit, blite_sweep W03, 2026-09-27) ----
-# On the unit a faint whine rides under the speech and the pauses until the click-off.  Its lines sit at n * fc/64
-# and obey one rule at every tone (404 of 406 measured lines): a mod-64 counter steps by N = 32 - tone on each
-# filter-clock tick, and a fixed 64-value function g of its state leaks out.  g is fitted once (its DFT magnitude
-# per component m, below) with a smooth output path (a 2nd-order roll-off at 4 kHz); then any tone's lines follow
-# from the counter.  Blind test: fitted on half the odd tones, it predicts the other half's lines to a median 1.9 dB.
-# Two classes, as Tomi hears them on the unit: EVEN volumes (6, the factory volume this host uses) give a slight hiss,
-# ODD volumes the actual whine, about 20 dB louder.  Each is one fitted waveform plus an output path: the hiss from
-# the volume-6 row (median of each component; 2nd order at 4 kHz; blind on half the odd tones: 1.9 dB median), the
-# whine from the volume-7 row (75th percentile, since the loud lines are the ones heard; 2nd order at 7 kHz; blind on
-# the audible lines, >= -70 dB: 2.2 dB median, 90 % within 10.6 dB).  g's PHASES were not measured: a pseudo-random
-# set (WHINE_SEED) chosen to fit the tones where the counter visits only some states (0, 4, ... 24); blind on 2, 6,
-# ... 26 the levels are within ~8 dB (blite_sweep analysis/whine_counter.py, whine_phases.py).  The chip's own
-# two-sine carrier (carrier_rel_db) is switched off while this runs, since the model carries those lines.
+# The unit's hiss and whine: a comb of lines at n x fc/64 (fc = the chip's filter clock, xck / (2 (256 - R4))), from a
+# mod-64 counter that steps 256 - R4 per filter tick (Tomi's unit, sessions W02/W03).  Two classes, as Tomi hears
+# them: EVEN volumes (6, the factory volume this host uses) give a slight hiss, ODD volumes the actual whine.
+# The frequencies follow the chip's clock and tone register live; each line's LEVEL is measured, per tone: the
+# median over the class's volumes of the W03 grid (every volume 1-15 x tone 0-26, 405 cells, idle 0.3-9 s after a
+# line), dB re a loud vowel's mean square, kept where the line shows in at least half of them (blite_sweep
+# analysis/whine_tone_fit.py).  Blind (fitted without volumes 7 and 13 / 6 and 12, scored on them): audible-line
+# error median 2.6 dB for the whine, 5.9 for the hiss, against 20.1 and 14.6 for the 0.6.0 draft's one waveform for
+# every tone, which put secondary lines up to ~30 dB too loud and missed the low tones (Tomi: "barely there below
+# tone 7").  Phases were not measured: a fixed pseudo-random set (WHINE_SEED).  The chip's own two-sine carrier
+# (carrier_rel_db) is switched off while this runs, since the table carries the fc line (n = 64).
 # An empirical model of the recorded output, not a traced circuit.
-WHINE_MODELS = {       # class: (|G(m)| dB re a loud vowel's mean square, m = 0..32; roll-off order; corner Hz)
-    "hiss": ((None, -76.7, -72.5, -73.3, -74.8, -75.1, -78.1, -81.5, -62.6, -82.7, -68.5, None, None, None, -81.6,
-              -82.6, -67.7, -85.1, -83.4, None, None, -58.8, -79.9, -81.6, -64.4, -80.3, -78.9, None, None, None,
-              -77.7, -78.7, -65.9), 2, 4000.0),
-    "whine": ((None, -75.9, -59.9, -72.1, -70.2, -63.7, -65.1, -71.8, -52.5, -72.0, -65.9, -74.0, -75.1, -72.0, -70.2,
-               -77.1, -65.1, -68.4, -68.4, -67.8, -72.1, -72.8, -68.4, -73.9, -57.6, -75.1, -66.9, -73.6, -77.0, -74.4,
-               -66.9, -74.9, -72.1), 2, 7000.0),
+WHINE_TONES = {        # class: per tone 0..26, "n:dB ..." (line n x fc/64, dB re a loud vowel's mean square)
+    "hiss": (
+        "32:-89.1 64:-71.3",   # tone 0
+        "2:-55.4 8:-66.3 9:-84.1 14:-89.3 15:-92.2 16:-76.7 17:-91.4 18:-93.5 22:-92.8 23:-95.6 24:-79.5 25:-93.3 26:-95 30:-95.8 31:-97.8 32:-85 33:-96.7 40:-87.5 48:-92.2 64:-71.7",   # tone 1
+        "4:-63.7 12:-87.7 16:-80.5 20:-93.3 30:-97.1 32:-93.9 64:-71.5",   # tone 2
+        "6:-69 8:-73.9 16:-83.3 18:-96.8 24:-83.8 26:-88.9 29:-97.1 32:-85.2 40:-91.8 64:-71",   # tone 3
+        "8:-72.9 24:-89.6 28:-93.3 32:-86.8 43:-90.6 64:-70.6",   # tone 4
+        "8:-69.9 10:-75.7 16:-82.2 24:-83.5 27:-95.6 32:-87.3 38:-92.5 64:-70.5",   # tone 5
+        "10:-85.7 12:-77.5 16:-78.2 26:-94.9 32:-93.8 64:-70.5",   # tone 6
+        "8:-67.7 14:-81.3 16:-80.3 22:-93.7 24:-81.9 25:-95.5 32:-86.1 48:-91.9 64:-70",   # tone 7
+        "8:-80.8 16:-81.8 24:-94.2 64:-70.1",   # tone 8
+        "5:-75.6 8:-76.1 10:-86.9 14:-89.3 16:-81.8 18:-85.5 22:-95.7 23:-94.8 24:-85.4 32:-86.8 40:-88.7 53:-90.5 64:-69.8",   # tone 9
+        "2:-61.7 16:-79.7 20:-85.9 22:-93.9 32:-92.6 64:-69.8",   # tone 10
+        "1:-53.6 8:-79.1 16:-89.4 21:-93.3 22:-87.9 32:-89.6 64:-69.1",   # tone 11
+        "4:-68.4 8:-78.1 20:-87.8 24:-85.2 32:-85.3 64:-68.9",   # tone 12
+        "2:-66.1 7:-77.7 8:-75.9 14:-92.1 16:-83.6 19:-92.1 24:-88.9 26:-91.4 32:-90.8 64:-68.6",   # tone 13
+        "10:-80.4 12:-88.1 16:-83.6 18:-89.1 28:-91.8 64:-68",   # tone 14
+        "8:-73.2 13:-86 17:-91.7 24:-85.9 32:-88.8 37:-83.6 64:-67.9",   # tone 15
+        "16:-90.8 32:-90.8 64:-67.4",   # tone 16
+        "4:-77.4 8:-76.3 11:-87.5 15:-90.1 16:-87.1 19:-92.9 64:-67.5",   # tone 17
+        "6:-79.5 8:-85.2 14:-88.2 16:-81 64:-67.1",   # tone 18
+        "1:-56 5:-82.5 8:-84.9 13:-89 14:-91.2 16:-89.3 64:-66.6",   # tone 19
+        "4:-74.2 8:-83.1 12:-90.5 32:-79.4 64:-66.7",   # tone 20
+        "2:-65.9 8:-74 9:-89.8 10:-89.8 11:-87.6 16:-80.7 24:-79.7",   # tone 21
+        "4:-76.3 10:-87.9 16:-82.4 20:-88.1 32:-84.7",   # tone 22
+        "1:-62.9 6:-87 8:-71.2 9:-86.7 10:-87.8 16:-82 24:-83.2",   # tone 23
+        "8:-88 16:-85",   # tone 24
+        "6:-84.5 7:-85.9 8:-84.7",   # tone 25
+        "2:-74.2 4:-79 6:-84.4",   # tone 26
+    ),
+    "whine": (
+        "32:-91.2 64:-71.8",   # tone 0
+        "2:-55.4 6:-71.2 8:-58 9:-76 10:-68.2 11:-69.9 12:-82.9 14:-76.7 15:-79.5 16:-74.2 18:-88.8 22:-92.6 23:-95.7 24:-86.5 26:-93.8 30:-94.7 32:-87.3 33:-96.2 34:-96.2 40:-85.9 48:-92.5 56:-87.8 64:-71.3",   # tone 1
+        "4:-63.2 6:-66.7 8:-65.8 10:-72.6 12:-72.4 14:-80.2 16:-77.3 18:-90.7 20:-90.2 30:-93 32:-91.8 48:-88.4 64:-71.2",   # tone 2
+        "6:-60.7 7:-77.3 8:-59.2 9:-76.5 10:-69.9 11:-70.7 13:-84.1 14:-81.7 15:-81.3 16:-76.2 17:-93.7 18:-94.4 24:-89.7 26:-89.7 29:-98.4 32:-87.6 40:-91.7 56:-90.8 64:-70.7",   # tone 3
+        "8:-55.9 16:-89.5 20:-98.5 24:-93.4 28:-95.5 32:-88.4 43:-90.3 56:-88.8 64:-71",   # tone 4
+        "6:-68.3 7:-74.8 8:-53.6 9:-78.4 10:-61.9 11:-70.5 13:-85.5 14:-78.8 15:-77.6 16:-71.5 18:-88.1 19:-91.3 21:-92.7 22:-90.6 24:-80.1 27:-95.5 30:-94.4 32:-85.9 38:-90.8 40:-83.9 48:-87.3 54:-90.7 56:-85.9 64:-70.6",   # tone 5
+        "6:-66.7 8:-61.5 10:-72.5 12:-64 14:-81.7 16:-71.1 26:-95.3 32:-87.2 48:-89.4 52:-89.1 64:-70.5",   # tone 6
+        "5:-79.6 6:-69.6 8:-51.7 9:-77.2 10:-72.9 11:-71.9 12:-83.7 13:-85.8 14:-66.8 15:-78.7 16:-77.7 18:-91.3 22:-96.2 24:-88.7 25:-94.8 32:-86.3 48:-87.4 50:-88.8 56:-84.9 64:-70.5",   # tone 7
+        "8:-59.2 16:-79.8 24:-90.7 56:-89.4 64:-69.8",   # tone 8
+        "5:-76.4 6:-67.4 7:-78.3 8:-53.3 9:-76 10:-72.1 11:-69.2 13:-86.1 14:-80.2 15:-78.1 16:-75.5 18:-90.6 23:-92.6 24:-87.2 32:-89.9 53:-89.2 56:-86.5 64:-69.5",   # tone 9
+        "2:-60.5 8:-66.9 10:-75.2 12:-78.3 14:-85.9 16:-81.9 18:-97.1 20:-88.3 22:-92.2 32:-84.2 64:-69.5",   # tone 10
+        "1:-52.6 6:-70 7:-80.3 8:-59.6 9:-73.3 10:-72 11:-73.5 13:-85.8 14:-89.2 15:-81.9 16:-74.5 17:-91.5 19:-89 21:-93.2 22:-90.6 24:-76.7 32:-87.7 40:-85.1 64:-69.2",   # tone 11
+        "4:-67 8:-59.8 12:-77.8 16:-86.2 20:-91.6 24:-90 32:-85.3 64:-68.8",   # tone 12
+        "2:-65.4 6:-69.5 7:-76 8:-54.6 9:-76 10:-71 11:-74.6 12:-79.6 13:-88.7 14:-79.8 15:-80.6 16:-75.3 19:-91.6 24:-86.6 26:-91.9 32:-93 56:-87.3 64:-68.5",   # tone 13
+        "6:-76 8:-65.5 10:-79.9 12:-77.2 16:-82.8 18:-89.7 28:-90 64:-68.1",   # tone 14
+        "5:-77.9 6:-70.5 8:-55.1 9:-77.7 10:-71.4 11:-71.6 13:-79.8 14:-79.6 15:-81.4 16:-75.7 17:-91.5 18:-91.7 24:-79.4 32:-85.4 37:-86.6 40:-86.8 64:-68",   # tone 15
+        "16:-81.5 64:-67.6",   # tone 16
+        "3:-75.3 6:-68.8 7:-75.1 8:-63.9 9:-75.3 10:-74.6 11:-68.5 12:-78.7 14:-80.8 15:-82.7 16:-73.8 17:-89.7 18:-91.4 19:-91.2 24:-81 32:-85.6 40:-87.7 48:-86.4 64:-67.3",   # tone 17
+        "6:-76.1 8:-62.2 10:-74.9 12:-80.5 14:-87 16:-79.5 64:-66.8",   # tone 18
+        "1:-56.1 5:-80.3 6:-71.5 7:-79.3 8:-61 9:-75.6 10:-76.2 11:-71.3 12:-73.9 13:-86.3 14:-80.8 15:-81.7 16:-78.3 64:-66.7",   # tone 19
+        "4:-76.4 8:-66.7 12:-83 16:-84.6 24:-88.3 64:-66.8",   # tone 20
+        "2:-64.2 5:-78.6 6:-69.5 7:-80.4 8:-55 9:-73.7 10:-74.8 11:-69.6 12:-84.1 13:-88.3 14:-78.9 15:-80.8 16:-76.9 22:-89.3 56:-84.7",   # tone 21
+        "4:-76.1 8:-67.2 10:-75.1 12:-83.3 14:-83.2 16:-81.8 20:-86.3 32:-84.3",   # tone 22
+        "1:-64.8 5:-84.4 6:-78.2 7:-87.2 8:-54.1 9:-74.6 10:-74.2 11:-77.2 12:-81.2 13:-89 14:-83.6 16:-79.4 24:-83",   # tone 23
+        "8:-67.7 16:-81.1",   # tone 24
+        "4:-85 5:-85.2 6:-70.1 7:-73.9 8:-57.2 9:-78.8 10:-72 11:-80.2 12:-86.6 14:-81.5 15:-83.4 16:-79.5 24:-83.8",   # tone 25
+        "2:-73.7 4:-79 6:-78.8 8:-69.4 10:-70.6 12:-80.4 14:-83.4 16:-76.6",   # tone 26
+    ),
 }
 WHINE_VOWEL_RMS = 0.0426                 # this host's loud vowel at unit volume 6, after the board pole
 WHINE_TABLE = 1024
@@ -81,32 +131,20 @@ WHINE_SEED = 392
 
 
 def whine_wave(r4, out_rate, mode="whine", xck=1e6):
-    """One 64-tick period of the hiss or whine at tone register r4, band-limited under 0.45 x out_rate: (fc, table)."""
-    g_db, order, corner = WHINE_MODELS[mode]
-    import cmath
+    """One 64-tick period of the hiss or whine at tone register r4, band-limited under 0.45 x out_rate: (fc, table).
+    Tones past 26 (R4 FB-FF, not offered) use tone 26's levels."""
     import math
     n_div = 256 - r4
     if n_div <= 0:
         return None, None
     fc = xck / (2.0 * n_div)
-    seed, ph = WHINE_SEED, []
-    for m in range(33):
+    tone = min(26, max(0, 32 - n_div))
+    levels = dict((int(n), float(db)) for n, db in (p.split(":") for p in WHINE_TONES[mode][tone].split()))
+    seed, lines = WHINE_SEED, []
+    for n in range(1, 65):
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
-        ph.append(2 * math.pi * seed / 0x7FFFFFFF)
-    amp = [0.0 if (m == 0 or g is None) else math.sqrt(2.0) * 10 ** (g / 20.0) for m, g in enumerate(g_db)]
-    g64 = [sum(amp[m] * math.cos(2 * math.pi * m * s / 64.0 + ph[m]) for m in range(1, 33)) for s in range(64)]
-    x = [g64[(k * n_div) % 64] for k in range(64)]
-    lines = []
-    for n in range(1, 64):
-        f = n * fc / 64.0
-        if f >= 0.45 * out_rate:
-            break
-        X = sum(x[k] * cmath.exp(-2j * math.pi * n * k / 64.0) for k in range(64))
-        a = abs(X) / 64.0 * (1.0 if n == 32 else 2.0)
-        if a <= 0.0:
-            continue
-        h = (1.0 + (f / corner) ** 2) ** (-order / 2.0)
-        lines.append((n, a * h * WHINE_VOWEL_RMS, cmath.phase(X)))
+        if n in levels and n * fc / 64.0 < 0.45 * out_rate:
+            lines.append((n, math.sqrt(2.0) * 10 ** (levels[n] / 20.0) * WHINE_VOWEL_RMS, 2 * math.pi * seed / 0x7FFFFFFF))
     tab = [sum(a * math.cos(2 * math.pi * n * j / WHINE_TABLE + p) for n, a, p in lines) for j in range(WHINE_TABLE)]
     return fc, tab
 
