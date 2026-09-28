@@ -1,6 +1,6 @@
 """Stacked question marks through the real Braille Lite driver (stand-in NVDA): the R1 the chip gets for '?', '??',
 '???' as NVDA sends them (Tomi's log: 'hi, how are you??\\r\\n', the line break included), and a wav for listening
-(D:\\downloads\\sbs\\stacked_questions.wav).
+(stacked_questions_rate<r>.wav in the current folder, or QQ_OUT).
 
     python qq_driver.py
 """
