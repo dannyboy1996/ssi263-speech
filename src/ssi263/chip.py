@@ -628,7 +628,9 @@ class SSI263:
                         elif (noise_lead is not None and look and self.releases and not self.released
                               and self.elapsed >= (self.duration - p["closure_release_frames"] * frame * scale
                                                    - noise_lead)
-                              and self._pending_open()):
+                              and self.clo <= 0.0 and self._pending_open()):
+                            # only behind a FULLY shut gate: at rate 15 the window can open while it is still
+                            # closing (clo 0.3 measured), which would leak the hiss the unbounded version clicked with
                             # Astra (Reply 59): a bounded precharge, the stop's own noise building behind
                             # the closed gate over its last noise_lead before the release point
                             t2, t5 = self.target["FA"] * self.w2, self.target["FA"] * self.w5

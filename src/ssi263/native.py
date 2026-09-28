@@ -50,6 +50,7 @@ class _Params(ctypes.Structure):
         ("late_release_burst", _c_double), ("fricative_precharge", _c_double),
         ("closure_onto_silence", _c_double),
         ("field_speed_mult", _c_double * 6), ("glottal_n", _c_double), ("glottal_wave", _c_double * 64),
+        ("closure_noise_lead_s", _c_double),
     ]
 
 
@@ -72,8 +73,7 @@ def params_struct(p):
         raise ValueError("gate_close_from_load / gate_hold_to_next_load: diagnostics, not in the C core")
     if p["clock_line_rel_db"] is not None:
         raise ValueError("clock_line_rel_db = %r: the C core has no clock line" % (p["clock_line_rel_db"],))
-    if p["closure_noise_lead_ms"] is not None:
-        raise ValueError("closure_noise_lead_ms = %r: the C core has no bounded precharge" % (p["closure_noise_lead_ms"],))
+    s.closure_noise_lead_s = -1.0 if p["closure_noise_lead_ms"] is None else float(p["closure_noise_lead_ms"]) / 1000.0
     wave = tuple(p["glottal_wave"])
     if not 1 <= len(wave) <= 64:
         raise ValueError("glottal_wave: 1 to 64 levels, got %d" % len(wave))

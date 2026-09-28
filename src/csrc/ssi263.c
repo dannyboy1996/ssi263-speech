@@ -491,6 +491,7 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
     int look = p->release_lookahead != 0.0;
     double lead = p->lookahead_lead_frames;
     int precharge = p->fricative_precharge != 0.0;
+    double noise_lead = p->closure_noise_lead_s;   /* as chip.py closure_noise_lead_ms; < 0 = off */
     int lfsr_top = (int)p->lfsr_bits - 1;
     unsigned long long lfsr_mask = (1ULL << (int)p->lfsr_bits) - 1;
     double ng = p->noise_gain, gain = p->output_gain, amp_mult = p->art_amp_mult;
@@ -657,6 +658,13 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
                             t2 = pe[FA] * w2;
                             t5 = pe[FA] * w5;
                         }
+                    } else if (noise_lead >= 0.0 && look && c->releases && !c->released
+                               && c->elapsed >= c->duration - p->closure_release_frames * frame * scale - noise_lead
+                               && c->clo <= 0.0 && pending_open(c)) {
+                        /* a bounded precharge: the stop's own noise builds behind the closed gate over its last
+                           noise_lead before the release point (Astra, Reply 59; Tomi's ear, 2026-09-27) */
+                        t2 = c->target[FA] * c->w2;
+                        t5 = c->target[FA] * c->w5;
                     }
                 } else if (has_burst_hold && c->closing && c->releases
                            && c->elapsed >= c->duration

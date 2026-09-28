@@ -42,6 +42,9 @@ MAKEUP = 2.0            # +6 dB so volume 6 sits at a normal level
 # A roll-off after the chip (hosts/blazie.py) that matches the unit's line out: first order at 5 kHz matched
 # its line out on Reclaim and the MASTER sentences, and won Tomi's A/B ("9E really wins").
 BOARD_LOWPASS_HZ = 5000.0
+# The stops' noise may build behind the shut gate for this long before a release (engine closure_noise_lead_ms;
+# Astra Reply 59, the A/B Tomi liked; checked at rates 1-15, the gate always fully shut when it starts).
+CLOSURE_NOISE_LEAD_MS = 10.0
 # Factory settings after a warm reset (MASTER, confirmed on tape): rate 11, tone 7, and
 # r1 = 45h (81.4 Hz, the pitch of Tomi's Braille 'n Speak 2000 recording).  NVDA's slider
 # midpoints map onto them, and nothing is sent until a slider moves.
@@ -415,7 +418,12 @@ class SynthDriver(SynthDriver):
         # to 0.25 s.  The unit then writes exactly what it did with the MASTER harness's
         # 8M/10M (tools/boot_gaps.py); below a 2.5M start it never reaches speech-box mode.
         # The emulator is deterministic, so this holds on every machine.
-        chip = SSI263C(params={"carrier_rel_db": -300.0} if self._whine != "off" else None, out_rate=self._out_rate)
+        # the bounded T/P/K precharge Tomi chose by ear ("more bursty without being thicker", 2026-09-27): noise builds
+        # behind the fully shut gate over the last 10 ms before a release
+        params = {"closure_noise_lead_ms": CLOSURE_NOISE_LEAD_MS}
+        if self._whine != "off":
+            params["carrier_rel_db"] = -300.0     # the whine model carries the carrier's lines
+        chip = SSI263C(params=params, out_rate=self._out_rate)
         unit = Blazie(EXE, FIRMWARE, STATE, chip=chip, out_rate=self._out_rate,
                       menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
                       board_lowpass_hz=BOARD_LOWPASS_HZ,
