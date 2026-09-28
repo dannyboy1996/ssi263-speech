@@ -55,7 +55,7 @@ Name: "{autoprograms}\SSI-263 SAPI settings"; Filename: "{app}\ssi263_settings.e
 ; regsvr32 for both registry views, then one token per voice the server lists.  Every install re-registers:
 ; these voices carry their firmware, so there is no data folder or choice of voices to preserve.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Register"; StatusMsg: "Registering the SSI-263 voices..."; Flags: runhidden
-Filename: "{app}\ssi263_settings.exe"; Description: "Open SSI-263 SAPI settings"; Flags: postinstall nowait skipifsilent unchecked
+Filename: "{app}\ssi263_settings.exe"; Description: "Open SSI-263 SAPI settings"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Unregister"; RunOnceId: "UnregisterSsi263"; Flags: runhidden
