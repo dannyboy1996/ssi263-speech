@@ -46,9 +46,11 @@ BOARD_LOWPASS_HZ = 5000.0
 # r1 = 45h (81.4 Hz, the pitch of Tomi's Braille 'n Speak 2000 recording).  NVDA's slider
 # midpoints map onto them, and nothing is sent until a slider moves.
 DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE = 11, 16, 7
-# The unit's own tone range: its frequency chords (dots 23 / 56) step 0-16, 17 values, and the value goes
-# straight to the chip (R4 = E0h + tone).  ^E n T reaches further, but no unit ever offered that.
-TONES = range(0, 17)
+# Tones: the unit's frequency chords (dots 23 / 56) step 0-16, default 7, and the value goes straight to the chip
+# (R4 = E0h + tone).  In speech-box mode ^E n T takes 0-31 unchecked (32 wraps to 0), so a screen reader could
+# send more than the chords allow; Tomi hears 17-26 on the unit that way.  0-26 (27-31 put the filter clock
+# at 100-500 kHz).
+TONES = range(0, 27)
 # The firmware takes ^E n E modulo 16 (measured on the unit, and the same emulated): rate 16
 # speaks at rate 10's speed, so the fastest rate is 15.
 MAX_RATE = 15
