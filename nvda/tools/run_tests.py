@@ -13,6 +13,9 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+# a check's own output may carry characters the console lacks ("£", U+FFFD): never let the report crash the run
+sys.stdout.reconfigure(errors="replace")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 NVDA = sys.argv[1] if len(sys.argv) > 1 else r"C:\Program Files\NVDA"
 PY = sys.executable
@@ -75,6 +78,16 @@ CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA
 CHECKS.append(check("bl_voice = the NVDA driver, byte for byte", [PY, "voice_equiv.py"]))
 CHECKS.append(check("bl_voice CONTROL (packing flipped, must fail)", [PY, "voice_equiv.py"],
                     env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True))
+# bl_voice's text path (currencies, clean-up, lines, encoding) against the driver's, on random texts; and its control
+CHECKS.append(check("bl_voice text = the driver's, 5000 random texts", [PY, "voice_text_equiv.py", "5000", "1"]))
+CHECKS.append(check("bl_voice text CONTROL (no currencies, must fail)", [PY, "voice_text_equiv.py", "2000", "1"],
+                    env={"VOICE_TEXT_BREAK": "1"}, expect_fail=True))
+# other currencies than the dollar reach every unit as words (a listener: "£2.63" was read "2.63")
+CHECKS.append(check("currency rule", [PY, "currency_test.py", "rules"]))
+for w in ("blazie", "speakout", "accent"):
+    CHECKS.append(check("currency %s: the unit is sent pounds and pence" % w, [PY, "currency_test.py", w]))
+CHECKS.append(check("currency CONTROL (rule off, must fail)", [PY, "currency_test.py", "speakout"],
+                    env={"CURRENCY_OFF": "1"}, expect_fail=True))
 CHECKS.append(check("cp850 table", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie",
                                                      "gen_cp850.py"), "--check"]))
 GEN_DEFAULTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "gen_chip_defaults.py")

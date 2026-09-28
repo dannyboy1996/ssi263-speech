@@ -240,6 +240,56 @@ _NUMBER = re.compile(r"""
 #: five" as "twenty five".)
 MONEY = re.compile(r"(\$\d[\d,]*(?:\.\d+)?|\$\.\d+)")
 
+#: Other currencies, which these units' firmware never knew: their rules read "$" as dollars, and a pound sign is not
+#: even in the English units' 7-bit character set, so "£2.63" reached them as "2.63" (a listener, 2026-09-28).
+#: currencies() writes them out, digits kept (the number setting still applies after): the symbol before the
+#: amount, or after it for the euro ("5 €") and the cent ("50¢").  "$" is left to the firmware.
+CURRENCY_UNITS = {"£": ("pound", "pounds", "penny", "pence"),
+                  "€": ("euro", "euros", "cent", "cents"),
+                  "¥": ("yen", "yen", None, None)}
+_AMOUNT = r"(\d{1,3}(?:,\d{3})+|\d+)?(?:\.(\d+))?"
+_CURRENCY = re.compile(r"([£€¥]) ?" + _AMOUNT + r"(?![\d.]\d)"
+                       r"|(?<![\w.,])" + _AMOUNT + r" ?€"
+                       r"|(?<![\w.,])(\d+) ?¢")
+
+
+def _currency_words(sym, whole, frac):
+    major1, major, minor1, minor = CURRENCY_UNITS[sym]
+    if frac is not None and (len(frac) > 2 or minor is None):
+        return "%s.%s %s" % (whole or "0", frac, major)            # read as a number: "2.635 pounds"
+    cents = int((frac + "0")[:2]) if frac else 0
+    out = []
+    if whole and (int(whole.replace(",", "")) or not cents):
+        out.append("%s %s" % (whole, major1 if whole == "1" else major))
+    if cents:
+        out.append("%d %s" % (cents, minor1 if cents == 1 else minor))
+    return " ".join(out)
+
+
+def currencies(text, lang="en"):
+    """£, € and ¥ amounts (and 50¢) as words around their digits: "£2.63" -> "2 pounds 63 pence".  English only:
+    other languages' text is returned as it is."""
+    if lang != "en":
+        return text
+
+    def words(m):
+        if m.group(1):
+            if m.group(2) is None and m.group(3) is None:
+                return None                                         # a bare symbol: leave it
+            return _currency_words(m.group(1), m.group(2), m.group(3))
+        if m.group(6) is not None:
+            return "%s %s" % (m.group(6), "cent" if m.group(6) == "1" else "cents")
+        if m.group(4) is None and m.group(5) is None:
+            return None
+        return _currency_words("€", m.group(4), m.group(5))
+
+    def sub(m):
+        w = words(m)
+        if w is None:
+            return m.group(0)
+        return (" " + w) if m.start() and text[m.start() - 1].isalnum() else w   # "a£3" -> "a 3 pounds"
+    return _CURRENCY.sub(sub, text)
+
 
 # Spain's convention (the Braille Lite's Spanish firmware is ONCE's): "1.234.567" groups thousands with dots and
 # "3,5" is "tres coma cinco".  Only with decimal_comma=True, so the Mexican-Spanish default (a decimal point, "punto")

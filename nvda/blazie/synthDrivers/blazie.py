@@ -603,7 +603,8 @@ class SynthDriver(SynthDriver):
                     self._cur_pitch = want
                     self._pitch_dirty = True
                 continue
-            text = _clean(value, unit.encoding)
+            # "£2.63": the firmware reads only "$" (and the English unit has no pound sign at all)
+            text = _clean(numwords.currencies(value, unit.lang), unit.encoding)
             if self._numbers:
                 # with the add-on's boot the firmware counts to 999,999,999,999 and says a
                 # trillion as "one billion" (measured); this is for those

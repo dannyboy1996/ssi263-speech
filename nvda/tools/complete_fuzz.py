@@ -48,13 +48,26 @@ raw = []             # every write to R0 and R3 with its tag, for the failure re
 DUMP = open(os.environ["COMPLETE_FUZZ_DUMP"], "w") if os.environ.get("COMPLETE_FUZZ_DUMP") else None
 
 
+r3 = [0x7F]          # the chip's R3 as last written (amplitude in bits 3-0)
+prep = []            # phonemes loaded at amplitude 0: preparation, not speech (below)
+
+
 def write(t, reg, val):
     if DUMP:
         DUMP.write("#%s W %.5f R%d=%02X %s\n" % (cur[0], t, reg, val, names.get(val & 0x3F, "?") if reg == 0 else ""))
     if reg in (0, 3):
         raw.append((cur[0], reg, val, round(t, 4)))
+    if reg == 3:
+        r3[0] = val
     if reg == 0 and (val & 0x3F) and names.get(val & 0x3F) != "PA":
-        loads.append((cur[0], names.get(val & 0x3F, "?")))
+        if not (r3[0] & 0x0F):
+            # The Braille Lite's HF handler emits a short E at amplitude 0 before HF, a two-pass preparation that
+            # a flag (D603 bit 1) steers; a cancel between the passes leaves the flag set and the next Hello's
+            # preparation is skipped (Astra, Reply 74).  Silent by the chip's amplitude: not a spoken phoneme.
+            # Kept, and shown in a failure report, so a change in that state stays visible.
+            prep.append((cur[0], names.get(val & 0x3F, "?")))
+        else:
+            loads.append((cur[0], names.get(val & 0x3F, "?")))
 
 
 watch_writes(unit, write)
@@ -171,6 +184,9 @@ for step in range(STEPS):
                 print("step %d: %r ended with %d of its %d phonemes (%s | ref %s)" % (
                     step, text, len(got(k)), len(ref[text]), " ".join(got(k)), " ".join(ref[text])))
                 print("    previous #%d %r: %s" % (k - 1, said[k - 1][0], " ".join(got(k - 1))))
+                print("    amplitude-0 preparation loads for #%d / #%d: %s / %s" % (
+                    k - 1, k, " ".join(p for i, p in prep if i == k - 1) or "-",
+                    " ".join(p for i, p in prep if i == k) or "-"))
                 rw = [r for r in raw if r[0] in (k - 1, k)]
                 print("    raw R0/R3 writes around the start of #%d: %s" % (k, " ".join(
                     "#%d:R%d=%02X@%.4f" % r for r in rw[max(0, next((i for i, r in enumerate(rw) if r[0] == k), len(rw)) - 6):][:14])))

@@ -28,6 +28,7 @@ _ENGINE_DIR = os.path.join(_HERE, "_ssi263_speakout")
 # the Braille Lite add-on ships an `ssi263` too, and one process has one module per name.
 from ._ssi263_speakout.speakout_host import SpeakOut
 from ._ssi263_speakout import ssi263_rates as rates
+from ._ssi263_speakout import ssi263_numwords as numwords
 from ._ssi263_speakout.ssi263.native import SSI263C    # the chip in C
 
 BLOCK_S = 0.03
@@ -363,7 +364,7 @@ class SynthDriver(SynthDriver):
                     cur_pitch = self._cur_pitch = want
                     self._pitch_dirty = True
                 continue
-            text = _clean(value).strip()
+            text = _clean(numwords.currencies(value)).strip()   # "£2.63": the firmware reads only "$"
             if not text:
                 continue
             t_start = box.chip.time

@@ -150,6 +150,171 @@ static int cp850_byte(unsigned c)                           /* -1 if cp850 has n
     return -1;
 }
 
+/* ---- ssi263_numwords.currencies (English only): "£2.63" -> "2 pounds 63 pence" -------------------------------------
+   The regex, tried as Python's re does: at each position the three alternatives in order, each amount in the
+   engine's preference order (longest first, then backtracking), the first that passes the lookahead wins.
+   str.isalnum / \w beyond Latin-1 are approximated (letters unless punctuation, symbols or emoji). */
+static int py_isalnum(unsigned c)
+{
+    if (c < 128) return (c >= '0' && c <= '9') || ((c | 32) >= 'a' && (c | 32) <= 'z');
+    if (c < 256) return c == 0xAA || c == 0xB2 || c == 0xB3 || c == 0xB5 || c == 0xB9 || c == 0xBA
+                     || (c >= 0xBC && c <= 0xBE) || (c >= 0xC0 && c != 0xD7 && c != 0xF7);
+    if ((c >= 0x2000 && c <= 0x2BFF) || (c >= 0x3000 && c <= 0x303F) || (c >= 0xE000 && c <= 0xF8FF)
+            || (c >= 0xFE00 && c <= 0xFE0F) || c >= 0x1F000)
+        return 0;
+    return !py_isspace(c);
+}
+
+static int py_isword(unsigned c) { return c == '_' || py_isalnum(c); }
+static int isdig(unsigned c) { return c >= '0' && c <= '9'; }
+
+/* the amount at i: (whole)? (.frac)? -- candidates in the regex's order; returns how many were written to cand
+   (each: whole start/end, frac start/end, -1 = absent, and the end) */
+typedef struct { int w0, w1, f0, f1, end; } amount;
+
+static int amounts(const unsigned *t, int n, int i, amount *cand, int cap)
+{
+    int k = 0, wend[64], nw = 0, j, g;
+    /* whole: \d{1,3}(?:,\d{3})+ -- greedy digits 3..1, then groups most..1 -- then \d+ longest..1, then absent */
+    for (j = 3; j >= 1; j--) {
+        int d;
+        for (d = 0; d < j; d++) if (i + d >= n || !isdig(t[i + d])) break;
+        if (d < j) continue;
+        {
+            int ends[32], ne = 0, p = i + j;
+            while (ne < 32 && p + 3 < n && t[p] == ',' && isdig(t[p + 1]) && isdig(t[p + 2]) && isdig(t[p + 3])) {
+                p += 4;
+                ends[ne++] = p;
+            }
+            for (g = ne - 1; g >= 0 && nw < 64; g--) wend[nw++] = ends[g];
+        }
+    }
+    for (j = i; j < n && isdig(t[j]); j++) ;
+    for (g = j; g > i && nw < 64; g--) wend[nw++] = g;
+    wend[nw++] = -1;                                       /* whole absent */
+    for (g = 0; g < nw && k < cap; g++) {
+        int w1 = wend[g], p = w1 < 0 ? i : w1, f;
+        if (p < n && t[p] == '.' && p + 1 < n && isdig(t[p + 1])) {
+            for (f = p + 1; f < n && isdig(t[f]); f++) ;
+            for (; f > p + 1 && k < cap; f--) {
+                cand[k].w0 = w1 < 0 ? -1 : i; cand[k].w1 = w1; cand[k].f0 = p + 1; cand[k].f1 = f; cand[k].end = f;
+                k++;
+            }
+        }
+        if (k < cap) {
+            cand[k].w0 = w1 < 0 ? -1 : i; cand[k].w1 = w1; cand[k].f0 = -1; cand[k].f1 = -1; cand[k].end = p;
+            k++;
+        }
+    }
+    return k;
+}
+
+static int put_ascii(unsigned *out, int m, const char *s)
+{
+    while (*s) out[m++] = (unsigned char)*s++;
+    return m;
+}
+
+static int put_span(unsigned *out, int m, const unsigned *t, int a, int b)
+{
+    while (a < b) out[m++] = t[a++];
+    return m;
+}
+
+/* _currency_words: sym 0 pound, 1 euro, 2 yen */
+static int currency_words(const unsigned *t, const amount *a, int sym, unsigned *out, int m)
+{
+    static const char *units[3][4] = {{"pound", "pounds", "penny", "pence"}, {"euro", "euros", "cent", "cents"},
+                                      {"yen", "yen", NULL, NULL}};
+    int cents = 0, whole_nonzero = 0, first = 1, i;
+    char buf[32];
+    if (a->f0 >= 0 && (a->f1 - a->f0 > 2 || !units[sym][2])) {        /* "2.635 pounds" */
+        if (a->w0 >= 0) m = put_span(out, m, t, a->w0, a->w1); else out[m++] = '0';
+        out[m++] = '.';
+        m = put_span(out, m, t, a->f0, a->f1);
+        out[m++] = ' ';
+        return put_ascii(out, m, units[sym][1]);
+    }
+    if (a->f0 >= 0)
+        cents = (int)(t[a->f0] - '0') * 10 + (a->f1 - a->f0 > 1 ? (int)(t[a->f0 + 1] - '0') : 0);
+    if (a->w0 >= 0)
+        for (i = a->w0; i < a->w1; i++) if (isdig(t[i]) && t[i] != '0') whole_nonzero = 1;
+    if (a->w0 >= 0 && (whole_nonzero || !cents)) {
+        int one = a->w1 - a->w0 == 1 && t[a->w0] == '1';
+        m = put_span(out, m, t, a->w0, a->w1);
+        out[m++] = ' ';
+        m = put_ascii(out, m, units[sym][one ? 0 : 1]);
+        first = 0;
+    }
+    if (cents) {
+        if (!first) out[m++] = ' ';
+        snprintf(buf, sizeof buf, "%d ", cents);
+        m = put_ascii(out, m, buf);
+        m = put_ascii(out, m, units[sym][cents == 1 ? 2 : 3]);
+    }
+    return m;
+}
+
+static int lookahead_ok(const unsigned *t, int n, int p)   /* (?![\d.]\d) */
+{
+    return !(p + 1 < n && (isdig(t[p]) || t[p] == '.') && isdig(t[p + 1]));
+}
+
+static int currencies(const unsigned *t, int n, unsigned *out)
+{
+    int i = 0, m = 0;
+    amount cand[256];
+    while (i < n) {
+        int nc, c, end = -1, sym = -1, done = 0, before = i > 0 && !py_isword(t[i - 1]) && t[i - 1] != '.'
+                                                           && t[i - 1] != ',';
+        int m0 = m;
+        amount a;
+        if (i == 0) before = 1;
+        /* alternative 1: [£€¥] ?amount(?![\d.]\d) */
+        if (t[i] == 0xA3 || t[i] == 0x20AC || t[i] == 0xA5) {
+            int s = t[i] == 0xA3 ? 0 : t[i] == 0x20AC ? 1 : 2, sp;
+            for (sp = (i + 1 < n && t[i + 1] == ' ') ? 1 : 0; sp >= 0 && !done; sp--) {
+                nc = amounts(t, n, i + 1 + sp, cand, 256);
+                for (c = 0; c < nc; c++)
+                    if (lookahead_ok(t, n, cand[c].end)) { a = cand[c]; end = a.end; sym = s; done = 1; break; }
+            }
+        }
+        /* alternative 2: (?<![\w.,])amount ?€ */
+        if (!done && before) {
+            nc = amounts(t, n, i, cand, 256);
+            for (c = 0; c < nc && !done; c++) {
+                int p = cand[c].end;
+                if (p < n && t[p] == ' ' && p + 1 < n && t[p + 1] == 0x20AC) { a = cand[c]; end = p + 2; done = 2; }
+                else if (p < n && t[p] == 0x20AC) { a = cand[c]; end = p + 1; done = 2; }
+            }
+        }
+        /* alternative 3: (?<![\w.,])(\d+) ?¢ */
+        if (!done && before && isdig(t[i])) {
+            int p = i;
+            while (p < n && isdig(t[p])) p++;
+            if (p < n && t[p] == ' ' && p + 1 < n && t[p + 1] == 0xA2) { end = p + 2; done = 3; }
+            else if (p < n && t[p] == 0xA2) { end = p + 1; done = 3; }
+            a.w0 = i; a.w1 = p;
+        }
+        if (!done) { out[m++] = t[i++]; continue; }
+        if ((done == 1 || done == 2) && a.w0 < 0 && a.f0 < 0) {  /* a bare symbol (or "€" alone): unchanged */
+            m = put_span(out, m, t, i, end);
+            i = end > i ? end : i + 1;
+            continue;
+        }
+        if (i > 0 && py_isalnum(t[i - 1])) out[m++] = ' ';
+        if (done == 3) {
+            m = put_span(out, m, t, a.w0, a.w1);
+            m = put_ascii(out, m, (a.w1 - a.w0 == 1 && t[a.w0] == '1') ? " cent" : " cents");
+        } else {
+            m = currency_words(t, &a, done == 1 ? sym : 1, out, m);
+        }
+        (void)m0;
+        i = end;
+    }
+    return m;
+}
+
 /* ---- _clean ---------------------------------------------------------------------------------------------------- */
 static int clean(const unsigned *in, int n, int encoding, unsigned *out)
 {
@@ -222,15 +387,74 @@ static int lines(const unsigned *t, int n, int pack, int *ws, int *we, span *out
     return no;
 }
 
-/* ---- _speakSegment + _speakItems (one text item) ----------------------------------------------------------------- */
-BL_API int blv_speak(bl_voice *v, const char *utf8)
+/* ---- the text the driver hands unit.say(): currencies, _clean, _lines, encoded, each line \r ^F, one more \r ^F.
+   malloc'd into *out (the caller frees it); returns the number of lines (0: nothing to say) -------------------------- */
+static int say_bytes(const char *utf8, int encoding, int pack, unsigned char **out, int *out_len)
 {
     int n = (int)strlen(utf8), m, nl, k, w, len = 0;
-    unsigned *cps, *t;
+    unsigned *cps, *cur, *t;
     int *ws, *we;
     span *ln;
     unsigned char *data;
-    int r = unit_rate(v->rate), p = unit_pitch(v->pitch), tone = v->tone;
+    *out = NULL;
+    *out_len = 0;
+    /* sizes: currencies() writes at most 8 code points per one it reads ("£.5" -> "50 pence"), _clean 3 ("...") */
+    cps = (unsigned *)malloc(sizeof(unsigned) * (size_t)(n + 1));
+    cur = (unsigned *)malloc(sizeof(unsigned) * (size_t)(8 * n + 16));
+    t = (unsigned *)malloc(sizeof(unsigned) * (size_t)(24 * n + 48));
+    ws = (int *)malloc(sizeof(int) * (size_t)(24 * n + 48));
+    we = (int *)malloc(sizeof(int) * (size_t)(24 * n + 48));
+    ln = (span *)malloc(sizeof(span) * (size_t)(24 * n + 48));
+    data = (unsigned char *)malloc((size_t)(24 * n + 48) * 2 + 16);
+    if (!cps || !cur || !t || !ws || !we || !ln || !data) {
+        free(cps); free(cur); free(t); free(ws); free(we); free(ln); free(data);
+        return 0;
+    }
+    m = utf8_decode(utf8, cps);
+    /* numwords.currencies(value, unit.lang): the English unit only */
+    if (encoding == BLV_LATIN1)
+        m = currencies(cps, m, cur);
+    else
+        memcpy(cur, cps, sizeof(unsigned) * (size_t)m);
+    m = clean(cur, m, encoding, t);
+    nl = lines(t, m, pack, ws, we, ln);
+    /* unit.say(lines): each line encoded ("replace" -> '?'), then \r ^F; one more \r ^F flushes */
+    for (k = 0; k < nl; k++) {
+        for (w = ln[k].w0; w < ln[k].w1; w++) {
+            int i;
+            if (w > ln[k].w0) data[len++] = ' ';
+            for (i = ws[w]; i < we[w]; i++) {
+                int b = encoding == BLV_CP850 ? cp850_byte(t[i]) : (t[i] < 256 ? (int)t[i] : -1);
+                data[len++] = (unsigned char)(b < 0 ? '?' : b);
+            }
+        }
+        data[len++] = '\r'; data[len++] = 0x06;
+    }
+    if (nl) {
+        data[len++] = '\r'; data[len++] = 0x06;
+    }
+    free(cps); free(cur); free(t); free(ws); free(we); free(ln);
+    *out = data;
+    *out_len = len;
+    return nl;
+}
+
+BL_API int blv_say_bytes(const char *utf8, int encoding, int pack, unsigned char *out, int cap)
+{
+    unsigned char *data;
+    int len, nl = say_bytes(utf8, encoding, pack, &data, &len);
+    (void)nl;
+    if (data && len <= cap)
+        memcpy(out, data, (size_t)len);
+    free(data);
+    return len;
+}
+
+/* ---- _speakSegment + _speakItems (one text item) ----------------------------------------------------------------- */
+BL_API int blv_speak(bl_voice *v, const char *utf8)
+{
+    int r = unit_rate(v->rate), p = unit_pitch(v->pitch), tone = v->tone, nl, len;
+    unsigned char *data;
     const double *y;
     if (r != v->sent_rate || p != v->sent_pitch || tone != v->sent_tone) {
         char cmd[48];
@@ -242,37 +466,13 @@ BL_API int blv_speak(bl_voice *v, const char *utf8)
     v->gain = MAKEUP * v->volume / 100.0;
     v->lead = 1;
     v->active = 0;
-    cps = (unsigned *)malloc(sizeof(unsigned) * (size_t)(n + 1));
-    t = (unsigned *)malloc(sizeof(unsigned) * (size_t)(3 * n + 1));
-    ws = (int *)malloc(sizeof(int) * (size_t)(3 * n + 1));
-    we = (int *)malloc(sizeof(int) * (size_t)(3 * n + 1));
-    ln = (span *)malloc(sizeof(span) * (size_t)(3 * n + 1));
-    data = (unsigned char *)malloc((size_t)(3 * n) * 2 + 16);
-    if (!cps || !t || !ws || !we || !ln || !data) {
-        free(cps); free(t); free(ws); free(we); free(ln); free(data);
-        return 0;
-    }
-    m = clean(cps, utf8_decode(utf8, cps), v->encoding, t);
-    nl = lines(t, m, v->pack, ws, we, ln);
-    /* unit.say(lines): each line encoded ("replace" -> '?'), then \r ^F; one more \r ^F flushes */
-    for (k = 0; k < nl; k++) {
-        for (w = ln[k].w0; w < ln[k].w1; w++) {
-            int i;
-            if (w > ln[k].w0) data[len++] = ' ';
-            for (i = ws[w]; i < we[w]; i++) {
-                int b = v->encoding == BLV_CP850 ? cp850_byte(t[i]) : (t[i] < 256 ? (int)t[i] : -1);
-                data[len++] = (unsigned char)(b < 0 ? '?' : b);
-            }
-        }
-        data[len++] = '\r'; data[len++] = 0x06;
-    }
+    nl = say_bytes(utf8, v->encoding, v->pack, &data, &len);
     if (nl) {
-        data[len++] = '\r'; data[len++] = 0x06;
         bh_set_int(v->host, "turbo_between_lines", v->pack);
         bh_say(v->host, data, len);
         v->active = 1;
     }
-    free(cps); free(t); free(ws); free(we); free(ln); free(data);
+    free(data);
     return nl;
 }
 

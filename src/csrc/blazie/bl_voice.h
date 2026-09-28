@@ -41,6 +41,10 @@ BL_API int blv_render(bl_voice *v, const short **pcm, int *done);
    clean. */
 BL_API void blv_cancel(bl_voice *v);
 
+/* The bytes blv_speak would send the unit for this text (currencies, clean-up, lines, encoding), for tests: returns
+   the length, and copies them into out when they fit in cap. */
+BL_API int blv_say_bytes(const char *utf8, int encoding, int pack, unsigned char *out, int cap);
+
 BL_API bl_host *blv_host(bl_voice *v);
 BL_API ssi263 *blv_chip(bl_voice *v);
 

@@ -517,7 +517,7 @@ class SynthDriver(SynthDriver):
                     self._cur_pitch = want
                     self._pitch_dirty = True
                 continue
-            text = _clean(value).strip()
+            text = _clean(numwords.currencies(value)).strip()   # "£2.63": the firmware reads only "$"
             if self._numbers:
                 text = _numbers(text)
             if not text:
