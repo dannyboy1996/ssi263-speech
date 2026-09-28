@@ -13,7 +13,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.argv[1] if len(sys.argv) > 1 else sys.executable
-SERVE = os.path.join(HERE, "ssi_serve.py")
+SERVE = os.environ.get("SSI_SERVE", os.path.join(HERE, "ssi_serve.py"))   # a staged copy: nvda/dist/sapi/ssi_serve.py
 RATE = 22050
 REQ, RSP, CANCEL = 0x4F535034, 0x4F535052, 0x4F535043
 
