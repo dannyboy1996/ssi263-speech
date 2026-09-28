@@ -245,6 +245,17 @@ if WHICH == "blazie":
              "ok" if rate_ok else "FAILED"))
     d._set_rate(50)
 
+    # the unit's own 17 tones, 0-16 (its frequency chords); tone 0 must really reach the chip as R4 = E0h
+    tones = sorted(int(k) for k in d._get_availableVariants())
+    scenario("tone 0", ["Tone zero."], lambda: d._set_variant("0"))
+    r4 = d._unit.chip.regs[4]
+    d._set_variant("20")                      # beyond the unit: ignored
+    tone_ok = tones == list(range(17)) and r4 == 0xE0 and d._get_variant() == "0"
+    print("blazie tones: %d..%d (%d), tone 0 -> R4 %02X, '20' ignored: %s"
+          % (tones[0], tones[-1], len(tones), r4, "ok" if tone_ok else "FAILED"))
+    rate_ok = rate_ok and tone_ok
+    d._set_variant("7")
+
 # the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402
 srate_default = d._out_rate == 22050 and d._get_sampleRate() == "22050"
