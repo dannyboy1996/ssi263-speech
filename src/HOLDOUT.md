@@ -226,3 +226,9 @@ Braille Lite's idle whine (an fc/64 comb keyed on the amplitude and tone registe
 `blite_sweep/analysis/gap_comb.py` read only its pauses (300-4000 Hz more than 25 dB under the loudest frame: 153 gaps,
 24.4 s) for narrow lines; none stood 8 dB over its floor.  No speech was measured, nothing was fitted or tuned, and
 the engine is unchanged.  The file is 11,025 Hz, so only a comb's members under 5.5 kHz could have shown.
+
+**2026-09-27, Claude: H4, H5, H6 and H7 looked at (silent gaps only).** Same idle-whine question and tool as the H8
+entry above, on Tomi's pointer: `speakout.wav` (H4), `bs2english.wav` (H5), `TNS.wav` (H6), `bs2spanish.wav` (H7).
+Only their pauses were read (0.2-0.5 s each), for narrow lines.  H5, H6 and H7 show lines at the Braille Lite's
+tone-7 comb positions (n x 312.5 Hz: 2494-2503, 3125-3131, 3437-3441, 4677 Hz); H4 shows none.  No speech measured,
+nothing fitted or tuned; the engine is unchanged.
