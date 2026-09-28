@@ -20,6 +20,13 @@ OUT = os.path.join(REPO, "nvda", "dist", "blazie-lib")
 FLAGS = ["-O3", "-fcommon", "-std=gnu89", "-static", "-s"]
 
 
+# bl.dll: the board, the Z180 core and the host (bl_host.c), in-process; the chip comes from ssi263.dll (linked
+# against it, so Windows reuses the copy native.py already loaded: one chip, the one SSI263C made).  Floating point
+# as ssi263.dll's: SSE2 doubles on 32-bit, no fused multiply-adds -- the host's time arithmetic must be Python's.
+DLL_FLAGS = ["-O3", "-fcommon", "-std=gnu89", "-ffp-contract=off", "-shared", "-static", "-static-libgcc", "-s"]
+ARCHES = {"x86": ("W64DEVKIT_X86", ["-msse2", "-mfpmath=sse"]), "x64": ("W64DEVKIT", [])}
+
+
 def main():
     z180 = repo_paths.external("Z180EMU")
     gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
@@ -29,6 +36,16 @@ def main():
     for exe, main_c in (("bl_live.exe", "bl_live.c"), ("test_bl_board.exe", "test_bl_board.c")):
         subprocess.run([gcc] + FLAGS + inc + ["-o", os.path.join(OUT, exe), os.path.join(HERE, "bl_unity.c"),
                                                os.path.join(HERE, main_c)], env=env, check=True)
+    engine = os.path.dirname(os.path.dirname(HERE))
+    for arch, (key, extra) in ARCHES.items():
+        bindir = repo_paths.bin_dir(key, path_fallback=(arch == "x64"))
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+        out_dir = os.path.join(OUT, arch)
+        os.makedirs(out_dir, exist_ok=True)
+        chip_dll = os.path.join(engine, "ssi263", "_bin", arch, "ssi263.dll")
+        subprocess.run([os.path.join(bindir, "gcc.exe")] + DLL_FLAGS + extra + inc
+                       + ["-o", os.path.join(out_dir, "bl.dll"), os.path.join(HERE, "bl_unity.c"),
+                          os.path.join(HERE, "bl_host.c"), chip_dll], env=env, check=True)
     print("built %s" % OUT)
 
 

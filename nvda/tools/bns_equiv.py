@@ -28,13 +28,20 @@ if sys.argv[1:2] == ["--compare"]:
                                                           b[k] if k < len(b) else "-"))
     sys.exit(1)
 
-import numpy as np                           # noqa: E402
+try:
+    import numpy as np                       # noqa: E402
+except ImportError:                          # NVDA 2021-2023 rigs (Python 3.7, 32-bit): array("f") gives the same float32 bytes
+    np = None
+from array import array as _array           # noqa: E402
 from ssi263.native import SSI263C            # noqa: E402
 from hosts.blazie import Blazie              # noqa: E402
+if "--native" in sys.argv:
+    from hosts.native_blazie import NativeBlazie as Blazie   # noqa: E402,F811
 
+NATIVE = "--native" in sys.argv              # the in-process host: EXE is bl.dll (hosts/native_blazie.py)
 SPANISH = "--es" in sys.argv                # the Spanish unit (BL2SPA.BNS, cp850) and Spanish lines
 AGAINST = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--against=")), None)   # a golden file
-ARGS = [a for a in sys.argv[1:] if a != "--es" and not a.startswith("--against=")]
+ARGS = [a for a in sys.argv[1:] if a not in ("--es", "--native") and not a.startswith("--against=")]
 EXE = os.path.abspath(ARGS[0])
 OUT = ARGS[1] if len(ARGS) > 1 else None
 ENG = os.path.join(REPO, "nvda", "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
@@ -55,14 +62,18 @@ def spy(reg, val):
 
 chip.write = spy
 t_start = time.perf_counter()
+extra = {}
+if NATIVE:                                  # the C host writes the chip directly: it reports its writes
+    chip.write = orig
+    extra["on_write"] = lambda t, reg, val: log.append("W %.9f %d %02X" % (t, reg, val))
 u = Blazie(EXE, FW, ST, chip=chip, out_rate=22050, menu=("punct_none", "numbers_toggle"),
-           key_start=3000000, key_gap=1500000, board_lowpass_hz=5000.0, status=("inflection_on",))
+           key_start=3000000, key_gap=1500000, board_lowpass_hz=5000.0, status=("inflection_on",), **extra)
 audio = hashlib.sha1()
 
 
 def run(seconds):
     y = u.run(seconds)
-    audio.update(np.asarray(y, dtype=np.float32).tobytes())
+    audio.update(np.asarray(y, dtype=np.float32).tobytes() if np is not None else _array("f", y).tobytes())
 
 
 u.send(b"\x18")

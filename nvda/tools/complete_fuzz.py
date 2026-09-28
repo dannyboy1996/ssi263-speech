@@ -41,8 +41,13 @@ if names is None:
 ow = unit.chip.write
 
 
+raw = []             # every write to R0 and R3 with its tag, for the failure report
+
+
 def write(reg, val):
     ow(reg, val)
+    if reg in (0, 3):
+        raw.append((cur[0], reg, val, round(unit.chip.time, 4)))
     if reg == 0 and (val & 0x3F) and names.get(val & 0x3F) != "PA":
         loads.append((cur[0], names.get(val & 0x3F, "?")))
 
@@ -157,6 +162,10 @@ for step in range(STEPS):
                 bad += 1
                 print("step %d: %r ended with %d of its %d phonemes (%s | ref %s)" % (
                     step, text, len(got(k)), len(ref[text]), " ".join(got(k)), " ".join(ref[text])))
+                print("    previous #%d %r: %s" % (k - 1, said[k - 1][0], " ".join(got(k - 1))))
+                rw = [r for r in raw if r[0] in (k - 1, k)]
+                print("    raw R0/R3 writes around the start of #%d: %s" % (k, " ".join(
+                    "#%d:R%d=%02X@%.4f" % r for r in rw[max(0, next((i for i, r in enumerate(rw) if r[0] == k), len(rw)) - 6):][:14])))
                 print("    sent to the unit: %s; driver queue empty: %s; cancel flag: %s" % (
                     k not in pending, d._queue.empty(), d._cancelFlag.is_set()))
                 print("    " + "\n    ".join(trace[-14:]))

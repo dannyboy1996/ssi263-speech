@@ -58,6 +58,13 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
     for lang in ("en", "es"):
         CHECKS.append(check("library board golden (%s)" % lang, [PY, "bns_equiv.py", os.path.join(LIB, "bl_live.exe"),
                             "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+    # the in-process host (bl.dll + hosts/native_blazie.py): the golden vectors bit for bit, 64-bit and 32-bit
+    for arch, py in (("x64", PY), ("x86", PY37)):
+        dll = os.path.join(LIB, arch, "bl.dll")
+        if os.path.isfile(dll) and os.path.isfile(py):
+            for lang in ("en", "es"):
+                CHECKS.append(check("in-process host %s golden (%s)" % (arch, lang), [py, "bns_equiv.py", dll, "--native",
+                                    "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
     CHECKS.append(check("library board: two units in one process", [os.path.join(LIB, "test_bl_board.exe"),
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
