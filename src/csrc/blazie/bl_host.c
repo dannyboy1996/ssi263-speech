@@ -387,6 +387,7 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "preparing")) return h->preparing;
     if (!strcmp(name, "turbo_between_lines")) return h->turbo_between_lines;
     if (!strcmp(name, "ar")) return h->ar;
+    if (!strcmp(name, "log_writes")) return h->log_on;
     return 0;
 }
 
@@ -397,6 +398,7 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
     else if (!strcmp(name, "stale_f")) h->stale_f = v;
     else if (!strcmp(name, "preparing")) h->preparing = v;
     else if (!strcmp(name, "turbo_between_lines")) h->turbo_between_lines = v;
+    else if (!strcmp(name, "log_writes")) h->log_on = v != 0;
 }
 
 BL_API double bh_get_double(const bl_host *h, const char *name)

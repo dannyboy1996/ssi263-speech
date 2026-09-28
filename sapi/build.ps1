@@ -8,8 +8,9 @@ param([string]$Stage = "")
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
 if (!$Stage) { $Stage = Join-Path $repo "nvda\dist\sapi" }
-$msvc = Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" -Directory | Sort-Object Name | Select-Object -Last 1
-$sdk = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory | Sort-Object Name | Select-Object -Last 1
+$pf86 = ${env:ProgramFiles(x86)}
+$msvc = Get-ChildItem (Join-Path $pf86 "Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC") -Directory | Sort-Object Name | Select-Object -Last 1
+$sdk = Get-ChildItem (Join-Path $pf86 "Windows Kits\10\Include") -Directory | Sort-Object Name | Select-Object -Last 1
 if (!$msvc -or !$sdk) { throw "MSVC Build Tools and the Windows SDK are required" }
 New-Item -ItemType Directory -Force $Stage,(Join-Path $Stage "x86"),(Join-Path $Stage "x64") | Out-Null
 foreach ($arch in "x86","x64") {

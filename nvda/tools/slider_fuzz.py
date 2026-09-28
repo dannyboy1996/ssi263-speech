@@ -12,6 +12,8 @@ import random
 import sys
 import time
 
+from write_spy import watch_writes
+
 STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 150
 SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 sys.argv = [sys.argv[0], "blazie"]
@@ -27,10 +29,9 @@ events = []
 
 def install(unit):
     chip, names = unit.chip, unit.chip.rom.names
-    orig_write, orig_say, orig_cancel = chip.write, unit.say, unit.cancel
+    orig_say, orig_cancel = unit.say, unit.cancel
 
-    def write(reg, val):
-        orig_write(reg, val)
+    def write(t, reg, val):
         if reg == 0 and (val & 0x3F) and says:
             says[-1][1].append(names.get(val & 0x3F, "?"))
 
@@ -47,7 +48,8 @@ def install(unit):
         r = orig_cancel(*a, **k)
         events.append("unit.cancel(%d loads after; sent %d echo %d)" % (len(says[-1][1]) - n if says else 0, unit.sent_f, unit.echo_f))
         return r
-    chip.write, unit.say, unit.cancel = write, say, cancel
+    watch_writes(unit, write)
+    unit.say, unit.cancel = say, cancel
 
 
 while d._unit is None:

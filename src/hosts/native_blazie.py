@@ -4,15 +4,24 @@ caller made (bl.dll imports ssi263.dll, so both use the one copy loaded).  nvda/
 bns_equiv.py --native.
 
 No pipe and no child process: every emulated step is a function call instead of a round trip.
+
+SSI263_BLAZIE_RECORD=<file>: log every call into the unit (JSON lines, floats exact) so that
+nvda/tools/bl_replay.py can play a session back offline, on this host or the Python one.
 """
 import ctypes
+import json
 import os
 import sys
 from array import array
 
 try:
-    from .blazie import boot_keys
-except ImportError:                       # the research tree: src/ on sys.path
+    from .blazie_host import boot_keys    # packaged in the add-on (synthDrivers/_ssi263_blazie)
+except ImportError:
+    try:
+        from .blazie import boot_keys     # src/hosts as a package
+    except ImportError:                   # the research tree: src/ on sys.path
+        boot_keys = None
+if boot_keys is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from hosts.blazie import boot_keys  # noqa: E402
 
@@ -69,6 +78,7 @@ def _int_attr(name):
         return self._lib.bh_get_int(self._h, name.encode())
 
     def put(self, v):
+        self._record("set", name, int(v))
         self._lib.bh_set_int(self._h, name.encode(), int(v))
     return property(get, put)
 
@@ -79,6 +89,7 @@ def _float_attr(name, none_is_zero=False):
         return None if (none_is_zero and v == 0.0) else v
 
     def put(self, v):
+        self._record("setf", name, 0.0 if v is None else float(v))
         self._lib.bh_set_double(self._h, name.encode(), 0.0 if v is None else float(v))
     return property(get, put)
 
@@ -87,12 +98,17 @@ class NativeBlazie:
     def __init__(self, dll, firmware, state, chip=None, out_rate=44100, menu=(), key_start=None, key_gap=None,
                  board_lowpass_hz=None, status=(), on_write=None):
         """`on_write(t, reg, val)`: every SSI-263 write, with the chip time it was applied at (tests: the C host
-        writes the chip directly, so a spy on chip.write sees nothing)."""
-        self.on_write = on_write
+        writes the chip directly, so a spy on chip.write sees nothing).  It can be set or cleared at any time."""
+        self._on_write = on_write
+        rec = os.environ.get("SSI263_BLAZIE_RECORD")
+        self._rec = open(rec, "a") if rec else None
+        self._record("init", firmware=firmware, state=state, out_rate=out_rate, menu=list(menu), key_start=key_start,
+                     key_gap=key_gap, board_lowpass_hz=board_lowpass_hz, status=list(status))
         if chip is None:
             from ssi263.native import SSI263C
             chip = SSI263C(out_rate=out_rate)
         self.chip = chip
+        self._record("chip", dict(chip.p), chip.out_rate)
         self.encoding = "latin-1"
         self._lib = _load(dll)
         keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
@@ -107,13 +123,29 @@ class NativeBlazie:
             raise RuntimeError("bl.dll: %s" % err.value.decode("latin-1", "replace"))
         self._drain()
 
+    def _record(self, *call, **kw):
+        if self._rec:
+            self._rec.write(json.dumps(list(call) + ([kw] if kw else [])) + "\n")
+            self._rec.flush()
+
+    @property
+    def on_write(self):
+        return self._on_write
+
+    @on_write.setter
+    def on_write(self, fn):
+        self._drain()
+        self._on_write = fn
+        if getattr(self, "_h", None):
+            self._lib.bh_set_int(self._h, b"log_writes", 1 if fn else 0)
+
     def _drain(self):
-        if self.on_write is None or not self._h:
+        if self._on_write is None or not getattr(self, "_h", None):
             return
         p = ctypes.POINTER(_Write)()
         n = self._lib.bh_writes(self._h, ctypes.byref(p))
         for i in range(n):
-            self.on_write(p[i].t, p[i].reg, p[i].val)
+            self._on_write(p[i].t, p[i].reg, p[i].val)
         self._lib.bh_clear_writes(self._h)
 
     def close(self):
@@ -146,6 +178,7 @@ class NativeBlazie:
 
     @preparing.setter
     def preparing(self, v):
+        self._record("set", "preparing", 1 if v else 0)
         self._lib.bh_set_int(self._h, b"preparing", 1 if v else 0)
 
     @property
@@ -154,6 +187,7 @@ class NativeBlazie:
 
     @turbo_between_lines.setter
     def turbo_between_lines(self, v):
+        self._record("set", "turbo_between_lines", 1 if v else 0)
         self._lib.bh_set_int(self._h, b"turbo_between_lines", 1 if v else 0)
 
     @property
@@ -167,6 +201,7 @@ class NativeBlazie:
 
     @whine.setter
     def whine(self, mode):
+        self._record("whine", mode)
         self._lib.bh_set_whine(self._h, WHINES[mode])
 
     @property
@@ -182,32 +217,39 @@ class NativeBlazie:
         if isinstance(data, str):
             data = data.encode("latin-1", "replace")
         if data:
+            self._record("send", data.decode("latin-1"))
             self._lib.bh_send(self._h, data, len(data))
             self._drain()
 
     def say(self, text):
         lines = [text] if isinstance(text, str) else list(text)
         data = b"".join(ln.encode(self.encoding, "replace") + b"\r\x06" for ln in lines) + b"\r\x06"
+        self._record("say", data.decode("latin-1"))
         self._lib.bh_say(self._h, data, len(data))
         self._drain()
 
     def owed(self):
+        self._record("owed")
         return self._lib.bh_owed(self._h)
 
     def busy(self, quiet=0.1, patience=3.0):
+        self._record("busy", quiet, patience)
         return bool(self._lib.bh_busy(self._h, quiet, patience))
 
     def cancel(self, limit=3.0, quiet=None, cut=None):
+        self._record("cancel", limit, quiet, cut)
         t = self._lib.bh_cancel(self._h, limit, -1.0 if quiet is None else quiet, -1.0 if cut is None else cut)
         self._drain()
         return t
 
     def skip(self, seconds):
+        self._record("skip", seconds)
         t = self._lib.bh_skip(self._h, seconds)
         self._drain()
         return t
 
     def run(self, seconds, step=0.0005):
+        self._record("run", seconds, step)
         p = ctypes.POINTER(_D)()
         n = self._lib.bh_run(self._h, seconds, step, ctypes.byref(p))
         out = array("d", bytes(8 * n))

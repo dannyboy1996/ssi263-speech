@@ -10,6 +10,8 @@ import os
 import sys
 import time
 
+from write_spy import watch_writes
+
 sys.argv = [sys.argv[0], "blazie"]
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_nvda_driver_test.py"),
           encoding="utf-8").read().split("time.sleep(2.0)")[0])
@@ -23,11 +25,9 @@ loads, tag = [], ["-"]
 
 
 def install(unit):
-    chip = unit.chip
-    ow, osay = chip.write, unit.say
+    osay = unit.say
 
-    def write(reg, val):
-        ow(reg, val)
+    def write(t, reg, val):
         if reg == 0 and (val & 0x3F) and names.get(val & 0x3F) != "PA":
             loads.append((tag[0], names.get(val & 0x3F, "?")))
 
@@ -36,7 +36,8 @@ def install(unit):
         # first utterance; only what comes after the second text reaches the unit counts as its own
         tag[0] = "B" if any("95" in ln for ln in lines) else "A"
         return osay(lines)
-    chip.write, unit.say = write, say
+    watch_writes(unit, write)
+    unit.say = say
 
 
 install(d._unit)

@@ -53,6 +53,14 @@ def main():
     shutil.copy2(os.path.join(HERE, "blazie", "synthDrivers", "blazie.py"), sd)
     copy_engine(ENGINE, eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "blazie.py"), os.path.join(eng, "blazie_host.py"))
+    # 0.7: the unit in-process (bl.dll: board + Z180 + host lockstep, per bitness), the pipe host the fallback
+    shutil.copy2(os.path.join(ENGINE, "hosts", "native_blazie.py"), eng)
+    sys.path.insert(0, os.path.join(ENGINE, "csrc", "blazie"))
+    import build_board                                  # noqa: E402
+    build_board.main()
+    for arch in ("x86", "x64"):
+        os.makedirs(os.path.join(eng, "bin", arch))
+        shutil.copy2(os.path.join(build_board.OUT, arch, "bl.dll"), os.path.join(eng, "bin", arch, "bl.dll"))
     shutil.copy2(os.path.join(HERE, "shared", "ssi263_numwords.py"), eng)
     shutil.copy2(os.path.join(HERE, "shared", "ssi263_rates.py"), eng)
     build_bns32(os.path.join(eng, "bns_live.exe"))
@@ -74,6 +82,16 @@ def main():
                 if fn.endswith((".c", ".h")):
                     p = os.path.join(root, fn)
                     z.write(p, os.path.relpath(p, Z180))
+        # bl.dll's own sources (the board and the host, MIT) beside the core they link
+        blz = os.path.join(ENGINE, "csrc", "blazie")
+        for fn in sorted(os.listdir(blz)):
+            if fn.endswith((".c", ".h", ".py")):
+                z.write(os.path.join(blz, fn), "ssi263-blazie/" + fn)
+        z.write(os.path.join(ENGINE, "csrc", "ssi263.h"), "ssi263-blazie/ssi263.h")
+        z.writestr("BUILD-bl.txt", "bl.dll (the in-process unit): gcc %s -I<this folder> -I<this folder>/z180 "
+                   "-o bl.dll ssi263-blazie/bl_unity.c ssi263-blazie/bl_host.c ssi263.dll\n"
+                   "(32-bit: add -msse2 -mfpmath=sse; bl_host.c includes ../ssi263.h: see ssi263-blazie)\n"
+                   % " ".join(build_board.DLL_FLAGS))
         z.writestr("BUILD.txt", "Built with w64devkit GCC 16.2, i686 (32-bit), as one translation unit:\n"
                    "  gcc %s -I. -Iz180 -o bns_live.exe bns_unity.c\n" % " ".join(CFLAGS + LINK[3:]))
     shutil.copy2(os.path.join(Z180, "COPYING"), os.path.join(eng, "COPYING.z180emu"))

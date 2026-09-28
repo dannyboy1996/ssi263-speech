@@ -17,6 +17,8 @@ import random
 import sys
 import time
 
+from write_spy import watch_writes
+
 STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 200
 SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 SYNTH = os.environ.get("COMPLETE_FUZZ_SYNTH", "blazie")      # blazie | speakout | accent
@@ -38,21 +40,24 @@ if names is None:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
     from ssi263 import SSI263
     names = SSI263().rom.names
-ow = unit.chip.write
 
 
 raw = []             # every write to R0 and R3 with its tag, for the failure report
 
 
-def write(reg, val):
-    ow(reg, val)
+DUMP = open(os.environ["COMPLETE_FUZZ_DUMP"], "w") if os.environ.get("COMPLETE_FUZZ_DUMP") else None
+
+
+def write(t, reg, val):
+    if DUMP:
+        DUMP.write("#%s W %.5f R%d=%02X %s\n" % (cur[0], t, reg, val, names.get(val & 0x3F, "?") if reg == 0 else ""))
     if reg in (0, 3):
-        raw.append((cur[0], reg, val, round(unit.chip.time, 4)))
+        raw.append((cur[0], reg, val, round(t, 4)))
     if reg == 0 and (val & 0x3F) and names.get(val & 0x3F) != "PA":
         loads.append((cur[0], names.get(val & 0x3F, "?")))
 
 
-unit.chip.write = write
+watch_writes(unit, write)
 pending = []         # said indices given to the driver, not yet sent to the unit
 
 
@@ -71,6 +76,9 @@ def say(lines, *a, **kw):
         cur[0] = k
         del pending[:pending.index(k) + 1]
     note("unit.say %r -> #%s" % (text[:24], k))
+    if DUMP:
+        DUMP.write("#%s SAY %r at chip %.5f sent %d echo %d owed %d\n" % (k, lines, unit.chip.time, unit.sent_f,
+                                                                         unit.echo_f, unit.owed()))
     return _osay(lines, *a, **kw)
 
 

@@ -288,13 +288,13 @@ if WHICH == "blazie":
         d.speak(["ok."])                      # the worker restarts the unit before this job
         wait_idle()
         seen = []
-        chip = d._unit.chip
-        orig = chip.write
-        chip.write = lambda reg, val: (orig(reg, val), seen.append(val) if reg == 1 else None)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from write_spy import watch_writes
+        stop = watch_writes(d._unit, lambda t, reg, val: seen.append(val) if reg == 1 else None)
         mark = len(notified)
         d.speak([text])
         wait_idle()
-        chip.write = orig
+        stop()
         return max(seen) if seen else 0
     d._set_voiceInflection(False)
     r1_off = r1_during("Is it ready?")
@@ -303,6 +303,11 @@ if WHICH == "blazie":
     infl_ok = r1_on > r1_off and d._get_voiceInflection() is True
     print("blazie inflection: '?' raises R1 to %02X with it on, %02X with it off: %s" % (r1_on, r1_off, "ok" if infl_ok else "FAILED"))
     rate_ok = rate_ok and infl_ok
+    # 0.7: the unit runs in-process (bl.dll); the pipe host is only the fallback, and a silent fallback is a failure
+    host = type(d._unit).__name__
+    want = "Blazie" if os.environ.get("SSI263_BLAZIE_PIPE") == "1" else "NativeBlazie"
+    print("blazie host: %s (want %s): %s" % (host, want, "ok" if host == want else "FAILED"))
+    rate_ok = rate_ok and host == want
     # the unit's hiss / whine (hosts/blazie.py whine_wave): each choice speaks, and switches the chip's carrier
     whine_ok = sorted(d._get_availableWhines()) == ["hiss", "off", "whine"]
     for w in ("whine", "hiss", "off"):

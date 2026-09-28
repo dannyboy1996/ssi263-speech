@@ -32,9 +32,17 @@ from ._ssi263_blazie.blazie_host import Blazie
 from ._ssi263_blazie import ssi263_numwords as numwords
 from ._ssi263_blazie import ssi263_rates as rates
 from ._ssi263_blazie.ssi263.native import SSI263C      # the chip in C
+try:
+    from ._ssi263_blazie.native_blazie import NativeBlazie
+except Exception:                                       # an add-on built without it: the pipe host only
+    NativeBlazie = None
 
 BLOCK_S = 0.03
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
+# 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
+# no child process and no pipe, the same writes bit for bit (nvda/tools/golden).  The pipe host stays the fallback,
+# and SSI263_BLAZIE_PIPE=1 forces it (A/B).
+DLL = os.path.join(_ENGINE_DIR, "bin", "x64" if sys.maxsize > 2 ** 32 else "x86", "bl.dll")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
 STATE = os.path.join(_ENGINE_DIR, "bl2_2003_warm.state")
 # The Spanish Braille Lite 2000 (ONCE's BL2SPA.BNS) from a full-reset snapshot; optional: the voice is offered only
@@ -211,7 +219,7 @@ class SynthDriver(SynthDriver):
 
     @classmethod
     def check(cls):
-        return all(os.path.isfile(p) for p in (EXE, FIRMWARE, STATE))
+        return all(os.path.isfile(p) for p in (FIRMWARE, STATE)) and (os.path.isfile(DLL) or os.path.isfile(EXE))
 
     def __init__(self):
         super().__init__()
@@ -446,11 +454,18 @@ class SynthDriver(SynthDriver):
             params["carrier_rel_db"] = -300.0     # the whine model carries the carrier's lines
         chip = SSI263C(params=params, out_rate=self._out_rate)
         _name, lang, firmware, state, encoding = VOICES[voice]
-        unit = Blazie(EXE, firmware, state, chip=chip, out_rate=self._out_rate,
-                      menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
-                      board_lowpass_hz=BOARD_LOWPASS_HZ,
-                      # the snapshot has inflection on; only turning it off needs the status-menu keys
-                      status=() if self._infl else ("inflection_off",))
+        kw = dict(chip=chip, out_rate=self._out_rate, menu=("punct_none", "numbers_toggle"), key_start=3000000,
+                  key_gap=1500000, board_lowpass_hz=BOARD_LOWPASS_HZ,
+                  # the snapshot has inflection on; only turning it off needs the status-menu keys
+                  status=() if self._infl else ("inflection_off",))
+        unit = None
+        if NativeBlazie is not None and os.path.isfile(DLL) and os.environ.get("SSI263_BLAZIE_PIPE") != "1":
+            try:
+                unit = NativeBlazie(DLL, firmware, state, **kw)
+            except Exception:
+                log.warning("Blazie: the in-process unit failed to start; using the emulator process", exc_info=True)
+        if unit is None:
+            unit = Blazie(EXE, firmware, state, **kw)
         unit.send(b"\x18")
         unit.send(b"\r\x06")
         unit.run(0.3)
