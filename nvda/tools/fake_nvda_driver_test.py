@@ -16,6 +16,11 @@ WHICH = sys.argv[1]            # speakout | blazie | accent
 BUILD = repo_paths.synth_drivers(WHICH)
 
 
+# SIM_SPEED: a paced player plays this many times faster than real time (tests that sleep between steps
+# scale those sleeps by the same factor), so long fuzz runs keep their proportions in a fraction of the time
+SIM_SPEED = float(os.environ.get("SIM_SPEED", "1"))
+
+
 # ---- stand-ins ------------------------------------------------------------------
 class FakePlayer:
     def __init__(self, *a, **k):
@@ -24,7 +29,7 @@ class FakePlayer:
 
     def feed(self, data, onDone=None):
         if self.pace and data:
-            time.sleep(len(data) / 2 / 44100.0)
+            time.sleep(len(data) / 2 / 44100.0 / SIM_SPEED)
         with self.lock:
             if data:
                 self.chunks.append(np.frombuffer(data, dtype="<i2").astype(float) / 32767)

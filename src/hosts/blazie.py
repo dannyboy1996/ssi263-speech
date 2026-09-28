@@ -290,8 +290,13 @@ class Blazie:
         the rest held until the one after (a tester: at NVDA's slower rates, "the last
         syllable is cut off, then joined to the next utterance").  Returns the emulated
         seconds it took."""
-        holding = self.owed() == 0              # every line echoed: the flush line is held
         self._cmd("D")                          # drop what the unit has not taken yet
+        # every line the unit HAS taken echoed: its flush line is held.  Decided after the drop: before it (0.6.0),
+        # text queued behind a finished line still counted, so a cancel then took the held flush line's ^F as
+        # answered, the next utterance took that ^F for its own and ended at its first pause, the rest held until
+        # the one after -- and the count stayed one ahead from then on (a tester, 0.6.0: "if you use it for a
+        # certain amount of time you lose speech midway ... waits for the next utterance"; complete_fuzz.py)
+        holding = self.owed() == 0
         self.preparing = False
         t = 0.0
         cut = self.cancel_cut if cut is None else cut

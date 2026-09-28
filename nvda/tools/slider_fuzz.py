@@ -4,6 +4,8 @@ lands before the last value is finished.  Every utterance's phonemes must start 
 text: anything else at its head is a previous utterance's tail joined to it.
 
     python nvda/tools/slider_fuzz.py [steps] [seed]
+
+SIM_SPEED=10 runs it ten times faster (player and pauses scaled alike); progress every 25 steps.
 """
 import os
 import random
@@ -61,15 +63,16 @@ for step in range(STEPS):
     if how == "cancel":
         d.cancel()
     elif how == "wait":
-        mark = len(notified)
-        wait_idle()
+        wait_idle()          # the last say's own done (mark is taken at each say: if it already came, no wait)
     d._set_rate(rate)
     text = rng.choice(["ninety four" if rate == 94 else "ninety five", "rate", "percent"])
+    mark = len(notified)
     d.speak([text])
     pause = rng.choice([0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.2])
     events.append("sleep %.2f" % pause)
-    time.sleep(pause)
-mark = len(notified)
+    time.sleep(pause / SIM_SPEED)
+    if (step + 1) % 25 == 0:
+        print("step %d of %d" % (step + 1, STEPS), flush=True)
 wait_idle()
 bad = 0
 for k, (text, ph, ev) in enumerate(says):
