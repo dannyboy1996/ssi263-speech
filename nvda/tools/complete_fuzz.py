@@ -9,6 +9,7 @@ be the whole line (its reference, spoken once cleanly first).  slider_fuzz.py ch
 with one-word texts, so it could not see this.
 
     python complete_fuzz.py [steps] [seed]          SIM_SPEED=10 to run ten times faster
+    COMPLETE_FUZZ_SYNTH=speakout|accent: the same check on the other add-ons
     COMPLETE_FUZZ_050=1: put 0.5.0's cancel back (every ^F counted as answered) -- the test must catch it
 """
 import os
@@ -18,7 +19,8 @@ import time
 
 STEPS = int(sys.argv[1]) if len(sys.argv) > 1 else 200
 SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-sys.argv = [sys.argv[0], "blazie"]
+SYNTH = os.environ.get("COMPLETE_FUZZ_SYNTH", "blazie")      # blazie | speakout | accent
+sys.argv = [sys.argv[0], SYNTH]
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_nvda_driver_test.py"),
           encoding="utf-8").read().split("time.sleep(2.0)")[0])
 time.sleep(2.0)
@@ -28,9 +30,9 @@ TEXTS = ("Yes, it works.", "Custom number processing, check box, checked", "One,
 loads = []           # (utterance index, phoneme)
 cur = [-1]
 
-while d._unit is None:
+while getattr(d, "_unit", None) is None and getattr(d, "_box", None) is None:
     time.sleep(0.05)
-unit = d._unit
+unit = getattr(d, "_unit", None) or d._box     # the Braille Lite's unit, the Speak-Out's or Accent's box
 names = unit.chip.rom.names if hasattr(unit.chip, "rom") else None
 if names is None:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "src"))
@@ -56,21 +58,25 @@ def key(text):
 _osay = unit.say
 
 
-def say(lines):
+def say(lines, *a, **kw):
     # label loads by what the unit is actually SENT: a cancelled utterance's discarded flush stays with it
-    k = next((i for i in pending if key(said[i][0]) == key(" ".join(lines))), None)
+    text = lines if isinstance(lines, str) else " ".join(lines)
+    k = next((i for i in pending if key(said[i][0]) == key(text)), None)
     if k is not None:
         cur[0] = k
         del pending[:pending.index(k) + 1]
-    note("unit.say %r -> #%s" % (" ".join(lines)[:24], k))
-    return _osay(lines)
+    note("unit.say %r -> #%s" % (text[:24], k))
+    return _osay(lines, *a, **kw)
 
 
 trace = []
 
 
 def note(what):
-    trace.append("%s [sent %d echo %d owed %d]" % (what, unit.sent_f, unit.echo_f, unit.owed()))
+    if hasattr(unit, "sent_f"):
+        trace.append("%s [sent %d echo %d owed %d]" % (what, unit.sent_f, unit.echo_f, unit.owed()))
+    else:
+        trace.append(what)
 
 
 unit.say = say
@@ -117,13 +123,24 @@ for text in TEXTS:
 d._player.pace = True
 rng = random.Random(SEED)
 checked = bad = 0
+import threading as _th
+
+
+def worker_alive():
+    return any(t.is_alive() for t in _th.enumerate() if t is not _th.main_thread())
+
+
 for step in range(STEPS):
+    if not worker_alive():
+        print("the driver's worker thread died at step %d" % step)
+        sys.exit(2)
     how = rng.choice(["cancel", "cancel", "queue", "wait", "wait"])
     note("step %d: %s" % (step, how))
     if how == "cancel":
         if said:
             said[-1][1] = True
         d.cancel()
+        del pending[:]       # the driver drops every job not yet sent; an older same-text entry must not take a later line's phonemes
     elif how == "wait" and said:
         k = len(said) - 1
         t0 = time.time()
@@ -134,10 +151,14 @@ for step in range(STEPS):
         text, cancelled = said[k]
         if not cancelled:
             checked += 1
-            if got(k) != ref[text]:
+            # the symptom is a missing END: a line queued ahead of it (sent early, the unit speaks both in order)
+            # may load after this one was sent, so only the tail is this utterance's own
+            if got(k)[-len(ref[text]):] != ref[text]:
                 bad += 1
                 print("step %d: %r ended with %d of its %d phonemes (%s | ref %s)" % (
                     step, text, len(got(k)), len(ref[text]), " ".join(got(k)), " ".join(ref[text])))
+                print("    sent to the unit: %s; driver queue empty: %s; cancel flag: %s" % (
+                    k not in pending, d._queue.empty(), d._cancelFlag.is_set()))
                 print("    " + "\n    ".join(trace[-14:]))
     if how == "queue" and said:
         said[-1][1] = True         # another utterance queued behind it: its done may not be its own
