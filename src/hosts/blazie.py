@@ -128,6 +128,10 @@ class Blazie:
         # the cancel ~32 ms of a ~44 ms tab-to-speech; 100 ms gives ~20 ms, no tail left in 24 cancel points
         # (nvda/tools/cut_test.py; 150 and 200 ms are slower again)
         self.cancel_cut = 0.1
+        # cancel(): how long nothing may load before the unit counts as silent.  0.15 s until 0.6.0's draft; 0.08 s
+        # needs one cut instead of two (tab ~15 -> ~11 ms) and left no tail in 72 cancel points: NVDA rates 0, 50
+        # and 100, a line with four commas, cancels 0.15-3.5 s in (nvda/tools/cut_test.py and its slow-rate run)
+        self.cancel_quiet = 0.08
         self._whine_key, self._whine_fc, self._whine_tab, self._whine_ph = None, None, None, 0.0
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
         keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
@@ -236,7 +240,7 @@ class Blazie:
             return True
         return self.owed() > 0 and (self.chip.time - max(self.say_time, self.last_speech)) < patience
 
-    def cancel(self, limit=3.0, quiet=0.15, cut=None):
+    def cancel(self, limit=3.0, quiet=None, cut=None):
         """Silence and flush.  ^X cuts the word being spoken and flushes the unit's
         input, held flush line and its ^F included; the unit may still move on to a
         word it had already prepared, so keep cutting (every `cancel_cut` s), audio discarded,
@@ -253,6 +257,7 @@ class Blazie:
         self.preparing = False
         t = 0.0
         cut = self.cancel_cut if cut is None else cut
+        quiet = self.cancel_quiet if quiet is None else quiet
         while t < limit:
             self._cmd("U 18")
             t += self.skip(cut)
