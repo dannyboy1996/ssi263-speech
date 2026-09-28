@@ -70,6 +70,13 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
+# bl_voice (the driver's front end in C, for speech-dispatcher and Android): the real driver's PCM, byte for byte;
+# and its control (the C side with packing flipped) must fail
+CHECKS.append(check("bl_voice = the NVDA driver, byte for byte", [PY, "voice_equiv.py"]))
+CHECKS.append(check("bl_voice CONTROL (packing flipped, must fail)", [PY, "voice_equiv.py"],
+                    env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True))
+CHECKS.append(check("cp850 table", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie",
+                                                     "gen_cp850.py"), "--check"]))
 GEN_DEFAULTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "gen_chip_defaults.py")
 CHECKS.append(check("chip defaults header", [PY, GEN_DEFAULTS, "--check"]))
 # and on Python 3.7 (NVDA 2021-2023): the defaults must not depend on the Python version (3.12 changed float sum())
