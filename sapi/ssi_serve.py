@@ -1,0 +1,350 @@
+# -*- coding: utf-8 -*-
+"""The SSI-263 add-ons' drivers behind a pipe, for the SAPI 5 engine (sapi/ssi263_sapi.cpp).
+
+A fork of outspoken-nvda's sapi/osp_serve.py (itself Panthera's): the SAPI engine DLL launches this under the
+embeddable Python installed beside it, and every decision about how speech sounds -- the firmware, the emulators,
+the chip, number reading, cancel -- runs in the same driver files NVDA users run, byte for byte.  There is no port
+to drift, because there is no port.  The three add-ons' synthDrivers folders sit beside this script (staged by
+sapi/build.ps1), or come from nvda/dist/*-build in the repository.
+
+Requests arrive on stdin, framed:
+
+    'OSP4' | seq | rate | pitch | volume | namelen | textlen | name | text
+
+and a cancel is 'OSPC' | seq.  The seq is the whole point of the cancel frame: pipes buffer, so a cancel sent for
+one utterance can arrive after it finished and the next one started, and an untagged cancel then cuts the wrong
+render.  A cancel only acts when its seq is the one rendering.
+
+rate/pitch/volume are the drivers' own 0-100 integers; name is a voice id "<driver module>:<voice>", as --list
+prints it.  The response is 'OSPR' | status, then PCM in chunks as the driver produces them -- u32 frame count, then
+frames*2 bytes of 16-bit mono at 22050 Hz -- and a zero frame count to finish.
+
+`--list` prints one voice per line: "id<TAB>name<TAB>language".
+"""
+import os
+import struct
+import sys
+import threading
+import time
+import types
+import importlib
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+RATE = 22050                # the add-ons' default rate (ssi263_rates.DEFAULT), what the DLL declares
+REQ = 0x4F535034            # 'OSP4'
+RSP = 0x4F535052            # 'OSPR'
+CANCEL = 0x4F535043         # 'OSPC'
+DRIVERS = (("blazie", "blazie"), ("speakout", "speakout"), ("accent", "accentmini"))   # (add-on, module)
+
+
+def _driver_dirs():
+    """The synthDrivers folders: staged beside this script, or the repository's built add-ons."""
+    staged = os.path.join(HERE, "synthDrivers")
+    if os.path.isdir(staged):
+        return [staged]
+    dist = os.path.join(os.path.dirname(HERE), "nvda", "dist")
+    return [os.path.join(dist, "%s-build" % a, "synthDrivers") for a, _m in DRIVERS
+            if os.path.isdir(os.path.join(dist, "%s-build" % a, "synthDrivers"))]
+
+
+class _StreamPlayer(object):
+    """An nvwave.WavePlayer whose feed() is the wire.  The drivers end every utterance with an empty feed that
+    carries onDone (NVDA 2021-2023's buffered player needs it); here it is simply called."""
+    out = None
+    lock = threading.Lock()
+    last_feed = [0.0]
+
+    def __init__(self, *a, **k):
+        pass
+
+    def feed(self, data, onDone=None):
+        if data:
+            with _StreamPlayer.lock:
+                if _StreamPlayer.out is not None:
+                    _StreamPlayer.out.write(struct.pack("<I", len(data) // 2) + bytes(data))
+                    _StreamPlayer.out.flush()
+                    _StreamPlayer.last_feed[0] = time.monotonic()
+        if onDone:
+            onDone()
+
+    def stop(self):
+        pass
+
+    def idle(self):
+        pass
+
+    def pause(self, switch):
+        pass
+
+    def close(self):
+        pass
+
+
+class _Done(object):
+    """synthDoneSpeaking: remembers which driver finished."""
+    def __init__(self):
+        self.event = threading.Event()
+        self.synth = None
+
+    def notify(self, synth=None, **k):
+        self.synth = synth
+        self.event.set()
+
+
+def _install_fakes():
+    """Enough of NVDA for the three drivers (the same stand-ins as nvda/tools/fake_nvda_driver_test.py)."""
+    nvwave = types.ModuleType("nvwave")
+    nvwave.WavePlayer = _StreamPlayer
+    nvwave.AudioPurpose = type("AudioPurpose", (), {"SPEECH": 1})
+    sys.modules["nvwave"] = nvwave
+
+    cfg = types.ModuleType("config")
+    cfg.conf = {"audio": {"outputDevice": "default"}, "speech": {"outputDevice": "default"}}
+    sys.modules["config"] = cfg
+
+    logh = types.ModuleType("logHandler")
+
+    class _Log(object):
+        def _drop(self, *a, **k):
+            pass
+        info = debug = warning = error = exception = _drop
+
+        def isEnabledFor(self, level):
+            return False
+    logh.log = _Log()
+    sys.modules["logHandler"] = logh
+
+    speech = types.ModuleType("speech")
+    cmds = types.ModuleType("speech.commands")
+
+    class IndexCommand(object):
+        def __init__(self, index=0):
+            self.index = index
+
+    class PitchCommand(object):
+        def __init__(self, offset=0):
+            self.offset = offset
+
+    class LangChangeCommand(object):
+        def __init__(self, lang=None):
+            self.lang = lang
+    cmds.IndexCommand, cmds.PitchCommand, cmds.LangChangeCommand = IndexCommand, PitchCommand, LangChangeCommand
+    speech.commands = cmds
+    sys.modules["speech"] = speech
+    sys.modules["speech.commands"] = cmds
+
+    sdh = types.ModuleType("synthDriverHandler")
+
+    class VoiceInfo(object):
+        def __init__(self, id, name, language=None):
+            self.id, self.name, self.language = id, name, language
+
+    class SynthDriver(object):
+        VoiceSetting = RateSetting = PitchSetting = VolumeSetting = VariantSetting = InflectionSetting = \
+            staticmethod(lambda *a, **k: None)
+
+        def __init__(self):
+            pass
+    sdh.SynthDriver = SynthDriver
+    sdh.VoiceInfo = VoiceInfo
+    sdh.synthDoneSpeaking = _Done()
+    sdh.synthIndexReached = type("_Idx", (), {"notify": lambda self, **k: None})()
+    sys.modules["synthDriverHandler"] = sdh
+
+    asu = types.ModuleType("autoSettingsUtils")
+    asu_utils = types.ModuleType("autoSettingsUtils.utils")
+    asu_utils.StringParameterInfo = lambda *a, **k: a
+    ds = types.ModuleType("autoSettingsUtils.driverSetting")
+    ds.DriverSetting = ds.BooleanDriverSetting = ds.NumericDriverSetting = lambda *a, **k: None
+    asu.utils, asu.driverSetting = asu_utils, ds
+    sys.modules["autoSettingsUtils"] = asu
+    sys.modules["autoSettingsUtils.utils"] = asu_utils
+    sys.modules["autoSettingsUtils.driverSetting"] = ds
+
+    import builtins
+    if not hasattr(builtins, "_"):
+        builtins._ = lambda s: s
+
+    pkg = types.ModuleType("synthDrivers")      # NVDA's package, with the add-ons' folders on it
+    pkg.__path__ = _driver_dirs()
+    sys.modules["synthDrivers"] = pkg
+    return sdh.synthDoneSpeaking
+
+
+_drivers = {}
+
+
+def driver(module):
+    """One resident driver per add-on, made on first use."""
+    if module not in _drivers:
+        _drivers[module] = importlib.import_module("synthDrivers." + module).SynthDriver()
+    return _drivers[module]
+
+
+def modules_present():
+    return [m for _a, m in DRIVERS
+            if any(os.path.isfile(os.path.join(p, m + ".py")) for p in sys.modules["synthDrivers"].__path__)]
+
+
+def _exact(stream, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = stream.read(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+def _claim_stdout():
+    """The protocol keeps the pipe; stdout stops being it (a stray print must never land in the audio stream)."""
+    fd = os.dup(1)
+    try:
+        import msvcrt
+        msvcrt.setmode(fd, os.O_BINARY)
+    except ImportError:
+        pass
+    proto = os.fdopen(fd, "wb")
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        os.dup2(2, 1)
+    except OSError:
+        nul = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(nul, 1)
+        os.close(nul)
+    sys.stdout = sys.stderr
+    return proto
+
+
+def main():
+    args = sys.argv[1:]
+    done_evt = _install_fakes()
+    if "--list" in args:
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")       # "español" must reach the token registration intact
+        except Exception:
+            pass
+        for m in modules_present():
+            d = driver(m)
+            try:
+                for vid, info in d._get_availableVoices().items():
+                    print("%s:%s\t%s\t%s" % (m, vid, info.name, info.language or "en"))
+            finally:
+                d.terminate()
+        return 0
+
+    stdin = sys.stdin.buffer
+    stdout = _claim_stdout()
+    inbox, inbox_ready, eof = [], threading.Event(), threading.Event()
+    cancel_now = threading.Event()
+    current = [0, None]          # seq rendering, its driver
+    cancelled_seqs = set()
+
+    def reader():
+        while True:
+            magic_bytes = _exact(stdin, 4)
+            if magic_bytes is None:
+                break
+            magic = struct.unpack("<I", magic_bytes)[0]
+            if magic == CANCEL:
+                seq_bytes = _exact(stdin, 4)
+                if seq_bytes is None:
+                    break
+                seq = struct.unpack("<I", seq_bytes)[0]
+                cancelled_seqs.add(seq)
+                if seq == current[0] and current[1] is not None:
+                    cancel_now.set()
+                    try:
+                        current[1].cancel()
+                    except Exception:
+                        pass
+                continue
+            if magic != REQ:
+                break
+            rest = _exact(stdin, 24)
+            if rest is None:
+                break
+            seq, rate, pitch, volume, nv, nt = struct.unpack("<IiiiII", rest)
+            name, text = _exact(stdin, nv), _exact(stdin, nt)
+            if name is None or text is None:
+                break
+            inbox.append((seq, rate, pitch, volume, name, text))
+            inbox_ready.set()
+        eof.set()
+        inbox_ready.set()
+
+    threading.Thread(target=reader, daemon=True).start()
+    try:
+        while True:
+            while not inbox:
+                if eof.is_set():
+                    return 0
+                inbox_ready.wait(0.5)
+                inbox_ready.clear()
+            seq, rate, pitch, volume, name, text = inbox.pop(0)
+            if seq in cancelled_seqs:
+                cancelled_seqs.discard(seq)
+                stdout.write(struct.pack("<Ii", RSP, 0) + struct.pack("<I", 0))
+                stdout.flush()
+                continue
+            cancel_now.clear()
+            status, d = 0, None
+            try:
+                module, _sep, vid = name.decode("utf-8").partition(":")
+                if module not in modules_present():
+                    module = modules_present()[0]
+                d = driver(module)
+                if vid and vid in d._get_availableVoices() and d._get_voice() != vid:
+                    d._set_voice(vid)
+                d._set_rate(max(0, min(100, rate)))
+                d._set_pitch(max(0, min(100, pitch)))
+                d._set_volume(max(0, min(100, volume)))
+            except Exception:
+                status = 1
+            stdout.write(struct.pack("<Ii", RSP, status))
+            stdout.flush()
+            if status:
+                continue
+            current[0], current[1] = seq, d
+            done_evt.event.clear()
+            _StreamPlayer.out = stdout
+            _StreamPlayer.last_feed[0] = time.monotonic()
+            try:
+                d.speak([text.decode("utf-8", "replace")])
+                deadline = time.monotonic() + 120.0
+                done = False
+                # the end of the audio: the driver's done for THIS driver, then no feed for a settle window
+                while not (cancel_now.is_set() or eof.is_set()):
+                    if not done:
+                        if done_evt.event.wait(0.03):
+                            if done_evt.synth is d:
+                                done = True
+                            else:
+                                done_evt.event.clear()     # another driver's done: not this utterance's end
+                    else:
+                        time.sleep(0.03)
+                    if time.monotonic() > deadline:
+                        d.cancel()
+                        break
+                    if done and time.monotonic() - _StreamPlayer.last_feed[0] > 0.12:
+                        break
+            finally:
+                with _StreamPlayer.lock:
+                    _StreamPlayer.out = None
+            current[0], current[1] = 0, None
+            cancelled_seqs.discard(seq)
+            stdout.write(struct.pack("<I", 0))
+            stdout.flush()
+    finally:
+        for d in _drivers.values():
+            try:
+                d.terminate()
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    sys.exit(main())
