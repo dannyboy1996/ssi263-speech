@@ -265,7 +265,7 @@ with each release.
 | 0.3.5 | Tomi: the Braille Lite stopped mid-post | Long lines no longer end speech early; **the Accent-mini joins** as a third add-on |
 | 0.3.6–0.4.0 | Tomi: the Accent-mini froze while scrolling, and went silent after a variant change | Accent-mini only: both freezes fixed, numbers as words, faster long items, first sound in about 25 ms instead of 600 |
 | 0.5.0 | Tomi, and listeners | **The Accent SA** as a second Accent voice; engine v0.11 and v0.12; Windows on ARM fixed; the repository goes public |
-| 0.6.0 | Tomi, a listener, and a tester | Engine v0.13 (with a bounded T/P/K precharge on the Braille Lite); the Braille Lite's top rates fixed, its dollar amounts read, no utterance cut short after a cancel, and a "Sample rate" setting in all three (11, 22 or 44 kHz; 22 kHz by default); the Braille Lite's tones run 0-26 (tone 0 added), its voice inflection can be switched off, and an optional hiss or whine generated from the chip's clock |
+| 0.6.0 | Tomi, a listener, and a tester | Engine v0.13 (with a bounded T/P/K precharge on the Braille Lite); the Braille Lite's top rates fixed, its dollar amounts read, no utterance cut short after a cancel, and a "Sample rate" setting in all three (11, 22 or 44 kHz; 22 kHz by default); the Braille Lite's tones run 0-26 (tone 0 added), its voice inflection can be switched off, an optional hiss or whine generated from the chip's clock, and **a Spanish voice** with NVDA's automatic language switching |
 
 ## Withdrawn along the way
 

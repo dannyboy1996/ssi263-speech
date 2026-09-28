@@ -37,6 +37,13 @@ BLOCK_S = 0.03
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
 STATE = os.path.join(_ENGINE_DIR, "bl2_2003_warm.state")
+# The Spanish Braille Lite 2000 (ONCE's BL2SPA.BNS) from a full-reset snapshot; optional: the voice is offered only
+# when both files are present.  It reads DOS code page 850 (its braille table's accents: a-acute A0, n-tilde A4 ...).
+FIRMWARE_ES = os.path.join(_ENGINE_DIR, "BL2SPA.BNS")
+STATE_ES = os.path.join(_ENGINE_DIR, "bl2spa_fresh.state")
+# voice id: (display name, language, firmware, snapshot, text encoding)
+VOICES = {"blazie": ("Braille Lite 2000 (June 2003)", "en", FIRMWARE, STATE, "latin-1"),
+          "blazie_es": ("Braille Lite 2000 (espa\u00f1ol)", "es", FIRMWARE_ES, STATE_ES, "cp850")}
 UNIT_VOLUME = 6         # the unit's factory volume; NVDA's slider is applied digitally
 MAKEUP = 2.0            # +6 dB so volume 6 sits at a normal level
 # A roll-off after the chip (hosts/blazie.py) that matches the unit's line out: first order at 5 kHz matched
@@ -62,7 +69,9 @@ WHINES = (("off", "Off"), ("hiss", "Hiss (even volumes, as the factory setting)"
 MAX_RATE = 15
 
 
-def _clean(text):
+def _clean(text, encoding="latin-1"):
+    """7-bit text for the English unit; for the Spanish one also every character its code page has (accents,
+    n-tilde, the inverted marks)."""
     out = []
     for ch in text:
         o = ord(ch)
@@ -70,18 +79,31 @@ def _clean(text):
             out.append(" ")
         elif o < 128:
             out.append(ch)
+        elif encoding == "cp850" and _cp850(ch):
+            out.append(ch)
         else:
             out.append({"‘": "'", "’": "'", "“": '"', "”": '"',
                         "–": "-", "—": "-", "…": "..."}.get(ch, " "))
     return "".join(out)
 
 
-def _numbers(text):
+def _cp850(ch):
+    try:
+        ch.encode("cp850")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def _numbers(text, lang="en"):
     """Numbers as words, except money: the firmware says "$25" as "twenty five dollars" and
     "$1,234.56" with its cents, but drops a "$" in front of words, so "$twenty five" was
     "twenty five" (a tester, 0.5.0).  Dollar amounts go to the firmware as they are, up to
     $999,999,999,999; from a trillion up the firmware says "billion" (measured), so those
     become words here."""
+    if lang == "es":
+        # Spain's convention (ONCE's firmware): "3,5" = tres coma cinco, "1.234.567" one number
+        return numwords.normalise(text, lang="es", decimal_comma=True)
     parts = numwords.MONEY.split(text)
     return "".join(_money(p) if k % 2 else numwords.normalise(p) for k, p in enumerate(parts))
 
@@ -182,7 +204,9 @@ class SynthDriver(SynthDriver):
         DriverSetting("whine", "Unit &hiss and whine", defaultVal="off"),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
-    supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
+    # LangChangeCommand: NVDA's automatic language switching (and MultiLang passing a language on) sends each
+    # stretch of text to the unit for its language
+    supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand, speech.commands.LangChangeCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
     @classmethod
@@ -200,7 +224,6 @@ class SynthDriver(SynthDriver):
         self._pitch_dirty = False        # a pitch command the unit may not have read yet
         self._snap_until_speech = False
         self._tone = str(DEFAULT_TONE)
-        self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
         # Defaults only: NEVER read config.conf["speech"][<driver>] here.  NVDA registers this driver's settings
         # after __init__, and its config caches a failed lookup as missing, so an early read of a new key made
         # NVDA's own loadSettings fail ("setSynth failed ... KeyError: 'voiceInflection'", Tomi, 0.6.0 draft).
@@ -213,6 +236,8 @@ class SynthDriver(SynthDriver):
         self._cancelFlag = threading.Event()
         self._stopped = False
         self._unit = None
+        self._units = {}        # voice id -> its emulated unit, started on first use
+        self._voice = "blazie"
         self._worker = threading.Thread(target=self._run, name="blazie-ssi263", daemon=True)
         self._worker.start()
 
@@ -255,6 +280,8 @@ class SynthDriver(SynthDriver):
             elif isinstance(item, speech.commands.PitchCommand):
                 # How NVDA marks a capital: an offset on the user's own 0-100 pitch.
                 items.append(("pitch", item.offset))
+            elif isinstance(item, speech.commands.LangChangeCommand):
+                items.append(("lang", item.lang))
         self._queue.put(_joined(items) if self._join else items)
 
     def cancel(self):
@@ -362,14 +389,30 @@ class SynthDriver(SynthDriver):
         # the worker applies it before the next utterance: new player, unit rebooted at the new rate
         self._want_rate = rates.parse(v) or self._want_rate
 
+    @staticmethod
+    def _present():
+        return [v for v, (_, _, fw, st, _) in VOICES.items() if os.path.isfile(fw) and os.path.isfile(st)]
+
     def _get_availableVoices(self):
-        return {"blazie": VoiceInfo("blazie", "Braille Lite 2000 (June 2003)", "en")}
+        return {v: VoiceInfo(v, VOICES[v][0], VOICES[v][1]) for v in self._present()}
 
     def _get_voice(self):
-        return "blazie"
+        return self._voice
 
     def _set_voice(self, v):
-        pass
+        # the worker starts that voice's unit before the next utterance (the English one runs from the start)
+        if v in self._present():
+            self._voice = v
+
+    def _voice_for(self, lang):
+        """The unit for a language NVDA marked (None: the chosen voice's)."""
+        if not lang:
+            return self._voice
+        base = lang.replace("-", "_").split("_")[0].lower()
+        for v in self._present():
+            if VOICES[v][1] == base:
+                return v
+        return self._voice
 
     @staticmethod
     def _unit_pitch(p):
@@ -387,9 +430,7 @@ class SynthDriver(SynthDriver):
         return self._unit_rate(self._rate), self._unit_pitch(self._pitch), int(self._tone)
 
     # -- worker: the only thread that talks to the emulated unit --------------------
-    def _boot(self):
-        if self._unit is not None:
-            self._unit.close()
+    def _boot(self, voice="blazie"):
         # In the unit's speech menu before speech-box mode: punctuation NONE, because NVDA
         # names symbols itself and also passes some through ("left paren (") -- the unit
         # read those too: "eti dash dash eloquence", "left paren left paren" (Tomi, 0.2.0).
@@ -404,7 +445,8 @@ class SynthDriver(SynthDriver):
         if self._whine != "off":
             params["carrier_rel_db"] = -300.0     # the whine model carries the carrier's lines
         chip = SSI263C(params=params, out_rate=self._out_rate)
-        unit = Blazie(EXE, FIRMWARE, STATE, chip=chip, out_rate=self._out_rate,
+        _name, lang, firmware, state, encoding = VOICES[voice]
+        unit = Blazie(EXE, firmware, state, chip=chip, out_rate=self._out_rate,
                       menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
                       board_lowpass_hz=BOARD_LOWPASS_HZ,
                       # the snapshot has inflection on; only turning it off needs the status-menu keys
@@ -415,11 +457,29 @@ class SynthDriver(SynthDriver):
         unit.send(b"\x05%dV" % UNIT_VOLUME)
         unit.run(0.05)
         unit.whine = None if self._whine == "off" else self._whine
+        unit.encoding = encoding
+        unit.lang = lang
+        unit.sent_settings = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
         return unit
+
+    def _unit_for(self, voice):
+        unit = self._units.get(voice)
+        if unit is None:
+            unit = self._units[voice] = self._boot(voice)
+        return unit
+
+    def _close_units(self):
+        for unit in self._units.values():
+            try:
+                unit.close()
+            except Exception:
+                pass
+        self._units = {}
+        self._unit = None
 
     def _run(self):
         try:
-            self._unit = self._boot()
+            self._unit = self._unit_for("blazie")
         except Exception:
             log.error("Blazie: could not start the emulated unit", exc_info=True)
             return
@@ -438,8 +498,8 @@ class SynthDriver(SynthDriver):
             except Exception:
                 log.error("Blazie speech failed; restarting the emulated unit", exc_info=True)
                 try:
-                    self._unit = self._boot()
-                    self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)
+                    self._close_units()
+                    self._unit = self._unit_for(self._voice)
                 except Exception:
                     log.error("Blazie restart failed", exc_info=True)
             if self._cancelFlag.is_set():
@@ -458,8 +518,7 @@ class SynthDriver(SynthDriver):
                     pass
             else:
                 synthDoneSpeaking.notify(synth=self)
-        if self._unit is not None:
-            self._unit.close()
+        self._close_units()
 
     def _switch_rate(self):
         """A new sample rate or inflection setting: a rebooted unit (and, for a new rate, a new player, since the
@@ -473,17 +532,34 @@ class SynthDriver(SynthDriver):
                 pass
         self._infl = self._want_infl
         self._whine = self._want_whine
-        self._unit = self._boot()
-        self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)
+        self._close_units()
+        self._unit = self._unit_for(self._voice)
         self._pitch_dirty = False
 
     def _speakJob(self, items):
+        """One utterance: split where NVDA changes the language, each stretch to its own unit."""
+        segs, voice = [], self._voice
+        for kind, value in items:
+            if kind == "lang":
+                voice = self._voice_for(value)
+                continue
+            if segs and segs[-1][0] == voice:
+                segs[-1][1].append((kind, value))
+            else:
+                segs.append((voice, [(kind, value)]))
+        for voice, part in segs:
+            if self._cancelFlag.is_set():
+                return
+            self._unit = self._unit_for(voice)
+            self._speakSegment(part)
+
+    def _speakSegment(self, items):
         unit = self._unit
         settings = self._unit_settings()
-        if settings != self._sent:
+        if settings != unit.sent_settings:
             unit.send(b"\x05%dE\x05%dP\x05%dT" % settings)
             unit.run(0.02)
-            self._sent = settings
+            unit.sent_settings = settings
         gain = MAKEUP * self._volume / 100.0
         self._cur_pitch = settings[1]
         self._lead = True                # nothing audible fed yet in this utterance
@@ -512,11 +588,11 @@ class SynthDriver(SynthDriver):
                     self._cur_pitch = want
                     self._pitch_dirty = True
                 continue
-            text = _clean(value)
+            text = _clean(value, unit.encoding)
             if self._numbers:
                 # with the add-on's boot the firmware counts to 999,999,999,999 and says a
                 # trillion as "one billion" (measured); this is for those
-                text = _numbers(text)
+                text = _numbers(text, unit.lang)
             lines = _lines(text, pack=self._short)
             if not lines:
                 continue
@@ -561,7 +637,7 @@ class SynthDriver(SynthDriver):
         capital cut off mid-word left every later word high, because the driver thought
         the pitch was back (Tomi, 0.2.0).  Say the user's pitch again, and have it land
         at once on the next utterance's first phoneme instead of gliding down into it."""
-        base = self._sent[1]
+        base = self._unit.sent_settings[1]
         self._unit.chip.snap_pitch = True
         self._snap_until_speech = True
         self._unit.send(b"\x05%dP" % base)

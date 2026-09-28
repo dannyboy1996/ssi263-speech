@@ -68,6 +68,11 @@ def main():
     build_bns32(os.path.join(eng, "bns_live.exe"))
     shutil.copy2(FIRMWARE, os.path.join(eng, "BL2ENG.BNS"))
     shutil.copy2(STATE, eng)
+    # the Spanish Braille Lite, when its files are here (firmware/blazie/spanish: never in the repository)
+    spa = os.path.join(REPO, "firmware", "blazie", "spanish")
+    for name in ("BL2SPA.BNS", "bl2spa_fresh.state"):
+        if os.path.isfile(os.path.join(spa, name)):
+            shutil.copy2(os.path.join(spa, name), eng)
     # GPLv2: the complete corresponding source of bns_live.exe
     with zipfile.ZipFile(os.path.join(eng, "z180emu-source.zip"), "w", zipfile.ZIP_DEFLATED) as z:
         for fn in ("bns.c", "COPYING", "README.md", "Makefile", "sconsole.h", "z180dbg.h"):

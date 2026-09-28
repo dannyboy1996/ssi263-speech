@@ -123,7 +123,13 @@ class PitchCommand:
         self.offset = offset
 
 
+class LangChangeCommand:
+    def __init__(self, lang=None):
+        self.lang = lang
+
+
 cmds.IndexCommand, cmds.PitchCommand = IndexCommand, PitchCommand
+cmds.LangChangeCommand = LangChangeCommand
 speech.commands = cmds
 sys.modules["speech"] = speech
 sys.modules["speech.commands"] = cmds

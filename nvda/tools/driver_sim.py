@@ -150,7 +150,12 @@ class PitchCommand:
         self.offset = offset
 
 
-cmds = module("speech.commands", IndexCommand=IndexCommand, PitchCommand=PitchCommand)
+class LangChangeCommand:
+    def __init__(self, lang=None):
+        self.lang = lang
+
+
+cmds = module("speech.commands", IndexCommand=IndexCommand, PitchCommand=PitchCommand, LangChangeCommand=LangChangeCommand)
 module("speech", commands=cmds)
 
 mark = 0
@@ -310,6 +315,19 @@ if WHICH == "blazie":
     whine_ok = whine_ok and d._get_whine() == "off"
     print("blazie whine: off / hiss / whine each speak, the host follows: %s" % ("ok" if whine_ok else "FAILED"))
     rate_ok = rate_ok and whine_ok
+    # Spanish: the voice, then NVDA's language switching inside an English utterance
+    voices = d._get_availableVoices()
+    es_ok = "blazie_es" in voices and voices["blazie_es"][2] == "es"
+    if es_ok:
+        d._set_voice("blazie_es")
+        scenario("spanish voice", ["Hola, \u00bfc\u00f3mo est\u00e1s? El a\u00f1o 2003, a 3,5 grados."])
+        es_ok = results[-1]["ok"] and results[-1]["audio_s"] > 1.0 and "blazie_es" in d._units
+        d._set_voice("blazie")
+        scenario("language switching", ["Hello there.", LangChangeCommand("es"), "Buenos d\u00edas.",
+                                        LangChangeCommand("en"), "Goodbye."])
+        es_ok = es_ok and results[-1]["ok"] and results[-1]["audio_s"] > 1.5
+    print("blazie spanish: voice listed %s, spoken, language switching: %s" % ("blazie_es" in voices, "ok" if es_ok else "FAILED"))
+    rate_ok = rate_ok and es_ok
 
 # the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402
