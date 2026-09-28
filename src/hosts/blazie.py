@@ -124,6 +124,10 @@ class Blazie:
         self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
         self.whine = None            # None, "hiss" or "whine" (whine_wave); the driver sets it
         self.encoding = "latin-1"    # how say() sends text: the Spanish firmware reads DOS code page 850
+        # cancel(): the emulated time between ^X cuts.  Each cut costs pipe round trips: 20 ms cuts (0.5.0) made
+        # the cancel ~32 ms of a ~44 ms tab-to-speech; 100 ms gives ~20 ms, no tail left in 24 cancel points
+        # (nvda/tools/cut_test.py; 150 and 200 ms are slower again)
+        self.cancel_cut = 0.1
         self._whine_key, self._whine_fc, self._whine_tab, self._whine_ph = None, None, None, 0.0
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
         keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
@@ -232,10 +236,10 @@ class Blazie:
             return True
         return self.owed() > 0 and (self.chip.time - max(self.say_time, self.last_speech)) < patience
 
-    def cancel(self, limit=3.0, quiet=0.15):
+    def cancel(self, limit=3.0, quiet=0.15, cut=None):
         """Silence and flush.  ^X cuts the word being spoken and flushes the unit's
         input, held flush line and its ^F included; the unit may still move on to a
-        word it had already prepared, so keep cutting every 20 ms, audio discarded,
+        word it had already prepared, so keep cutting (every `cancel_cut` s), audio discarded,
         until nothing has loaded for `quiet` s.  Afterwards nothing is held, so every
         ^F sent counts as answered -- unless every line had already echoed: then the unit
         holds its flush line, ^X leaves it held (measured), and its ^F comes with the next
@@ -248,9 +252,10 @@ class Blazie:
         self._cmd("D")                          # drop what the unit has not taken yet
         self.preparing = False
         t = 0.0
+        cut = self.cancel_cut if cut is None else cut
         while t < limit:
             self._cmd("U 18")
-            t += self.skip(0.02)
+            t += self.skip(cut)
             # a line still being prepared ignores ^X and speaks afterwards: until its ^F is
             # back (or ^X flushed it), keep cutting for up to 1 s, the longest measured wait
             if (t >= 0.04 and self.chip.time - self.last_speech > quiet
