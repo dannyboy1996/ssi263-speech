@@ -172,6 +172,7 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("joinPhrases", "&Join phrases (fewer pauses between words)", defaultVal=True),
         BooleanDriverSetting("shortPauses", "S&horten pauses between sentences", defaultVal=True),
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digits above a trillion)", defaultVal=True),
+        BooleanDriverSetting("voiceInflection", "Voice &inflection (the unit's own on/off)", defaultVal=True),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     supportedCommands = {speech.commands.IndexCommand, speech.commands.PitchCommand}
@@ -194,6 +195,7 @@ class SynthDriver(SynthDriver):
         self._tone = str(DEFAULT_TONE)
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
         self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
+        self._infl = self._want_infl = self._saved_inflection()     # likewise to _want_infl
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -321,6 +323,22 @@ class SynthDriver(SynthDriver):
     def _get_availableSamplerates(self):
         return {str(r): StringParameterInfo(str(r), rates.LABELS[r]) for r in rates.RATES}
 
+    def _get_voiceInflection(self):
+        return self._want_infl
+
+    def _set_voiceInflection(self, v):
+        # the unit's status-menu setting ("Voice inflection: i y/n"), which no ^E command reaches: the worker
+        # applies it before the next utterance by starting the unit again with the menu keys (silently)
+        self._want_infl = str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
+
+    def _saved_inflection(self):
+        try:
+            import config
+            v = config.conf["speech"][self.name]["voiceInflection"]
+            return str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
+        except Exception:
+            return True
+
     def _get_sampleRate(self):
         return str(self._want_rate)
 
@@ -366,7 +384,9 @@ class SynthDriver(SynthDriver):
         # The emulator is deterministic, so this holds on every machine.
         unit = Blazie(EXE, FIRMWARE, STATE, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate,
                       menu=("punct_none", "numbers_toggle"), key_start=3000000, key_gap=1500000,
-                      board_lowpass_hz=BOARD_LOWPASS_HZ)
+                      board_lowpass_hz=BOARD_LOWPASS_HZ,
+                      # the snapshot has inflection on; only turning it off needs the status-menu keys
+                      status=() if self._infl else ("inflection_off",))
         unit.send(b"\x18")
         unit.send(b"\r\x06")
         unit.run(0.3)
@@ -385,11 +405,11 @@ class SynthDriver(SynthDriver):
             if job is None:
                 break
             self._cancelFlag.clear()
-            if self._want_rate != self._out_rate:
+            if self._want_rate != self._out_rate or self._want_infl != self._infl:
                 try:
                     self._switch_rate()
                 except Exception:
-                    log.error("Blazie: could not switch the sample rate", exc_info=True)
+                    log.error("Blazie: could not apply the sample rate / inflection", exc_info=True)
             try:
                 self._speakJob(job)
             except Exception:
@@ -419,13 +439,16 @@ class SynthDriver(SynthDriver):
             self._unit.close()
 
     def _switch_rate(self):
-        """A new sample rate: the chip renders at the host rate, so a new player and a rebooted unit."""
-        self._out_rate = self._want_rate
-        old, self._player = self._player, self._makePlayer()
-        try:
-            old.close()
-        except Exception:
-            pass
+        """A new sample rate or inflection setting: a rebooted unit (and, for a new rate, a new player, since the
+        chip renders at the host rate).  The unit's boot is silent; its audio is never fed."""
+        if self._want_rate != self._out_rate:
+            self._out_rate = self._want_rate
+            old, self._player = self._player, self._makePlayer()
+            try:
+                old.close()
+            except Exception:
+                pass
+        self._infl = self._want_infl
         self._unit = self._boot()
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)
         self._pitch_dirty = False

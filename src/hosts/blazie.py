@@ -31,26 +31,30 @@ KEY_GAP = 10000000                 # instructions between boot keys (1.6 s of un
 # Punctuation t/m/s/z = total/most/some/none; n toggles digits / full numbers.
 MENU = {"punct_total": 0x1E, "punct_most": 0x0D, "punct_some": 0x0E, "punct_none": 0x35,
         "numbers_toggle": 0x1D}
+# Status-menu entries (BL2000 help, 34-chord menu: "Voice inflection: i y/n"): the letter that jumps to the
+# entry, then y (dots 13456) or n (dots 1345).  The e-chord leaves the menu.
+STATUS = {"inflection_on": (0x0A, 0x3D), "inflection_off": (0x0A, 0x1D)}
 CREATE_NO_WINDOW = 0x08000000
 
 
-def boot_keys(menu=(), start=None, gap=None):
+def boot_keys(menu=(), start=None, gap=None, status=()):
     """The boot chords, with `menu` letters typed inside the 345-chord speech menu before
     the 123456-chord enters speech-box mode.  Returns (--key args, boot instructions).
     `start` (instructions before the first chord) and `gap` (between keys, and after the
     last) default to the MASTER harness's 8M and 10M."""
-    if not menu and start is None and gap is None:
+    if not menu and not status and start is None and gap is None:
         return list(CHORDS), BOOT_INSTR
     start = 8000000 if start is None else int(start)
     gap = KEY_GAP if gap is None else int(gap)
-    codes = [0x5C] + [MENU[m] for m in menu] + [0x7F, 0x07, 0x51]
+    codes = ([0x4C] + [c for st in status for c in STATUS[st]] + [0x51] if status else [])   # 34-chord .. e-chord
+    codes += [0x5C] + [MENU[m] for m in menu] + [0x7F, 0x07, 0x51]
     keys = ["%d=%02X" % (start + i * gap, c) for i, c in enumerate(codes)]
     return keys, start + len(codes) * gap
 
 
 class Blazie:
     def __init__(self, exe, firmware, state, chip=None, out_rate=44100, menu=(), key_start=None, key_gap=None,
-                 board_lowpass_hz=None):
+                 board_lowpass_hz=None, status=()):
         """`board_lowpass_hz`: a roll-off after the chip that matches the unit's line out (None: off).
         The unit's line out has ~3 dB less at 4-8 kHz and ~12 dB less at 8-16 kHz than the chip
         model; a first-order 5 kHz low-pass matches it (octave error 4.6 -> 1.2 dB on Reclaim's
@@ -60,7 +64,7 @@ class Blazie:
         self.chip = chip or SSI263(out_rate=out_rate)
         self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
-        keys, boot_instr = boot_keys(menu, key_start, key_gap)
+        keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
         for c in keys:
             args += ["--key", c]
         self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

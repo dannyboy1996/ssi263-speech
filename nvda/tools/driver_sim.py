@@ -255,6 +255,28 @@ if WHICH == "blazie":
           % (tones[0], tones[-1], len(tones), r4, "ok" if tone_ok else "FAILED"))
     rate_ok = rate_ok and tone_ok
     d._set_variant("7")
+    # voice inflection (the unit's status-menu yes/no): off, a '?' must not raise R1; back on, it must
+    def r1_during(text):
+        global mark
+        mark = len(notified)
+        d.speak(["ok."])                      # the worker restarts the unit before this job
+        wait_idle()
+        seen = []
+        chip = d._unit.chip
+        orig = chip.write
+        chip.write = lambda reg, val: (orig(reg, val), seen.append(val) if reg == 1 else None)
+        mark = len(notified)
+        d.speak([text])
+        wait_idle()
+        chip.write = orig
+        return max(seen) if seen else 0
+    d._set_voiceInflection(False)
+    r1_off = r1_during("Is it ready?")
+    d._set_voiceInflection(True)
+    r1_on = r1_during("Is it ready?")
+    infl_ok = r1_on > r1_off and d._get_voiceInflection() is True
+    print("blazie inflection: '?' raises R1 to %02X with it on, %02X with it off: %s" % (r1_on, r1_off, "ok" if infl_ok else "FAILED"))
+    rate_ok = rate_ok and infl_ok
 
 # the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402
