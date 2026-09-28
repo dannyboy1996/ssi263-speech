@@ -22,11 +22,14 @@ from write_spy import watch_writes                  # noqa: E402
 HISTORY = os.path.join(HERE, "golden", "cancel_history_rec24.jsonl")
 ENG = os.path.join(os.path.dirname(HERE), "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
 OLD = os.environ.get("CANCEL_COMPLETION_OLD") == "1"
-PHONEMES = 10                                       # O OU K A E1 B UH1 T AH1 N
+# two continuations: "OK button" (as recorded), and two lines with pauses -- a wrong fix can pass the short one by luck
+# (its one word gap may fall before an early echo; Claude, section 93)
+TEXTS = {"OK button": (["OK button"], 10),
+         "two lines": (["OK button. Wait, there is more.", "Hello there, how are you today? Yes, it works, really."], 57)}
 STALL = 0.5                                         # s from the last phoneme to "done" allowed
 
 
-def trial(host, variant):
+def trial(host, variant, lines):
     calls = bl_replay.sessions(HISTORY)[-1]
     init = calls[0][1]
     for k in ("firmware", "state"):
@@ -44,7 +47,7 @@ def trial(host, variant):
         unit.run(1.0)
     unit.turbo_between_lines = True
     n0 = len(loads)
-    unit.say(["OK button"])
+    unit.say(lines)
     t = 0.0
     while t < 15.0:
         unit.run(0.03)
@@ -61,12 +64,15 @@ def trial(host, variant):
 
 
 bad = 0
+n = 0
 for host in ("native", "pipe"):
-    for variant in ("at once", "cancel again", "idle 1 s"):
-        spoken, late, stall = trial(host, variant)
-        ok = late == 0 and spoken >= PHONEMES and stall <= STALL
-        bad += not ok
-        print("%-6s %-12s %2d phonemes before done, %d after, done %.2f s after the last: %s"
-              % (host, variant, spoken, late, stall, "ok" if ok else "FAILED"))
-print("%d of 6 cases complete" % (6 - bad))
+    for label, (lines, phonemes) in TEXTS.items():
+        for variant in ("at once", "cancel again", "idle 1 s"):
+            spoken, late, stall = trial(host, variant, lines)
+            ok = late == 0 and spoken >= phonemes and stall <= STALL
+            bad += not ok
+            n += 1
+            print("%-6s %-9s %-12s %2d phonemes before done, %2d after, done %.2f s after the last: %s"
+                  % (host, label, variant, spoken, late, stall, "ok" if ok else "FAILED"))
+print("%d of %d cases complete" % (n - bad, n))
 sys.exit(1 if bad else 0)
