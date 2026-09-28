@@ -201,9 +201,13 @@ class SynthDriver(SynthDriver):
         self._snap_until_speech = False
         self._tone = str(DEFAULT_TONE)
         self._sent = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
-        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
-        self._infl = self._want_infl = self._saved_inflection()     # likewise to _want_infl
-        self._whine = self._want_whine = self._saved_whine()
+        # Defaults only: NEVER read config.conf["speech"][<driver>] here.  NVDA registers this driver's settings
+        # after __init__, and its config caches a failed lookup as missing, so an early read of a new key made
+        # NVDA's own loadSettings fail ("setSynth failed ... KeyError: 'voiceInflection'", Tomi, 0.6.0 draft).
+        # NVDA applies the saved values through the setters right after; the worker restarts once if needed.
+        self._out_rate = self._want_rate = rates.DEFAULT   # the worker switches to _want_rate
+        self._infl = self._want_infl = True                # likewise to _want_infl
+        self._whine = self._want_whine = "off"
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -350,30 +354,6 @@ class SynthDriver(SynthDriver):
         # parameter, so the worker restarts the unit (silently) before the next utterance
         if v in dict(WHINES):
             self._want_whine = v
-
-    def _saved_whine(self):
-        try:
-            import config
-            v = config.conf["speech"][self.name]["whine"]
-            return v if v in dict(WHINES) else "off"
-        except Exception:
-            return "off"
-
-    def _saved_bool(self, key, default):
-        try:
-            import config
-            v = config.conf["speech"][self.name][key]
-            return str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
-        except Exception:
-            return default
-
-    def _saved_inflection(self):
-        try:
-            import config
-            v = config.conf["speech"][self.name]["voiceInflection"]
-            return str(v).strip().lower() not in ("false", "0", "no", "off") if isinstance(v, str) else bool(v)
-        except Exception:
-            return True
 
     def _get_sampleRate(self):
         return str(self._want_rate)

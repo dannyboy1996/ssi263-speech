@@ -24,24 +24,5 @@ def parse(value):
     return rate if rate in RATES else None
 
 
-def saved(driver_name):
-    """The rate saved in NVDA's config for this driver, so the first boot already uses it
-    (NVDA applies saved settings only after the driver has started its worker).  A 0.6.0 test build's
-    "Higher sample rate" check box, unchecked, still means 11 kHz."""
-    try:
-        import config
-        section = config.conf["speech"][driver_name]
-    except Exception:
-        return DEFAULT
-    try:
-        rate = parse(section[SETTING_ID])
-        if rate:
-            return rate
-    except Exception:
-        pass
-    try:
-        if str(section["higherSampleRate"]).strip().lower() in ("false", "0", "no", "off"):
-            return 11025
-    except Exception:
-        pass
-    return DEFAULT
+# (No saved() helper: a driver must not read its own config section in __init__ -- NVDA registers the
+# settings after it, and an early read of a new key poisons NVDA's config cache; see the drivers' __init__.)

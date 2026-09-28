@@ -123,6 +123,7 @@ class Blazie:
         self.chip = chip or SSI263(out_rate=out_rate)
         self.board = self.chip.dsp.onepole(board_lowpass_hz, self.chip.out_rate) if board_lowpass_hz else None
         self.whine = None            # None, "hiss" or "whine" (whine_wave); the driver sets it
+        self.encoding = "latin-1"    # how say() sends text: the Spanish firmware reads DOS code page 850
         self._whine_key, self._whine_fc, self._whine_tab, self._whine_ph = None, None, None, 0.0
         args = [exe, firmware, "--live", "--state-in", state, "--phon-ms", "5"]
         keys, boot_instr = boot_keys(menu, key_start, key_gap, status)
@@ -214,7 +215,7 @@ class Blazie:
         self.say_time = self.chip.time
         self.preparing = True
         self._stale_f = max(0, self.sent_f - self.echo_f)     # echoes still due from earlier sends
-        self.send(b"".join(ln.encode("latin-1", "replace") + b"\r\x06" for ln in lines) + b"\r\x06")
+        self.send(b"".join(ln.encode(self.encoding, "replace") + b"\r\x06" for ln in lines) + b"\r\x06")
 
     def owed(self):
         """^F echoes still to come beyond the one the unit holds (after a cancel it

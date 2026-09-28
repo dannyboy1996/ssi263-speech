@@ -111,7 +111,11 @@ class SynthDriver(SynthDriver):
         self._snap_until_speech = False
         self._tone = "i"      # box tone i, its default
         self._sent = None     # settings last sent to the box
-        self._out_rate = self._want_rate = rates.saved(self.name)   # the worker switches to _want_rate
+        # Defaults only: NEVER read config.conf["speech"][<driver>] here.  NVDA registers this driver's settings
+        # after __init__, and its config caches a failed lookup as missing, so an early read of a new key made
+        # NVDA's own loadSettings fail ("setSynth failed ... KeyError: 'voiceInflection'", Tomi, 0.6.0 draft).
+        # NVDA applies the saved values through the setters right after; the worker restarts once if needed.
+        self._out_rate = self._want_rate = rates.DEFAULT   # the worker switches to _want_rate
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()

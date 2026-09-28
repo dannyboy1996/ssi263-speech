@@ -241,7 +241,15 @@ _NUMBER = re.compile(r"""
 MONEY = re.compile(r"(\$\d[\d,]*(?:\.\d+)?|\$\.\d+)")
 
 
-def normalise(text, spell_out=False, lang="en"):
+# Spain's convention (the Braille Lite's Spanish firmware is ONCE's): "1.234.567" groups thousands with dots and
+# "3,5" is "tres coma cinco".  Only with decimal_comma=True, so the Mexican-Spanish default (a decimal point, "punto")
+# stays as it was.
+_ES_THOUSANDS = re.compile(r"(?<![\w.,])(-?\d{1,3}(?:\.\d{3})+)(?![\w.]|,\d)")
+_ES_DECIMAL = re.compile(r"(?<![\w.,])(-?\d+),(\d+)(?![\w,])")
+COMMA_ES = "coma"
+
+
+def normalise(text, spell_out=False, lang="en", decimal_comma=False):
     """Replace numbers in `text` with words.
 
     `spell_out` gives the engine's own behaviour, digit by digit, for a user
@@ -256,6 +264,10 @@ def normalise(text, spell_out=False, lang="en"):
     """
     minus = MINUS_ES if lang == "es" else MINUS
     point = POINT_ES if lang == "es" else POINT
+    if decimal_comma:
+        text = _ES_THOUSANDS.sub(lambda mo: mo.group(1).replace(".", ""), text)
+        text = _ES_DECIMAL.sub(lambda mo: mo.group(1) + "." + mo.group(2), text)
+        point = COMMA_ES
     large = LARGE_ES if lang == "es" else LARGE
 
     def big(s):

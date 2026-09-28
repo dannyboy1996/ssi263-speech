@@ -73,7 +73,26 @@ def module(name, **attrs):
 
 
 module("nvwave", WavePlayer=FakePlayer)
-module("config", conf={"speech": {"outputDevice": "default"}})     # NVDA 2021-2024 layout
+class _Speech(dict):
+    """config.conf["speech"], recording every key read: a driver must NOT read its own section in __init__ (NVDA
+    registers the settings after it and caches a failed lookup; the 0.6.0 draft failed setSynth that way)."""
+    touched = []
+
+    def __getitem__(self, k):
+        _Speech.touched.append(k)
+        return dict.__getitem__(self, k)
+
+
+module("config", conf={"speech": _Speech(outputDevice="default")})     # NVDA 2021-2024 layout
+DRIVER_NAMES = ("blazie", "speakout", "accentmini")
+
+
+def config_guard(where):
+    bad = [k for k in _Speech.touched if k in DRIVER_NAMES]
+    del _Speech.touched[:]
+    if bad:
+        print("CONFIG READ IN __init__ (%s): %s -- this breaks NVDA's loadSettings" % (where, bad))
+        sys.exit(1)
 notified = []
 
 
@@ -158,6 +177,7 @@ if WHICH == "both":
         m = importlib.import_module("synthDrivers." + MODULE[w])
         own = m.SSI263C.__module__ == "synthDrivers._ssi263_%s.ssi263.native" % w
         d = m.SynthDriver()
+        config_guard(w)
         time.sleep(0.3)
         mark = len(notified)
         n0 = len(d._player.chunks)
@@ -174,6 +194,7 @@ if WHICH == "both":
 sd.__path__ = [BUILDS[WHICH]]
 drv = importlib.import_module("synthDrivers." + MODULE[WHICH])
 d = drv.SynthDriver()
+config_guard(WHICH)
 if SA:
     d._set_voice("sa")               # as NVDA does after loading the driver, from its config
     TAG = TAG + "-sa"
