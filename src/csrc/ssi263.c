@@ -8,6 +8,10 @@
 #include <string.h>
 
 #include "ssi263.h"
+#include "ssi263_defaults.h"
+
+/* the generated defaults are one double per ssi263_params double: a mismatch fails to compile */
+typedef char ssi263_defaults_size_check[sizeof(ssi263_params) == sizeof(ssi263_default_params_d) ? 1 : -1];
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -338,6 +342,16 @@ static void update_inflection(ssi263 *c)
 }
 
 SSI263_API int ssi263_params_size(void) { return (int)sizeof(ssi263_params); }
+
+SSI263_API void ssi263_default_params(ssi263_params *out)
+{
+    memcpy(out, ssi263_default_params_d, sizeof(ssi263_params));
+}
+
+SSI263_API const unsigned char *ssi263_default_rom(void)
+{
+    return ssi263_default_rom_d;
+}
 
 SSI263_API ssi263 *ssi263_new(const ssi263_params *p, const unsigned char *rom, double out_rate)
 {

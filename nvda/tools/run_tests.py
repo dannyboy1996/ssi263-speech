@@ -69,6 +69,12 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
+# the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
+GEN_DEFAULTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "gen_chip_defaults.py")
+CHECKS.append(check("chip defaults header", [PY, GEN_DEFAULTS, "--check"]))
+# and on Python 3.7 (NVDA 2021-2023): the defaults must not depend on the Python version (3.12 changed float sum())
+if os.path.isfile(PY37):
+    CHECKS.append(check("chip defaults header (Python 3.7, 32-bit)", [PY37, GEN_DEFAULTS, "--check"]))
 
 
 def run(c):

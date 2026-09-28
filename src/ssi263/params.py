@@ -18,7 +18,10 @@ def _glottal_9e():
     ticks per level), the wave normalised to unit area first (chip.sc01_glottal_wave builds the same)."""
     levels = (0.0, -4 / 7, 1.0, 6 / 7, 5 / 7, 4 / 7, 3 / 7, 2 / 7, 1 / 7)
     wave = [v for v in levels for _ in range(4)]
-    area = sum(wave)
+    # math.fsum, not sum(): Python 3.12 made sum() of floats compensated, so 3.7-3.11 (NVDA 2021-2023) got an area
+    # one ulp off 3.12+'s.  fsum is correctly rounded on every version (and equals 3.12+'s sum here).
+    import math
+    area = math.fsum(wave)
     out = [0.2 * v / area for v in wave]
     out[0] += 0.8
     return tuple(out)

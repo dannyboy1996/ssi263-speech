@@ -94,6 +94,10 @@ typedef struct ssi263_params {
 typedef struct ssi263 ssi263;
 
 SSI263_API int ssi263_params_size(void);
+/* The defaults (ssi263/params.py) and the ROM, for front ends without Python: gen_chip_defaults.py writes them
+   into ssi263_defaults.h, and run_tests checks they still match. */
+SSI263_API void ssi263_default_params(ssi263_params *out);
+SSI263_API const unsigned char *ssi263_default_rom(void);     /* SSI263_ROM_BYTES */
 SSI263_API ssi263 *ssi263_new(const ssi263_params *p, const unsigned char *rom, double out_rate);
 SSI263_API void ssi263_free(ssi263 *c);
 
