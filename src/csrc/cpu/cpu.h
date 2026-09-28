@@ -5,8 +5,10 @@
  * into a core's internals; a core never knows which board it is in.  CONTRACT.md defines the timing: what a step
  * is, when interrupts are sampled, what HALT, SLP and EI do, and what cycle count a callback sees.
  *
- * Nothing implements this yet.  Today's Braille Lite board calls z180emu directly (bl_board.c); the first
- * implementation will be an adapter around that core, which must reproduce the golden vectors bit for bit.
+ * Version 2 (after Astra, Reply 78): a corrected path (*_step, *_run) and, for the Z180 only, a legacy compatibility
+ * path (z180_run_legacy) that reproduces today's z180emu slice with its exceptions, so the current goldens hold
+ * while the board moves onto this interface.  The Z180 for new work comes from MAME's BSD-3 core (Tomi's decision).
+ * Nothing implements this yet.
  */
 #ifndef SSI263_CPU_H
 #define SSI263_CPU_H
@@ -17,9 +19,11 @@
 extern "C" {
 #endif
 
-/* What a core sees of its board.  Every callback gets ctx, the board's own instance: no globals anywhere, so two
-   boards (two units) run side by side in one process, and on different threads.  A callback may call the core's
-   *_cycles, *_steps, *_pc and *_set_irq; it must not call *_step or *_run. */
+/* What a core sees of its board.  *_create COPIES this struct; ctx must outlive the core.  Every callback gets ctx,
+   the board's own instance: no globals anywhere, so two boards (two units) run side by side in one process, and on
+   different threads.  Required: read, write, in, out.  Optional (NULL): fetch (-> read), irq_ack (-> FFh), serial_*,
+   boundary.  A callback may call *_cycles, *_steps, *_pc, *_regs_get and *_set_irq; never *_step, *_run, *_reset or
+   *_destroy.  CONTRACT.md 7 says what each callback sees, phase by phase. */
 typedef struct cpu_bus {
     void *ctx;
     uint8_t (*read)(void *ctx, uint32_t addr);                /* memory: the PHYSICAL address (after any MMU) */
@@ -27,14 +31,16 @@ typedef struct cpu_bus {
     void (*write)(void *ctx, uint32_t addr, uint8_t value);
     uint8_t (*in)(void *ctx, uint16_t port);                  /* EXTERNAL I/O only: on-chip registers stay inside */
     void (*out)(void *ctx, uint16_t port, uint8_t value);
-    int (*irq_ack)(void *ctx, int line);                      /* the data bus during an interrupt acknowledge; -1 = FFh */
+    /* the data bus during an interrupt acknowledge: byte n of the vector or, for the 8085's INTR, of the injected
+       instruction (opcode, then operands); -1 = FFh */
+    int (*irq_ack)(void *ctx, int line, int n);
     int (*serial_rx)(void *ctx, int channel);                 /* on-chip serial in: the next byte on the line, -1 = none */
     void (*serial_tx)(void *ctx, int channel, uint8_t byte);  /* on-chip serial out: a byte leaves the chip */
     int (*serial_pin)(void *ctx, int pin);                    /* input pins a core samples (Z180 /DCD0 /CTS; 8085 SID) */
     void (*serial_out_pin)(void *ctx, int pin, int level);    /* output pins (8085 SOD) */
-    /* Every step, AFTER interrupt acceptance and BEFORE the instruction (CONTRACT.md 1): the board's per-instruction
-       work -- scheduled keys, A/R readiness -- happens here, so what it raises is sampled at the NEXT boundary.  NULL:
-       none. */
+    /* Phase D of every step (CONTRACT.md 1): after interrupt acceptance and its charge, after *_steps increments and
+       the on-chip serial port has caught up; before the instruction.  The board's per-instruction work (scheduled
+       keys, A/R readiness) happens here, so what it raises is sampled at the NEXT step's acceptance.  NULL: none. */
     void (*boundary)(void *ctx, uint32_t pc);
 } cpu_bus;
 
@@ -42,6 +48,7 @@ typedef struct cpu_bus {
 typedef struct z180 z180;
 
 enum { Z180_INT0, Z180_INT1, Z180_INT2, Z180_NMI };            /* external lines; on-chip sources are internal */
+#define Z180_DMA_CHUNK 16                                      /* burst DMA bytes per step (corrected path; model) */
 
 typedef struct {                                               /* for lockstep tests: the programmer-visible state */
     uint16_t af, bc, de, hl, af2, bc2, de2, hl2, ix, iy, sp, pc;
@@ -53,10 +60,14 @@ void z180_destroy(z180 *c);
 void z180_reset(z180 *c);
 int z180_step(z180 *c);                            /* one step (CONTRACT.md 1); returns its T-states */
 uint64_t z180_run(z180 *c, uint64_t budget);       /* whole steps until >= budget T-states; returns those run */
+/* Today's cpu_execute_z180(budget), exactly, exceptions included (CONTRACT.md 3): NMI only at slice entry, a burst
+   DMA chunk taking the rest of the budget, SLP ending the slice.  NOT equivalent to repeated steps.  For the current
+   goldens only; retired with them. */
+uint64_t z180_run_legacy(z180 *c, uint64_t budget);
 void z180_set_irq(z180 *c, int line, int asserted);
 uint64_t z180_cycles(const z180 *c);               /* T-states since reset (CONTRACT.md 5) */
 uint64_t z180_steps(const z180 *c);                /* steps since reset, HALT and SLP slots included */
-uint32_t z180_pc(const z180 *c);
+uint32_t z180_pc(const z180 *c);                   /* the SAVED instruction-start PC (regs_get: architectural) */
 void z180_regs_get(const z180 *c, z180_regs *out);
 
 /* ---- 8085 (Intel 8085A: the Accent SA) ------------------------------------------------------------------------- */
@@ -79,7 +90,7 @@ uint64_t i8085_run(i8085 *c, uint64_t budget);
 void i8085_set_irq(i8085 *c, int line, int asserted);
 uint64_t i8085_cycles(const i8085 *c);
 uint64_t i8085_steps(const i8085 *c);
-uint32_t i8085_pc(const i8085 *c);
+uint32_t i8085_pc(const i8085 *c);                 /* the saved instruction-start PC; no side effects (no RIM) */
 void i8085_regs_get(const i8085 *c, i8085_regs *out);
 
 #ifdef __cplusplus
