@@ -90,6 +90,8 @@ def main():
                    "  gcc %s -o bns_live.exe bns.c %s\n"
                    % (", ".join(CORE), " ".join(CFLAGS), " ".join(LINK), " ".join(n + ".o" for n in CORE)))
     shutil.copy2(os.path.join(Z180, "COPYING"), os.path.join(eng, "COPYING.z180emu"))
+    # NVDA 2024.4+: the add-on's symbol dictionary (manifest [symbolDictionaries]) sends stacked '?' to the unit
+    shutil.copytree(os.path.join(HERE, "blazie", "locale"), os.path.join(BUILD, "locale"))
     with open(os.path.join(BUILD, "manifest.ini"), "w", encoding="utf-8") as f:
         f.write(MANIFEST)
     zip_build(BUILD, OUT)

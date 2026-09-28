@@ -1,0 +1,6 @@
+# Braille Lite add-on (NVDA 2024.4 and later): send "?" itself to the synthesizer at every symbol level.
+# NVDA only sends a "?" that ends a sentence (a letter before it, a space or the line's end after it), so in
+# "how are you??" both marks were dropped, and the unit, which raises its pitch once per "?", never saw them.
+# The word and the level stay NVDA's own ("-").
+symbols:
+?	-	-	always
