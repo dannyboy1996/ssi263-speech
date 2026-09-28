@@ -32,10 +32,16 @@ import numpy as np                           # noqa: E402
 from ssi263.native import SSI263C            # noqa: E402
 from hosts.blazie import Blazie              # noqa: E402
 
-EXE = os.path.abspath(sys.argv[1])
-OUT = sys.argv[2] if len(sys.argv) > 2 else None
+SPANISH = "--es" in sys.argv                # the Spanish unit (BL2SPA.BNS, cp850) and Spanish lines
+AGAINST = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--against=")), None)   # a golden file
+ARGS = [a for a in sys.argv[1:] if a != "--es" and not a.startswith("--against=")]
+EXE = os.path.abspath(ARGS[0])
+OUT = ARGS[1] if len(ARGS) > 1 else None
 ENG = os.path.join(REPO, "nvda", "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
-FW, ST = os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")
+if SPANISH:
+    FW, ST = os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")
+else:
+    FW, ST = os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")
 
 chip = SSI263C(out_rate=22050)
 log = []
@@ -65,16 +71,30 @@ run(0.3)
 u.send(b"\x056V\x0511E\x0516P\x057T")
 run(0.1)
 tabs = []
-for step, (text, secs, cut) in enumerate((
-        ("Hello, how are you??", 3.0, None),
-        ("Custom number processing check box checked", 0.4, "cancel"),
-        ("OK button", 1.5, None),
-        ("$12.50 and 1,234,567. Is it ready???", 5.0, None),
-        ("Readme for Microsoft Windows.", 0.25, "cancel"),
-        ("Yes, it works.", 2.5, "cancel_idle"),
-        ("Edit, multi line, blank", 2.5, None))):
+if SPANISH:
+    u.encoding = "cp850"
+    STEPS = (("Hola, ¿cómo estás??", 3.0, None),
+             ("Procesamiento de números personalizado, casilla marcada", 0.4, "cancel"),
+             ("Botón Aceptar", 1.5, None),
+             ("Mañana a las 3,5 horas. ¿Está listo???", 5.0, None),
+             ("Léame para Microsoft Windows.", 0.25, "cancel"),
+             ("Sí, funciona.", 2.5, "cancel_idle"),
+             ("Editar, varias líneas, en blanco", 2.5, None))
+else:
+    STEPS = (("Hello, how are you??", 3.0, None),
+             ("Custom number processing check box checked", 0.4, "cancel"),
+             ("OK button", 1.5, None),
+             ("$12.50 and 1,234,567. Is it ready???", 5.0, None),
+             ("Readme for Microsoft Windows.", 0.25, "cancel"),
+             ("Yes, it works.", 2.5, "cancel_idle"),
+             ("Edit, multi line, blank", 2.5, None))
+# the host's whine layer too (a C port must reproduce it): one last line with the odd-volume whine on
+STEPS += ((STEPS[2][0], 2.0, "whine"),)
+for step, (text, secs, cut) in enumerate(STEPS):
     log.append("SAY %d %r" % (step, text))
     t0 = time.perf_counter()
+    if cut == "whine":
+        u.whine, cut = "whine", None
     u.say([text])
     run(secs)
     if cut:
@@ -93,3 +113,13 @@ print("%s: %d writes, audio %s, scenario %.2f s wall, cancels %s ms" % (
 if OUT:
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(sig) + "\n")
+if AGAINST:
+    gold = open(AGAINST, encoding="utf-8").read().splitlines()
+    diff = next((k for k, (x, y) in enumerate(zip(gold, sig)) if x != y), None)
+    if diff is None and len(gold) == len(sig):
+        print("matches %s (%d lines)" % (os.path.basename(AGAINST), len(sig)))
+        sys.exit(0)
+    k = diff if diff is not None else min(len(gold), len(sig))
+    print("DIFFERS from %s at line %d:\n  golden: %s\n  now:    %s" % (
+        os.path.basename(AGAINST), k, gold[k] if k < len(gold) else "-", sig[k] if k < len(sig) else "-"))
+    sys.exit(1)
