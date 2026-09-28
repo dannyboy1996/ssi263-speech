@@ -21,7 +21,7 @@ Sources are labelled throughout: **(chip)** the manufacturer's documented behavi
 
 | Phase | What happens | `*_cycles()` during it |
 |---|---|---|
-| A. Acceptance | At most one pending interrupt (priorities in 4): the return address is pushed, `irq_ack` is read if the mode needs a vector, the PC is set. A halted core leaves HALT. | the step's start (not yet charged) |
+| A. Acceptance | At most one pending interrupt (priorities in 4), **by type**. *Vectored* (Z180 TRAP, NMI, IM1, IM2; 8085 TRAP and the RSTs): the return address is pushed, any vector byte is read (`irq_ack`, byte 0), the PC is set. *Injected* (8085 INTR, Z180 IM0): nothing is pushed and nothing is read here; the step's instruction at E comes from the acknowledge instead (4). Either way, a halted core leaves HALT. | the step's start (not yet charged) |
 | B. Acceptance charge | The acceptance T-states are added, and the on-chip timers are clocked by them. | start + acceptance |
 | C. EI shadow ends | (see 5) | start + acceptance |
 | D. Boundary | `steps` increments; the on-chip serial port catches up to the current count and refreshes its interrupt level; then `bus->boundary(ctx, pc)`. | start + acceptance |
@@ -54,8 +54,8 @@ with an overrun under one step. `*_run(0)` returns 0 and has no side effects. A 
   cycles reported against 8 clocked, Reply 76).
 
 A sequence of `*_step()` calls, or of 1-cycle legacy calls, is **not** equivalent to one legacy call. Nothing may
-claim otherwise. Synthetic tests pin each exception (Astra's in `investigation/section95-review/`), because the
-Braille Lite goldens may never exercise them.
+claim otherwise. Each exception needs a synthetic test, because the Braille Lite goldens may never exercise them.
+Which tests already exist and which are still to write is listed in 10.
 
 ## 4. Interrupts
 
@@ -75,9 +75,12 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   latch). Acceptance saves IE for RIM.
 - **RST 7.5**: an edge latch, cleared by acceptance or by SIM's R7.5 bit. It is subject to IE and its SIM mask.
 - **RST 6.5, RST 5.5**: levels, subject to IE and their SIM masks.
-- **INTR**: a level, subject to IE only (not the SIM masks). It is an injected instruction: `irq_ack(ctx, line, n)`
-  supplies byte *n* of it (opcode, then any operand bytes). It runs as the step's instruction, at E, with its own
-  T-states charged at F.
+- **INTR**: a level, subject to IE only (not the SIM masks). It is an **injected instruction**, and all of its
+  acknowledge reads happen at E: the byte index *n* restarts at 0 for each acceptance, and `irq_ack(ctx, line, n)`
+  supplies the opcode (*n* = 0) and then any operands, in place of memory fetches. It is the step's one instruction,
+  executed exactly once, with no ordinary instruction after it in the same step. It does its own control transfer:
+  an RST or CALL pushes and jumps as that instruction does, and an injected NOP pushes nothing. Its T-states are
+  charged at F. The Z180's IM0 works the same way.
 - **The Python core (`src/hosts/i8085.py`) is not an oracle.** It delays TRAP through the instruction after EI, and
   charges 12 T-states for an accepted interrupt where the pinned MAME source charges 11 (Reply 78). Each such
   difference is decided from Intel's documentation and recorded; neither implementation is copied blindly.
@@ -95,13 +98,26 @@ A halted core does one **slot** per step, separate from the HLT instruction's ow
 
 Interrupt arrival is tested at both slot edges.
 
-**SLP** (Z180) on the corrected path is HALT with the on-chip peripherals clocked by every slot **(chip)**. On the
-legacy path it keeps today's slice-ending quirk (3).
+**SLP** (Z180) is **not** simply HALT with the peripherals running. Per Zilog's manual (Z8018x user manual, printed
+pages 33–35) **(chip)**:
+- **Wake without service.** An interrupt request that is *individually* enabled ends SLEEP even when IEF1 = 0. The
+  CPU then continues at the instruction after SLP without vectoring. With IEF1 = 1 it is accepted as usual. HALT
+  differs: a request masked by IEF1 = 0 leaves the CPU halted.
+- **What stops.** Normal SLEEP stops DMA and refresh; the IOSTOP bit (ICR) changes which on-chip peripherals keep
+  running.
+
+On the corrected path, sleep is polled in the same fixed slots as HALT **(model)**, and each slot's T-states clock
+the peripherals that the manual leaves running in that state. Required tests: wake-without-service, and IOSTOP
+(10). The narrow clock-accounting correction measured so far (Reply 76) is part of this, not all of it. On the
+legacy path, SLP keeps today's slice-ending quirk (3).
 
 ## 7. What callbacks see, by phase
 
-- **A**: stack writes, and `irq_ack`. `*_cycles()` is the step's start. `*_pc()` is the interrupted instruction's
-  address. There has been no boundary for the vector's first instruction yet.
+- **A** (vectored acceptance only): the stack writes and any vector read (`irq_ack`, byte 0). `*_cycles()` is the
+  step's start. `*_pc()` is the interrupted instruction's address. There has been no boundary for the vector's first
+  instruction yet. An injected instruction makes no bus access at A.
+- **E** for an injected instruction: its bytes come from `irq_ack` (*n* = 0, 1, …), and any stack writes are the
+  instruction's own.
 - **D**: `serial_tx` (the serial catch-up), then `boundary`. `*_cycles()` is start + acceptance.
 - **E**: memory, fetch and I/O. `*_cycles()` is start + acceptance. The instruction's own T-states come at F.
 - **F**: timer-driven serial or interrupt effects happen inside the core and reach the board at the next D.
@@ -145,11 +161,26 @@ opcode fetch already happens before the charge), not by a constant. Before migra
 
 ## 10. How a core is accepted
 
+**Tests that already exist** (Astra's, on copies of today's core):
+- `investigation/section93-review/`: the SLP clock accounting (608 reported against 8 clocked; 602 and 602 once
+  fixed) and the timer start from RLDR.
+- `investigation/section95-review/`: NMI sampled at slice entry against per boundary, and the Python 8085's EI/TRAP
+  behaviour.
+
+**Tests still to write** (none exists yet):
+- burst-DMA chunks, their acceptance and boundary order, and the legacy budget-taking chunk;
+- SLP wake-without-service, IOSTOP, and DMA and refresh stopped in sleep;
+- interrupt arrival at both edges of a HALT or SLP slot;
+- injected instructions: an INTR NOP (no push), an RST and a CALL (their own pushes), the byte index restarting,
+  exactly one instruction per step;
+- a zero budget, reset, and two instances interleaved.
+
+Acceptance per core:
 - **The z180emu adapter (legacy path)**: the Braille Lite goldens, English and Spanish, bit for bit, through
-  `bl_board.c` rewritten onto `cpu.h`; plus Astra's synthetic tests for the legacy exceptions (3).
+  `bl_board.c` rewritten onto `cpu.h`; plus the legacy-exception tests above (NMI exists; burst DMA and the SLP slice
+  end still to write).
 - **MAME's Z180 extracted (corrected path)**:
-  - the Z80 instruction exercisers, and Astra's synthetic phase tests (NMI at every boundary, SLP clocking, burst
-    DMA chunks, interrupt arrival at slot edges);
+  - the Z80 instruction exercisers, and the phase tests above;
   - then the Braille Lite firmware, compared with the legacy adapter. Every difference is explained before new
     goldens are accepted, including the serial protocol (the ordered host sends, cancels and completions), not
     just the spoken register values;
@@ -165,5 +196,9 @@ The behavioural specification comes from the manufacturers' manuals. Observation
 
 - `cpu.h` and this contract: MIT.
 - The z180emu adapter links a GPL-2.0-or-later core, so any build containing it is GPL.
-- MAME's Z180 and 8085 files keep their BSD-3-Clause notices. Builds without z180emu or Unicorn can then be MIT/BSD
-  throughout, which is what the App Store requires (iOS imports the firmware from Files and ships none).
+- MAME's Z180 and 8085 files keep their BSD-3-Clause notices, each extracted dependency with its own actual notice
+  and the upstream revision pinned.
+- **Our dependency policy** for store builds (iOS): no GPL components, so neither z180emu nor Unicorn; MIT and BSD
+  components with their notices kept; no firmware shipped (it is imported from Files). This is our policy. Apple's
+  review guidelines don't require any particular licence, and choosing these licences doesn't by itself make an app
+  acceptable.
