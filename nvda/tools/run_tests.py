@@ -51,6 +51,16 @@ BNS = os.path.join(os.path.dirname(HERE), "dist", "blazie-build", "synthDrivers"
 for lang in ("en", "es"):
     CHECKS.append(check("golden Braille Lite (%s)" % lang, [PY, "bns_equiv.py", BNS,
                         "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+# 0.7's library board (src/csrc/blazie): the same golden vectors through bl_live.exe, and two units in one process
+LIB = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib")
+ENG = os.path.dirname(BNS)
+if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
+    for lang in ("en", "es"):
+        CHECKS.append(check("library board golden (%s)" % lang, [PY, "bns_equiv.py", os.path.join(LIB, "bl_live.exe"),
+                            "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+    CHECKS.append(check("library board: two units in one process", [os.path.join(LIB, "test_bl_board.exe"),
+                        os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
+                        os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 
 
