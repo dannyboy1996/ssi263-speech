@@ -48,7 +48,10 @@ raw = []             # every write to R0 and R3 with its tag, for the failure re
 DUMP = open(os.environ["COMPLETE_FUZZ_DUMP"], "w") if os.environ.get("COMPLETE_FUZZ_DUMP") else None
 
 
-r3 = [0x7F]          # the chip's R3 as last written (amplitude in bits 3-0)
+# the chip's R3 as last written (amplitude in bits 3-0), tracked from the ORDERED writes: the in-process host reports
+# its writes in a batch after each C call, so chip.regs inside the callback may already be a later R3 (Astra, Reply
+# 76).  Starts from the chip's own R3 at attachment, when no batch is pending.
+r3 = [unit.chip.regs[3]]
 prep = []            # phonemes loaded at amplitude 0: preparation, not speech (below)
 
 
