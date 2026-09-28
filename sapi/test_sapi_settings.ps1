@@ -1,0 +1,45 @@
+# The settings dialog's values reach the voice through SAPI: the Braille Lite speaks the same line with the
+# defaults, the defaults again (the control: identical), inflection off and the whine on (each must differ), with
+# the diagnostic log on for the timing.  This user's settings are put back as they were afterwards.
+#
+#   powershell -NoProfile -ExecutionPolicy Bypass -File sapi\test_sapi_settings.ps1
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Speech
+$key = 'HKCU:\Software\SSI-263 SAPI'
+$names = @('Inflection', 'Whine', 'Diagnostics')
+$saved = @{}
+if (Test-Path $key) { foreach ($n in $names) { try { $saved[$n] = (Get-ItemProperty $key -Name $n -ErrorAction Stop).$n } catch {} } }
+New-Item -Path $key -Force | Out-Null
+function Set-S([string]$n, [int]$v) { New-ItemProperty -Path $key -Name $n -Value $v -PropertyType DWord -Force | Out-Null }
+$log = Join-Path $env:TEMP 'ssi263_sapi.log'
+if (Test-Path $log) { Remove-Item $log }
+function Say([string]$tag) {
+    $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+    $s.SelectVoice('Braille Lite 2000 (June 2003)')
+    $wav = Join-Path $env:TEMP "sapi_setting_$tag.wav"
+    $s.SetOutputToWaveFile($wav); $s.Speak('Is it ready?'); $s.SetOutputToNull(); $s.Dispose()
+    [System.IO.File]::ReadAllBytes($wav)
+}
+function Same($a, $b) { if ($a.Length -ne $b.Length) { return $false }; for ($i = 0; $i -lt $a.Length; $i++) { if ($a[$i] -ne $b[$i]) { return $false } }; $true }
+$bad = 0
+try {
+    Set-S 'Diagnostics' 1; Set-S 'Inflection' 1; Set-S 'Whine' 0
+    $default = Say 'default'
+    # every setting change restarts the server cold; the control must be cold too, so toggle one and come back
+    Set-S 'Whine' 1; $null = Say 'toggle'; Set-S 'Whine' 0
+    $again = Say 'again'
+    Set-S 'Inflection' 0
+    $flat = Say 'inflection_off'
+    Set-S 'Inflection' 1; Set-S 'Whine' 2
+    $whine = Say 'whine'
+    $checks = @(@('the same settings twice give identical audio', (Same $default $again)),
+                @('inflection off changes the sound', -not (Same $default $flat)),
+                @('the whine changes the sound', -not (Same $default $whine)))
+    foreach ($c in $checks) { if (-not $c[1]) { $bad++ }; Write-Host ('{0,-4} {1}' -f $(if ($c[1]) { 'ok' } else { 'FAIL' }), $c[0]) }
+} finally {
+    foreach ($n in $names) {
+        if ($saved.ContainsKey($n)) { Set-S $n $saved[$n] } else { Remove-ItemProperty -Path $key -Name $n -ErrorAction SilentlyContinue }
+    }
+}
+if (Test-Path $log) { Get-Content $log | Select-String 'speak done' | ForEach-Object { Write-Host ('log: ' + ($_.Line -replace '^.*speak done: ', '')) } }
+if ($bad) { exit 1 } else { exit 0 }

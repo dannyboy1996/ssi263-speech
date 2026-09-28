@@ -24,8 +24,8 @@ def voices():
 
 
 class Client:
-    def __init__(self):
-        self.p = subprocess.Popen([PY, SERVE, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    def __init__(self, extra=()):
+        self.p = subprocess.Popen([PY, SERVE, "--serve"] + list(extra), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL)
         self.seq = 0
 
@@ -110,5 +110,24 @@ try:
             len(after) / 2 / RATE, len(whole) / 2 / RATE))
 finally:
     c.close()
+# the settings dialog's two Braille Lite settings reach the driver: each changes the sound
+if "blazie:blazie" in [v[0] for v in vs]:
+    heard = {}
+    for label, extra in (("default", []), ("default again", []), ("inflection off", ["--inflection", "0"]),
+                         ("whine", ["--whine", "whine"])):
+        c = Client(extra)
+        try:
+            c.send("blazie:blazie", "Is it ready?")
+            _s, heard[label] = c.response()
+        finally:
+            c.close()
+    # the control: the same settings twice sound identical, so a difference below is the setting's
+    same = heard["default again"] == heard["default"]
+    bad += not same
+    print("%-4s the same settings twice give identical audio: %s" % ("ok" if same else "FAIL", same))
+    for label in ("inflection off", "whine"):
+        ok = voiced(heard[label]) and heard[label] != heard["default"]
+        bad += not ok
+        print("%-4s setting %-15s changes the Braille Lite's sound: %s" % ("ok" if ok else "FAIL", label, ok))
 print("serve: %s" % ("ok" if not bad else "%d FAILED" % bad))
 sys.exit(1 if bad else 0)

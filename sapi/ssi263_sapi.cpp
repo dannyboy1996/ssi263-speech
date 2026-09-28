@@ -56,8 +56,9 @@ static const DWORD NATIVE_RATE = 22050;
  * way, because a diagnostic nobody turns off is a disk that fills. */
 static const DWORD LOG_CAP = 4u * 1024u * 1024u;
 
-/* Settings, per user then per machine, in "Software\\SSI-263 SAPI" (a settings program comes later):
- * Diagnostics (0 = off) and ReadTimeoutMs. */
+/* Settings, per user then per machine, in "Software\\SSI-263 SAPI" (the settings dialog, settings.ps1, writes
+ * this user's): Inflection (1 = on, the default), Whine (0 off, 1 hiss, 2 whine), Diagnostics (0 = off) and
+ * ReadTimeoutMs. */
 static DWORD setting_dword(const wchar_t *name, DWORD def) {
     const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     for (int r = 0; r < 2; r++) {
@@ -251,13 +252,17 @@ struct CsLock {
     CsLock(CRITICAL_SECTION *c):cs(c){EnterCriticalSection(cs);}
     ~CsLock(){LeaveCriticalSection(cs);}
 };
-static bool host_ensure() {
+static bool host_ensure(DWORD inflection, DWORD whine) {
     sweep_logs();
     std::wstring base=module_dir();
     /* The embeddable Python the installer puts beside the DLLs; either DLL bitness uses it -- the server is its
-     * own process.  -I: isolated, nothing from the machine's own Python setup reaches it. */
+     * own process.  -I: isolated, nothing from the machine's own Python setup reaches it.  The dialog's settings
+     * ride on the command line, and a server started under other values is replaced (Panthera's rule: a settings
+     * change must respawn the host, never be quietly ignored by one that read its arguments at startup). */
     std::wstring py=base+L"\\python\\python.exe";
-    std::wstring cmd=L"\""+py+L"\" -I \""+base+L"\\ssi_serve.py\" --serve";
+    const wchar_t *whines[]={L"off",L"hiss",L"whine"};
+    std::wstring cmd=L"\""+py+L"\" -I \""+base+L"\\ssi_serve.py\" --serve --inflection "+
+                     (inflection?L"1":L"0")+L" --whine "+whines[whine<3?whine:0];
     if(host_alive()&&cmd==g_hostCmd)return true;
     host_drop();
     /* A megabyte of buffer each way against the four-kilobyte default: a
@@ -334,6 +339,9 @@ public:
     }
     HRESULT speakInner(const SPVTEXTFRAG *frags,ISpTTSEngineSite *site){
         if(!token||!site)return E_UNEXPECTED;
+        /* Timing for the diagnostic log: SAPI's call to our first audio, and to the end -- what the engine adds,
+         * apart from the playback buffering of the program that asked. */
+        LARGE_INTEGER qpf,qt0,qfirst; QueryPerformanceFrequency(&qpf); QueryPerformanceCounter(&qt0); qfirst.QuadPart=0;
         std::wstring text;
         /* Bookmarks are the pacing contract, not decoration: NVDA's SAPI
          * driver interleaves <Bookmark Mark="N"/> with the text and waits
@@ -382,7 +390,9 @@ public:
         unsigned long long total=0;
         unsigned seq=++g_seq;
         if(!text.empty()){
-            ok=host_ensure();
+            /* The Braille Lite's two settings SAPI's own request cannot carry, read fresh so a change in the
+             * settings dialog reaches the next thing spoken. */
+            ok=host_ensure(setting_dword(L"Inflection",1),setting_dword(L"Whine",0));
             ok=ok&&exact(g_in,&req,4,true)&&exact(g_in,&seq,4,true)&&exact(g_in,&rate,4,true)&&exact(g_in,&pitch,4,true)&&exact(g_in,&volume,4,true)&&exact(g_in,&nv,4,true)&&exact(g_in,&nt,4,true)&&exact(g_in,(void*)v.data(),nv,true)&&exact(g_in,(void*)u.data(),nt,true);
             unsigned magic=0;status=-1;
             /* Response reads wait rather than block -- exact_wait watches
@@ -445,6 +455,7 @@ public:
                     continue;                      /* drain to terminator */
                 }
                 if(aborted)continue;               /* draining, not speaking */
+                if(!qfirst.QuadPart)QueryPerformanceCounter(&qfirst);
                 ULONG wrote=0;if(FAILED(site->Write(audio.data(),bytes,&wrote))){ok=false;break;}
                 total+=bytes;
             }
@@ -482,14 +493,17 @@ public:
          * full of leftovers for the next utterance to misread. */
         if(!ok)host_drop();
         /* The measurements convicted all four bugs; the words never did. */
+        LARGE_INTEGER qend; QueryPerformanceCounter(&qend);
+        unsigned firstMs=qfirst.QuadPart?(unsigned)((qfirst.QuadPart-qt0.QuadPart)*1000/qpf.QuadPart):0;
+        unsigned endMs=(unsigned)((qend.QuadPart-qt0.QuadPart)*1000/qpf.QuadPart);
         if(diagLevel()>=2)
-            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d text=\"%.40s\"",
+            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d first-audio=%ums end=%ums text=\"%.40s\"",
                     (unsigned)text.size(),(unsigned)marks.size(),(unsigned)total,
-                    ok?1:0,status,aborted?1:0,text.c_str());
+                    ok?1:0,status,aborted?1:0,firstMs,endMs,text.c_str());
         else
-            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d",
+            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d first-audio=%ums end=%ums",
                     (unsigned)text.size(),(unsigned)marks.size(),(unsigned)total,
-                    ok?1:0,status,aborted?1:0);
+                    ok?1:0,status,aborted?1:0,firstMs,endMs);
         return aborted||(ok&&status==0)?S_OK:E_FAIL;
     }
 };

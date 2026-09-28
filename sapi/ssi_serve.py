@@ -20,6 +20,7 @@ prints it.  The response is 'OSPR' | status, then PCM in chunks as the driver pr
 frames*2 bytes of 16-bit mono at 22050 Hz -- and a zero frame count to finish.
 
 `--list` prints one voice per line: "id<TAB>name<TAB>language".
+`--inflection 1|0` and `--whine off|hiss|whine`: the Braille Lite's voice inflection and hiss/whine (the dialog's).
 """
 import os
 import struct
@@ -172,12 +173,19 @@ def _install_fakes():
 
 
 _drivers = {}
+# The settings no SAPI request carries (the settings dialog, sapi/settings.ps1): the engine DLL passes them on the
+# command line and replaces this server when they change.
+OPTIONS = {"inflection": True, "whine": "off"}
 
 
 def driver(module):
-    """One resident driver per add-on, made on first use."""
+    """One resident driver per add-on, made on first use, with the dialog's settings."""
     if module not in _drivers:
-        _drivers[module] = importlib.import_module("synthDrivers." + module).SynthDriver()
+        d = importlib.import_module("synthDrivers." + module).SynthDriver()
+        if module == "blazie":
+            d._set_voiceInflection(OPTIONS["inflection"])
+            d._set_whine(OPTIONS["whine"])
+        _drivers[module] = d
     return _drivers[module]
 
 
@@ -221,6 +229,11 @@ def _claim_stdout():
 
 def main():
     args = sys.argv[1:]
+    for k in range(len(args) - 1):
+        if args[k] == "--inflection":
+            OPTIONS["inflection"] = args[k + 1] not in ("0", "off", "false")
+        elif args[k] == "--whine" and args[k + 1] in ("off", "hiss", "whine"):
+            OPTIONS["whine"] = args[k + 1]
     done_evt = _install_fakes()
     if "--list" in args:
         try:

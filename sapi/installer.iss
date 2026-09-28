@@ -36,6 +36,9 @@ Source: "{#StageDir}\x86\ssi263_sapi.dll"; DestDir: "{app}\x86"; Flags: ignoreve
 Source: "{#StageDir}\x64\ssi263_sapi.dll"; DestDir: "{app}\x64"; Flags: ignoreversion
 Source: "{#StageDir}\ssi_serve.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\register.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\settings.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\settings.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\ssi263_settings.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\synthDrivers\*"; DestDir: "{app}\synthDrivers"; Flags: recursesubdirs ignoreversion
 Source: "{#StageDir}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs ignoreversion
 
@@ -43,10 +46,16 @@ Source: "{#StageDir}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs i
 ; the driver folders are replaced whole: an old engine file left beside a new driver is a trap
 Type: filesandordirs; Name: "{app}\synthDrivers"
 
+[Icons]
+; the launcher rather than the batch file: a GUI-subsystem program creates no console, so nothing flashes or
+; steals focus before the dialog appears
+Name: "{autoprograms}\SSI-263 SAPI settings"; Filename: "{app}\ssi263_settings.exe"; WorkingDir: "{app}"
+
 [Run]
 ; regsvr32 for both registry views, then one token per voice the server lists.  Every install re-registers:
 ; these voices carry their firmware, so there is no data folder or choice of voices to preserve.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Register"; StatusMsg: "Registering the SSI-263 voices..."; Flags: runhidden
+Filename: "{app}\ssi263_settings.exe"; Description: "Open SSI-263 SAPI settings"; Flags: postinstall nowait skipifsilent unchecked
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Unregister"; RunOnceId: "UnregisterSsi263"; Flags: runhidden

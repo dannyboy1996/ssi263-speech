@@ -18,8 +18,15 @@ foreach ($arch in "x86","x64") {
   & $cl /nologo /EHsc /O2 /MT /LD /DUNICODE /D_UNICODE "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" "/I$($sdk.FullName)\ucrt" (Join-Path $PSScriptRoot "ssi263_sapi.cpp") "/Fe$out\ssi263_sapi.dll" "/Fo$out\" /link "/DEF:$PSScriptRoot\ssi263_sapi.def" "/LIBPATH:$($msvc.FullName)\lib\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\$arch" sapi.lib ole32.lib advapi32.lib shell32.lib
   if ($LASTEXITCODE) { throw "$arch SAPI DLL build failed ($LASTEXITCODE)" }
 }
+# The console-free way into the settings dialog: a GUI-subsystem launcher, so no console flashes and steals focus.
+$launcherCl = Join-Path $msvc.FullName "bin\Hostx64\x64\cl.exe"
+& $launcherCl /nologo /O2 /MT /W3 "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\ucrt" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" (Join-Path $PSScriptRoot "settings_launcher.c") "/Fe$Stage\ssi263_settings.exe" "/Fo$Stage\" /link /SUBSYSTEM:WINDOWS "/LIBPATH:$($msvc.FullName)\lib\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\x64" user32.lib kernel32.lib
+if ($LASTEXITCODE) { throw "settings launcher build failed ($LASTEXITCODE)" }
+Set-Content -Encoding ASCII (Join-Path $Stage "settings.cmd") '@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0settings.ps1"'
 Copy-Item (Join-Path $PSScriptRoot "ssi_serve.py") $Stage
 Copy-Item (Join-Path $PSScriptRoot "register.ps1") $Stage
+Copy-Item (Join-Path $PSScriptRoot "settings.ps1") $Stage
 # The drivers, fresh every time: a stage that is only ever added to keeps whatever an earlier build left in it.
 $drv = Join-Path $Stage "synthDrivers"
 if (Test-Path $drv) { Remove-Item -Recurse -Force $drv }
