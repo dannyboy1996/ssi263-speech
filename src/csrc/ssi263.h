@@ -114,6 +114,14 @@ SSI263_API int ssi263_mode(const ssi263 *c);            /* -1 before the first C
 /* Host feature, not chip behaviour: the next CHANGE of pitch target lands at once. */
 SSI263_API void ssi263_set_snap_pitch(ssi263 *c, int on);
 SSI263_API int ssi263_get_snap_pitch(const ssi263 *c);
+/* Host feature: retune the master clock without rebuilding the chip. Exact
+   for everything read per-sample (filter clock, pitch period, frame/glide
+   timing); a phoneme already in flight keeps the length computed when it
+   started, so a mid-phoneme retune is NOT identical to a fresh ssi263_new
+   at the new clock. Retuning a fresh (or idle) chip is. Added for the
+   Robovox VST's coarse pitch (variable oscillator); not part of the
+   chip.py port. */
+SSI263_API void ssi263_set_xck(ssi263 *c, double xck);
 
 /* Exactly n host-rate samples into out (room for n + 1).  Returns the count. */
 SSI263_API long ssi263_run(ssi263 *c, long n, double *out);
