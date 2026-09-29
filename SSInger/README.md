@@ -48,19 +48,19 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 Tests first (no network needed):
 
 ```
-cmake -S robovox/tests -B build/robovox-tests
-cmake --build build/robovox-tests --config Release
-ctest --test-dir build/robovox-tests -C Release
+cmake -S SSInger/tests -B build/SSInger-tests
+cmake --build build/SSInger-tests --config Release
+ctest --test-dir build/SSInger-tests -C Release
 ```
 
 VST3 (needs network once for JUCE 9.0.3 + a C++20 toolchain):
 
 ```
-cmake -S robovox -B build/robovox -DCMAKE_BUILD_TYPE=Release
-cmake --build build/robovox --target Robovox_VST3 --config Release
+cmake -S SSInger -B build/SSInger -DCMAKE_BUILD_TYPE=Release
+cmake --build build/SSInger --target Robovox_VST3 --config Release
 ```
 
-Artifacts land in `build/robovox/Robovox_artefacts/Release/`:
+Artifacts land in `build/SSInger/Robovox_artefacts/Release/`:
 `VST3/SSInger.vst3` (the plugin bundle — copy the whole folder to
 your system's VST3 folder; on Windows that is the VST3 folder inside
 Program Files / Common Files) and `Standalone/SSInger.exe` (play

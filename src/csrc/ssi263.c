@@ -480,6 +480,11 @@ SSI263_API double ssi263_time(const ssi263 *c) { return c->time - c->pend_rem; }
 SSI263_API int ssi263_mode(const ssi263 *c) { return c->mode; }
 SSI263_API void ssi263_set_snap_pitch(ssi263 *c, int on) { c->snap_pitch = on != 0; }
 SSI263_API int ssi263_get_snap_pitch(const ssi263 *c) { return c->snap_pitch; }
+SSI263_API void ssi263_set_xck(ssi263 *c, double xck)
+{
+    if (c && xck > 0.0)
+        c->xck = xck;
+}
 
 /* chip.py's _run and _decimate, streamed: fine samples go through the FIR in chunks,
    which gives the same output as one call (the FIR carries its tail and phase). */

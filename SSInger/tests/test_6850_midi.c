@@ -643,6 +643,31 @@ static void test_xck_fresh_exact(void)
     ssi263_free(b);
 }
 
+/* Filter slew: R4 targets latch at once, the chip walks to them (~100 ms
+ * full scale) so wheel/bend sweeps glide instead of zippering. */
+static void test_filter_slew(void)
+{
+    robovox_bus_t b;
+    ssi263_params p;
+    const uint8_t max[] = { 0xB0, 1, 127 };
+    int i;
+    ssi263_default_params(&p);
+    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "ffslew init");
+    b.fw.cfg.ctlmap = RV_MAP_POLAXIS; /* mod -> filter */
+    for (i = 0; i < 3; i++)
+        robovox_bus_midi_byte(&b, max[i]);
+    CHECK(b.ff_tgt[0] == 255, "target latches at once (%d)", b.ff_tgt[0]);
+    CHECK(b.ff_out[0] == 0xE4, "chip still at start (0x%02X)", b.ff_out[0]);
+    CHECK(b.regs_mirror[0][4] == 255, "mirror holds target");
+    robovox_bus_slew_filters(&b, 0.01); /* 10 ms: partway */
+    CHECK(b.ff_out[0] > 0xE4 && b.ff_out[0] < 255, "mid-slew (0x%02X)", b.ff_out[0]);
+    CHECK(ssi263_reg(b.chip[0], 4) == b.ff_out[0], "chip tracks slew");
+    robovox_bus_slew_filters(&b, 1.0);
+    CHECK(b.ff_out[0] == 255, "converges");
+    CHECK(ssi263_reg(b.chip[0], 4) == 255, "chip lands");
+    robovox_bus_free(&b);
+}
+
 /* Phoneme channel likewise falls back across overlapping notes. */
 static void test_phoneme_mono_priority(void)
 {
@@ -686,6 +711,7 @@ int main(void)
     test_pitch_latch();
     test_phoneme_mono_priority();
     test_clock_base_and_bend();
+    test_filter_slew();
     test_vst_render_path();
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "PASS", checks, failures);

@@ -150,6 +150,9 @@ low 3 bits set the glide slope (`glide_field_mult`, `ssi263.c:581-582`),
 scaled by rate. The VST exposes it as `Glide`. Articulation (R3) sets
 formant-transition speed in codes/frame (`art_codes_per_frame`,
 `ssi263.c:564`); Filter Frequency (R4) scales every resonance with fc.
+R4 reaches the chip through a ~100 ms full-scale slew (targets latch at
+once), so wheel/bend filter sweeps glide instead of zippering across
+R4's reciprocal curve.
 
 Tuning math (XCK = 1 MHz default, `ssi263_defaults.h:8`):
 I(f) = 4096 − XCK/(8·f); A4 440 Hz → I = 3812 (R1 = 220, R2-lo = 0xC

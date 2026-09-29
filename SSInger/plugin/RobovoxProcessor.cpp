@@ -181,6 +181,7 @@ void RobovoxProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int 
     if ((long)tmp.size() < n + 1)
         tmp.resize((size_t)n + 1);
     robovox_bus_render(&bus, n, tmp.data());
+    robovox_bus_slew_filters(&bus, n / bus.sample_rate);
     robovox_bus_service_all(&bus);
     int nch = out.getNumChannels();
     for (int ch = 0; ch < nch; ch++) {

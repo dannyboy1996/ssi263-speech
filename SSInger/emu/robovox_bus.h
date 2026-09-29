@@ -76,7 +76,17 @@ typedef struct robovox_bus {
     robovox_state_t fw;
     double *render_tmp;
     long render_cap;
+    /* Filter-frequency slew (de-zipper): the translator targets R4 at
+     * once, the chip follows at RV_FF_SLEW_PER_SEC. R4 is an 8-bit
+     * register on a reciprocal curve (fc = XCK/(2(256-FF))), so single
+     * mod-wheel clicks would otherwise jump the cutoff by hundreds of
+     * Hz mid-sweep. */
+    float ff_cur[RV_NVOICES_MAX]; /* continuous, what the chip has */
+    int ff_tgt[RV_NVOICES_MAX];   /* what the translator asked for */
+    int ff_out[RV_NVOICES_MAX];   /* last R4 value sent to the chip */
 } robovox_bus_t;
+
+#define RV_FF_SLEW_PER_SEC 2550.0 /* full 0..255 sweep in ~100 ms */
 
 /* Sink: translator SC-02 writes -> 74LS245 buffer -> engine. Amplitude
  * latches exactly as the translator sends it (velocity -> Amplitude):
@@ -90,10 +100,50 @@ static void robovox_bus_sc_write(int voice, int addr, int value, void *ctx)
     if (a >= 4)
         a = 4;
     value &= 0xFF;
+    if (a == 4) {
+        /* Filter target latches; the slew below walks the chip to it so
+         * wheel/bend sweeps glide instead of zippering. */
+        b->regs_mirror[voice][a] = value;
+        b->ff_tgt[voice] = value;
+        return;
+    }
     b->regs_mirror[voice][a] = value;
     if (a == 1)
         ssi263_set_snap_pitch(b->chip[voice], 1);
     ssi263_write(b->chip[voice], a, value);
+}
+
+/* Walk each chip's R4 toward its target (called per render chunk). */
+static void robovox_bus_slew_filters(robovox_bus_t *b, double seconds)
+{
+    int v;
+    double step;
+    if (!(seconds > 0.0))
+        return;
+    step = RV_FF_SLEW_PER_SEC * seconds;
+    for (v = 0; v < b->nvoices; v++) {
+        float cur = b->ff_cur[v], tgt = (float)b->ff_tgt[v];
+        int out;
+        if (cur == tgt)
+            continue;
+        if (tgt > cur) {
+            cur += (float)step;
+            if (cur > tgt)
+                cur = tgt;
+        } else {
+            cur -= (float)step;
+            if (cur < tgt)
+                cur = tgt;
+        }
+        b->ff_cur[v] = cur;
+        out = (int)(cur + 0.5f);
+        if (out != b->ff_out[v]) {
+            /* Mirror keeps the translator's target; ff_out tracks the chip. */
+            b->ff_out[v] = out;
+            if (b->chip[v])
+                ssi263_write(b->chip[v], 4, out);
+        }
+    }
 }
 
 /* Sink: master-clock (coarse pitch) changes retune the voices in place.
@@ -166,6 +216,10 @@ static int robovox_bus_build_chips(robovox_bus_t *b)
         ssi263_write(b->chip[i], 4, saved[i][4]);
         ssi263_write(b->chip[i], 3, saved[i][3] & 0x7F);
         b->regs_mirror[i][3] &= 0x7F;
+        /* Chip rebuilt at the translator's latched filter target. */
+        b->ff_cur[i] = (float)b->regs_mirror[i][4];
+        b->ff_tgt[i] = b->regs_mirror[i][4];
+        b->ff_out[i] = b->regs_mirror[i][4];
     }
     return 1;
 }
@@ -216,6 +270,11 @@ static int robovox_bus_init(robovox_bus_t *b, double sample_rate, int nvoices,
         b->regs_mirror[i][2] = (b->fw.cfg.rate & 15) << 4;
         b->regs_mirror[i][3] = (b->fw.cfg.articulation & 7) << 4;
         b->regs_mirror[i][4] = b->fw.cfg.filter_ff;
+    }
+    for (i = 0; i < RV_NVOICES_MAX; i++) {
+        b->ff_cur[i] = (float)b->regs_mirror[i][4];
+        b->ff_tgt[i] = b->regs_mirror[i][4];
+        b->ff_out[i] = b->regs_mirror[i][4];
     }
     if (!robovox_bus_build_chips(b))
         return 0;
