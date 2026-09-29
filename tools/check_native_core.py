@@ -32,6 +32,8 @@ EXACT = ("elapsed", "duration", "time", "timer_done", "mode", "lfsr", "trans_tar
 
 SWITCHES = [
     {},
+    {"noise_voice_swell": 0.0},
+    {"noise_voice_swell": 0.5},
     {"latch_quantize": "floor"},
     {"section_numerator": "allpole"},
     {"closure_timing": "frames"},

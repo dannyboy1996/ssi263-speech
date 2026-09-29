@@ -297,6 +297,16 @@ DEFAULTS = {
     "noise_gain": (0.012, "BL",
                    "noise level against the pulse train; set on dev lines (section B inv-r2 "
                    "reps 0-1) so vowels sit at the line maximum, as on the unit"),
+    "noise_voice_swell": (1.0, "BL+EAR",
+                          "v0.14: while the voice drive is on (VA > 0) the noise swells with each glottal pulse: "
+                          "times (1 + d cos 2 pi phase) / sqrt(1 + d^2 / 2), phase 0 at the pitch counter's wrap "
+                          "(the pulse's launch), before the noise shaper and both injections; long-run power kept; "
+                          "0 = off (v0.13).  Evidence: on MASTER dev words the unit's Z, V and voiced TH noise is "
+                          "pulse-locked and ours was not (blite_sweep z_s_check / z_rattle2 / z_fullpath; letters "
+                          "102-107, Astra 85-89); d = 1 reproduces the unit's Z lag and V timing inside the engine.  "
+                          "Chosen by Tomi's ear on 'buzz' (2026-09-29): 'the swell version improves the Z ... the "
+                          "S-likeness goes away'.  A chip-level rule (voice and noise together), so J and every "
+                          "voiced affricate follow.  The physical mechanism is OPEN (a Fig. 8-style gate fits Z too)"),
 
     # ---- output stage ---------------------------------------------------------------
     "hp_ratio": (0.004, "GUESS", "ISSCC: high-pass removes DC and carries VOL; cutoff / fc"),

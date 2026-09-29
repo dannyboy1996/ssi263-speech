@@ -243,6 +243,7 @@ study the analog side on a real chip.
 | v0.11 | Tomi: "program", "manager" | Early release only into an open phoneme |
 | v0.12 | A listener: a click in "still" | A stop that starts on silence closes at once |
 | v0.13 | Tomi: the jump in "file"; the unit's fuller low end | F1 glides ×2.25; a partly stepped voice source; the Braille Lite's 5 kHz roll-off |
+| v0.14 | A listener: the real chip's Z "rattles"; Tomi: ours was S-like | In Z, J, V and voiced TH the noise swells with each voice pulse |
 
 ## Add-on releases at a glance
 

@@ -50,7 +50,7 @@ class _Params(ctypes.Structure):
         ("late_release_burst", _c_double), ("fricative_precharge", _c_double),
         ("closure_onto_silence", _c_double),
         ("field_speed_mult", _c_double * 6), ("glottal_n", _c_double), ("glottal_wave", _c_double * 64),
-        ("closure_noise_lead_s", _c_double),
+        ("closure_noise_lead_s", _c_double), ("noise_voice_swell", _c_double),
     ]
 
 
@@ -88,7 +88,7 @@ def params_struct(p):
                  "burst_tail_level", "closure_ramp_ms", "lfsr_bits", "noise_clock_ratio",
                  "noise_into_f2", "noise_into_f5", "noise_gain", "hp_ratio", "carrier_rel_db",
                  "carrier_h2_db", "output_oversample", "output_lowpass_hz", "output_gain",
-                 "lookahead_lead_frames"):
+                 "lookahead_lead_frames", "noise_voice_swell"):
         setattr(s, name, float(p[name]))
     for name in ("closure_enable", "closure_release_b01", "closure_noise_at_release", "closure_reopen",
                  "carrier_when_powered_down", "release_lookahead", "late_release_burst",

@@ -514,6 +514,7 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
     int lfsr_top = (int)p->lfsr_bits - 1;
     unsigned long long lfsr_mask = (1ULL << (int)p->lfsr_bits) - 1;
     double ng = p->noise_gain, gain = p->output_gain, amp_mult = p->art_amp_mult;
+    double swell = p->noise_voice_swell, swell_norm = sqrt(1.0 + swell * swell / 2.0);
     double rem, v;
 
 #define EMIT(val)                                        \
@@ -703,6 +704,9 @@ static long chip_run(ssi263 *c, long max_out, int stop_on_request, double *out)
                 n2 = c->w2;
                 n5 = c->w5;
             }
+            if (swell != 0.0 && la[VA] > 0)
+                /* the noise swells with each glottal pulse while voiced (chip.py noise_voice_swell, v0.14) */
+                nz = nz * (1.0 + swell * cos(2 * M_PI * c->phase)) / swell_norm;
             if (c->shaper_on)
                 nz = section_step(&c->shaper, nz);
             /* -- the cascade: F1 -> F2 (+noise) -> F3 -> F4 -> F5 (+noise) -- */

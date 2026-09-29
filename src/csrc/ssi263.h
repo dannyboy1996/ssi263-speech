@@ -82,6 +82,7 @@ typedef struct ssi263_params {
     double glottal_n;                    /* glottal_wave: length, 1..SSI263_GLOTTAL_MAX */
     double glottal_wave[64];             /* levels per filter-clock tick; (1.0) = impulse */
     double closure_noise_lead_s;         /* bounded precharge before a release (s); < 0 = off */
+    double noise_voice_swell;            /* v0.14: the noise swells with each pulse while voiced; depth, 0 = off */
 } ssi263_params;
 
 #define SSI263_GLOTTAL_MAX 64

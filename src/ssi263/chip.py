@@ -466,6 +466,8 @@ class SSI263:
         clo_floor = 0.0 if p["closure_floor_db"] is None else 10 ** (p["closure_floor_db"] / 20.0)
         fractional = p["pulse_place"] == "fractional"
         ng = p["noise_gain"]
+        swell = p["noise_voice_swell"]
+        swell_norm = math.sqrt(1.0 + swell * swell / 2.0)
         hp_r = 1.0 - 2.0 * math.pi * p["hp_ratio"]
         # carrier level is relative to a loud vowel, which output_gain puts at RMS 0.1
         c8 = 0.1 * 10 ** (p["carrier_rel_db"] / 20.0)
@@ -650,6 +652,9 @@ class SSI263:
                 else:
                     nz = self.noise_val * ng * la["FA"] / 15.0
                     n2, n5 = self.w2, self.w5
+                if swell and la["VA"] > 0:
+                    # the noise swells with each glottal pulse while voiced (params noise_voice_swell, v0.14)
+                    nz = nz * (1.0 + swell * math.cos(2 * math.pi * self.phase)) / swell_norm
                 if self.shaper_on:
                     nz = sh(nz)
                 # -- the cascade: F1 -> F2 (+noise) -> F3 -> F4 -> F5 (+noise) -------
