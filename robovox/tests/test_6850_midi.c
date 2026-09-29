@@ -7,7 +7,8 @@
  *    embodiment 2, running status/sysex robustness).
  * 3. Bus: MIDI wire byte -> ACIA IRQ -> translator -> SC-02 latch, CPU
  *    socket map reads/writes, A/R sustain service.
- * 4. Engine smoke: real ssi263 chip speaks through the bus path.
+ * 4. Engine smoke: real ssi263 chip speaks through the bus path; amplitude
+ *    latches, inflection round-trips, mono priority.
  *
  * Build: gcc -std=c99 -I robovox -I src/csrc tests/test_6850_midi.c
  *        src/csrc/ssi263.c -lm
@@ -164,9 +165,10 @@ static void test_embodiment1(void)
         if (l.addr[i] == RV_SC_R3)
             r3 = l.value[i];
     }
-    /* Note 60 -> table code 25 (0x19 UH1); DUR=2 in high bits. */
+    /* Note 60 -> table code 25 (0x19 UH1); DUR=2 in high bits. Phoneme
+     * velocity never touches volume (pitch owns it). */
     CHECK(r0 == ((2 << 6) | 25), "phoneme R0=0x%02X", r0);
-    CHECK(r3 == ((5 << 4) | (1 + (100 * 14) / 127)), "amp R3=0x%02X", r3);
+    CHECK(r3 == -1, "phoneme writes no R3");
     l.n = 0;
     feed(&s, off, 3);
     r0 = -1;
@@ -187,11 +189,7 @@ static void test_embodiment1(void)
     CHECK(r2 == ((8 << 4) | 0x0C), "inflection R2=0x%02X", r2);
     l.n = 0;
     feed(&s, pitchoff, 3);
-    r3 = -1;
-    for (i = 0; i < l.n; i++)
-        if (l.addr[i] == RV_SC_R3)
-            r3 = l.value[i];
-    CHECK((r3 & 0x0F) == 0, "pitch-off zeroes amplitude, R3=0x%02X", r3);
+    CHECK(l.n == 0, "pitch-off latched: no writes");
 }
 
 static void test_wheels_and_cc(void)
@@ -242,6 +240,18 @@ static void test_polaxis_map(void)
     s.cfg.ctlmap = RV_MAP_POLAXIS;
     feed(&s, bend, 3);
     CHECK(l.xck > 1000000.0, "polaxis bend raises XCK (%f)", l.xck);
+    {
+        /* Absolute from nominal: center returns exactly, repeats don't drift. */
+        const uint8_t center[] = { 0xE0, 0x00, 0x40 };
+        double once;
+        l.xck = 0.0;
+        feed(&s, bend, 3);
+        once = l.xck;
+        feed(&s, bend, 3);
+        CHECK(l.xck == once, "repeat bend is stable (%f)", l.xck);
+        feed(&s, center, 3);
+        CHECK(l.xck == 1000000.0, "bend center returns to nominal (%f)", l.xck);
+    }
     l.n = 0;
     feed(&s, mod, 3);
     CHECK(l.n == 1 && l.addr[0] == RV_SC_R4, "polaxis mod writes R4");
@@ -257,6 +267,7 @@ static void test_embodiment2_and_parser(void)
                               0x90, 60, 100, 62, 90, /* running status 2nd note */
                               0xF8 };                /* realtime ignored */
     const uint8_t junk2[] = { 0x80, 60, 0 };
+    const uint8_t junk3[] = { 0x80, 62, 0 };
     int i, r0 = -1;
     fw_init(&s, &l);
     s.cfg.embodiment = RV_EMB_EXPANDER;
@@ -272,8 +283,11 @@ static void test_embodiment2_and_parser(void)
     CHECK(s.v[0].note_held == 1, "running-status note held");
     CHECK(s.v[0].phoneme == s.note2phon[62], "2nd note phoneme %d", s.v[0].phoneme);
     feed(&s, junk2, (int)sizeof(junk2));
-    CHECK(s.v[0].note_held == 0, "note-off releases");
-    CHECK(s.v[0].phoneme == RV_PHONEME_PAUSE, "note-off writes PA");
+    CHECK(s.v[0].note_held == 1, "first off keeps running-status 2nd note");
+    CHECK(s.v[0].phoneme == s.note2phon[62], "falls back to 2nd note %d", s.v[0].phoneme);
+    feed(&s, junk3, (int)sizeof(junk3));
+    CHECK(s.v[0].note_held == 0, "last note-off releases");
+    CHECK(s.v[0].phoneme == RV_PHONEME_PAUSE, "last note-off writes PA");
     /* Editable table (e.g. Polaxis anchor: note 36 = U, code 0x16). */
     fw_init(&s, &l);
     robovox_set_note_phoneme(&s, 36, 0x16);
@@ -394,9 +408,9 @@ static void test_engine_smoke(void)
     robovox_bus_free(&b);
 }
 
-/* Mirrors RobovoxProcessor::renderChunk order (event, render, slew,
- * service). Regression: with attack/release at 0 the slew must not gate
- * the voice (amp_tgt sync). */
+/* Mirrors RobovoxProcessor::renderChunk order (event, render, service).
+ * Amplitude latches like the hardware: velocity writes R3 at once, no
+ * VST-side slew. */
 static void test_vst_render_path(void)
 {
     robovox_bus_t b;
@@ -414,7 +428,6 @@ static void test_vst_render_path(void)
         robovox_bus_midi_byte(&b, non[i]);
     for (k = 0; k < 86; k++) {
         robovox_bus_render(&b, 512, out);
-        robovox_bus_slew(&b, 512 / 44100.0);
         robovox_bus_service_all(&b);
         for (i = 0; i < 512; i++) {
             e += out[i] * out[i];
@@ -429,77 +442,227 @@ static void test_vst_render_path(void)
      * no amplitude gating). */
     CHECK(sqrt(efirst / 512) > 0.002, "first block already singing (rms %f)",
           sqrt(efirst / 512));
-    /* Envelope shapes when engaged: attack ramps up, release falls. */
-    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "env init");
-    b.attack_ms = 200.0;
-    b.release_ms = 200.0;
-    for (i = 0; i < 3; i++)
-        robovox_bus_midi_byte(&b, pon[i]);
-    {
-        const uint8_t non127[] = { 0x90, 60, 127 };
-        for (i = 0; i < 3; i++)
-            robovox_bus_midi_byte(&b, non127[i]);
-    }
-    efirst = 0.0;
-    robovox_bus_render(&b, 512, out);
-    robovox_bus_slew(&b, 512 / 44100.0);
-    robovox_bus_service_all(&b);
-    for (i = 0; i < 512; i++)
-        efirst += out[i] * out[i];
-    CHECK((b.regs_mirror[0][3] & 0x0F) < 15, "attack starts low (amp %d)",
-          b.regs_mirror[0][3] & 0x0F);
-    e = 0.0;
-    for (k = 0; k < 43; k++) {
-        robovox_bus_render(&b, 512, out);
-        robovox_bus_slew(&b, 512 / 44100.0);
-        robovox_bus_service_all(&b);
-        for (i = 0; i < 512; i++)
-            e += out[i] * out[i];
-    }
-    CHECK((b.regs_mirror[0][3] & 0x0F) == 15, "attack converges (amp %d)",
-          b.regs_mirror[0][3] & 0x0F);
-    CHECK(sqrt(e / (43.0 * 512)) > sqrt(efirst / 512), "attack ramps up");
-    {
-        const uint8_t poff[] = { 0x81, 45, 0 };
-        for (i = 0; i < 3; i++)
-            robovox_bus_midi_byte(&b, poff[i]);
-    }
-    for (k = 0; k < 43; k++) {
-        robovox_bus_render(&b, 512, out);
-        robovox_bus_slew(&b, 512 / 44100.0);
-        robovox_bus_service_all(&b);
-    }
-    CHECK((b.regs_mirror[0][3] & 0x0F) == 0, "release falls (amp %d)",
-          b.regs_mirror[0][3] & 0x0F);
     robovox_bus_free(&b);
 }
 
-static void test_amp_slew(void)
+/* Pitch owns volume and latches it: pitch velocity lands at once and no
+ * release or phoneme event moves it; phoneme events never write R3. */
+static void test_amp_latch(void)
 {
     robovox_bus_t b;
     ssi263_params p;
-    const uint8_t on[] = { 0x90, 48, 127 };
-    int i;
+    const uint8_t phon[] = { 0x90, 48, 127 };
+    const uint8_t phonoff[] = { 0x80, 48, 0 };
+    const uint8_t pitch[] = { 0x91, 60, 100 };
+    const uint8_t pitchoff[] = { 0x81, 60, 0 };
+    int i, want = (1 + (100 * 14) / 127);
     ssi263_default_params(&p);
-    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "slew bus init");
-    b.attack_ms = 100.0;
-    b.release_ms = 100.0;
+    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "latch bus init");
     for (i = 0; i < 3; i++)
-        robovox_bus_midi_byte(&b, on[i]);
-    CHECK((b.regs_mirror[0][3] & 0x0F) == 0, "attack starts at zero");
-    CHECK(b.amp_tgt[0] == 15, "target latched (%d)", b.amp_tgt[0]);
-    robovox_bus_slew(&b, 0.05); /* half the attack */
-    CHECK((b.regs_mirror[0][3] & 0x0F) >= 7 && (b.regs_mirror[0][3] & 0x0F) <= 8,
-          "half attack ~7-8 (got %d)", b.regs_mirror[0][3] & 0x0F);
-    robovox_bus_slew(&b, 0.10);
-    CHECK((b.regs_mirror[0][3] & 0x0F) == 15, "attack completes");
-    robovox_bus_free(&b);
-    /* Zero attack/release = patent-exact direct write. */
-    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "direct bus init");
+        robovox_bus_midi_byte(&b, phon[i]);
+    CHECK((b.regs_mirror[0][3] & 0x0F) == 0, "phoneme moves no amp (stays %d)",
+          b.regs_mirror[0][3] & 0x0F);
     for (i = 0; i < 3; i++)
-        robovox_bus_midi_byte(&b, on[i]);
-    CHECK((b.regs_mirror[0][3] & 0x0F) == 15, "direct write lands at once");
+        robovox_bus_midi_byte(&b, pitch[i]);
+    CHECK((b.regs_mirror[0][3] & 0x0F) == want,
+          "pitch vel latches amp at once (got %d)", b.regs_mirror[0][3] & 0x0F);
+    for (i = 0; i < 3; i++)
+        robovox_bus_midi_byte(&b, pitchoff[i]);
+    CHECK((b.regs_mirror[0][3] & 0x0F) == want, "pitch-off keeps amp");
+    for (i = 0; i < 3; i++)
+        robovox_bus_midi_byte(&b, phonoff[i]);
+    CHECK((b.regs_mirror[0][3] & 0x0F) == want, "phoneme-off keeps amp (PA gates)");
     robovox_bus_free(&b);
+}
+
+/* Pitch encoding round-trips through R1/R2 for every MIDI note (DUR != 3):
+ * reassembling the emitted registers with the engine formula must give
+ * back the exact 12-bit inflection, i.e. optimal half-LSB tuning. */
+static void test_inflection_exact(void)
+{
+    robovox_state_t s;
+    sc_log_t l;
+    int note;
+    fw_init(&s, &l);
+    for (note = 0; note < 128; note++) {
+        uint8_t on[] = { 0x91, (uint8_t)note, 100 };
+        uint8_t off[] = { 0x81, (uint8_t)note, 0 };
+        int i, r1 = -1, r2 = -1, want, got;
+        l.n = 0;
+        feed(&s, on, 3);
+        for (i = 0; i < l.n; i++) {
+            if (l.addr[i] == RV_SC_R1)
+                r1 = l.value[i];
+            if (l.addr[i] == RV_SC_R2)
+                r2 = l.value[i];
+        }
+        CHECK(r1 >= 0 && r2 >= 0, "note %d emits R1+R2", note);
+        want = robovox_freq_to_inflection(robovox_note_freq(note), s.cfg.xck_hz, 64);
+        /* Engine formula, non-glide mode (ssi263.c update_inflection). */
+        got = r1 * 8 + (((r2 >> 3) & 1) * 2048 + (r2 & 7));
+        CHECK(got == want, "note %d round-trips I (want %d got %d)", note, want, got);
+        l.n = 0;
+        feed(&s, off, 3);
+    }
+}
+
+/* Full-keyboard frequency sweep (notes 36..96 through the bus path):
+ * the emitted R1/R2, reassembled per the engine formula, must land within
+ * 12 cents of 12TET at 1 MHz. Fails by hundreds of cents if R1's low bits
+ * carry glide instead of pitch (up to +1311 cents at note 96); fixed, the
+ * worst note is +9.5 cents (note 90, the chip's own top-range step). */
+static void test_pitch_sweep(void)
+{
+    robovox_state_t s;
+    sc_log_t l;
+    int note;
+    fw_init(&s, &l);
+    for (note = 36; note <= 96; note++) {
+        uint8_t on[] = { 0x91, (uint8_t)note, 100 };
+        uint8_t off[] = { 0x81, (uint8_t)note, 0 };
+        int i, r1 = -1, r2 = -1, I;
+        double f, fp, cents;
+        l.n = 0;
+        feed(&s, on, 3);
+        for (i = 0; i < l.n; i++) {
+            if (l.addr[i] == RV_SC_R1)
+                r1 = l.value[i];
+            if (l.addr[i] == RV_SC_R2)
+                r2 = l.value[i];
+        }
+        CHECK(r1 >= 0 && r2 >= 0, "note %d emits R1+R2", note);
+        I = r1 * 8 + (((r2 >> 3) & 1) * 2048 + (r2 & 7));
+        CHECK(I > 0 && I < 4096, "note %d I in range (%d)", note, I);
+        f = robovox_note_freq(note);
+        fp = s.cfg.xck_hz / (8.0 * (4096.0 - I));
+        cents = 1200.0 * log(fp / f) / log(2.0);
+        if (cents < 0)
+            cents = -cents;
+        CHECK(cents <= 12.0, "note %d in tune (%d cents, I=%d)", note, (int)cents, I);
+        l.n = 0;
+        feed(&s, off, 3);
+    }
+}
+
+/* Pitch channel latches inflection + amplitude (performance): latest
+ * note-on wins, releases change nothing. */
+static void test_pitch_latch(void)
+{
+    robovox_state_t s;
+    sc_log_t l;
+    const uint8_t c4[] = { 0x91, 60, 100 };
+    const uint8_t e4[] = { 0x91, 64, 110 };
+    const uint8_t offE[] = { 0x81, 64, 0 };
+    const uint8_t offC[] = { 0x80, 60, 0 };
+    int e4infl, e4amp;
+    fw_init(&s, &l);
+    feed(&s, c4, 3);
+    CHECK(s.v[0].pitch_note == 60, "first pitch latched");
+    feed(&s, e4, 3);
+    CHECK(s.v[0].pitch_note == 64, "latest pitch wins");
+    e4infl = s.v[0].inflection;
+    e4amp = s.v[0].amplitude;
+    CHECK(e4infl == robovox_freq_to_inflection(robovox_note_freq(64), s.cfg.xck_hz, 64),
+          "latched note sets its inflection");
+    CHECK(e4amp == robovox_vel_to_amp(&s, 110), "latched note sets its amp");
+    l.n = 0;
+    feed(&s, offE, 3);
+    CHECK(l.n == 0, "pitch release writes nothing");
+    CHECK(s.v[0].pitch_note == 64, "pitch stays latched");
+    CHECK(s.v[0].inflection == e4infl && s.v[0].amplitude == e4amp,
+          "inflection+amp stay latched");
+    feed(&s, offC, 3);
+    CHECK(s.v[0].pitch_note == 64, "older release changes nothing");
+}
+
+/* Nominal base + bend combine absolutely (studio clock discipline). */
+static void test_clock_base_and_bend(void)
+{
+    robovox_state_t s;
+    sc_log_t l;
+    const uint8_t up[] = { 0xE0, 0x00, 0x60 };   /* +12 st at range 24 */
+    const uint8_t center[] = { 0xE0, 0x00, 0x40 };
+    const uint8_t pbend[] = { 0xE0, 0x00, 0x60 };
+    fw_init(&s, &l);
+    s.cfg.ctlmap = RV_MAP_POLAXIS;
+    robovox_set_nominal_xck(&s, 2000000.0);
+    CHECK(l.xck == 2000000.0, "centered base lands at once (%f)", l.xck);
+    feed(&s, up, 3);
+    CHECK(l.xck == 4000000.0, "bend scales from the base (%f)", l.xck);
+    feed(&s, center, 3);
+    CHECK(l.xck == 2000000.0, "center returns to the base (%f)", l.xck);
+    /* Patent map: bend owns the filter, never the clock. */
+    fw_init(&s, &l);
+    feed(&s, pbend, 3);
+    CHECK(l.xck == 0.0, "patent bend leaves XCK alone (%f)", l.xck);
+}
+
+/* ssi263_set_xck on a fresh chip == a fresh ssi263_new at that clock:
+ * byte-identical output (the narrowed exactness claim in ssi263.h). */
+static void test_xck_fresh_exact(void)
+{
+    ssi263_params p, q;
+    const unsigned char *rom = ssi263_default_rom();
+    ssi263 *a, *b;
+    static double oa[8192], ob[8192];
+    static const int prog[5][2] = {
+        { 0, (2 << 6) | 25 }, { 1, 220 }, { 2, (8 << 4) | 0x0C },
+        { 4, 0xE4 }, { 3, (5 << 4) | 15 }
+    };
+    long i, n;
+    int k;
+    ssi263_default_params(&p);
+    q = p;
+    q.xck_hz = 2000000.0;
+    a = ssi263_new(&p, rom, 44100.0);
+    b = ssi263_new(&q, rom, 44100.0);
+    CHECK(a && b, "fresh chips");
+    if (!a || !b) {
+        if (a)
+            ssi263_free(a);
+        if (b)
+            ssi263_free(b);
+        return;
+    }
+    ssi263_set_xck(a, 2000000.0); /* before any writes: nothing started */
+    for (k = 0; k < 5; k++) {
+        ssi263_write(a, prog[k][0], prog[k][1]);
+        ssi263_write(b, prog[k][0], prog[k][1]);
+    }
+    n = ssi263_run(a, 8192, oa);
+    CHECK(n == 8192, "chip A renders");
+    n = ssi263_run(b, 8192, ob);
+    CHECK(n == 8192, "chip B renders");
+    for (i = 0; i < 8192; i++)
+        if (oa[i] != ob[i]) {
+            CHECK(0, "retune byte-identical (first diff %ld: %a vs %a)", i, oa[i], ob[i]);
+            break;
+        }
+    CHECK(i == 8192, "fresh retune == fresh chip at clock");
+    ssi263_free(a);
+    ssi263_free(b);
+}
+
+/* Phoneme channel likewise falls back across overlapping notes. */
+static void test_phoneme_mono_priority(void)
+{
+    robovox_state_t s;
+    sc_log_t l;
+    const uint8_t a[] = { 0x90, 60, 100 };
+    const uint8_t b[] = { 0x90, 62, 110 };
+    const uint8_t offB[] = { 0x80, 62, 0 };
+    const uint8_t offA[] = { 0x80, 60, 0 };
+    fw_init(&s, &l);
+    feed(&s, a, 3);
+    CHECK(s.v[0].phoneme == s.note2phon[60], "first phoneme held");
+    feed(&s, b, 3);
+    CHECK(s.v[0].phoneme == s.note2phon[62], "second phoneme takes priority");
+    feed(&s, offB, 3);
+    CHECK(s.v[0].phoneme == s.note2phon[60], "release falls back to held phoneme");
+    CHECK(s.v[0].note_held == 1, "still held");
+    feed(&s, offA, 3);
+    CHECK(s.v[0].phoneme == RV_PHONEME_PAUSE, "last release writes PA");
+    CHECK(s.v[0].note_held == 0, "released");
 }
 
 int main(void)
@@ -516,7 +679,13 @@ int main(void)
     test_quad_channels();
     test_bus_path();
     test_engine_smoke();
-    test_amp_slew();
+    test_xck_fresh_exact();
+    test_amp_latch();
+    test_inflection_exact();
+    test_pitch_sweep();
+    test_pitch_latch();
+    test_phoneme_mono_priority();
+    test_clock_base_and_bend();
     test_vst_render_path();
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "PASS", checks, failures);

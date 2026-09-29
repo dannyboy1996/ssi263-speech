@@ -1,9 +1,11 @@
-# Robovox — SC-02 singing voice in the style of Kraftwerk's 1998 tour rig
+# SSInger — SC-02 singing voice after the Robovox patent
 
 A JUCE (9.0.3) VST3/Standalone instrument that recreates the Robovox system
 from EP0396141A2 ("System for and method of synthesizing singing in real
 time", Schneider / Ott / Jalass): a 6502 driving one to four Votrax SC-02
-(= SSI-263) speech chips through a 6850 ACIA MIDI interface.
+(= SSI-263) speech chips through a 6850 ACIA MIDI interface. The product
+name is its own (Polaxis sells a unit called "Robovox" today); the patent
+is credited everywhere it is used.
 
 Start with [`RESEARCH.md`](RESEARCH.md) — the full patent/tour/hardware
 analysis this build follows. The chip itself is this repository's existing
@@ -59,21 +61,23 @@ cmake --build build/robovox --target Robovox_VST3 --config Release
 ```
 
 Artifacts land in `build/robovox/Robovox_artefacts/Release/`:
-`VST3/Robovox.vst3` (the plugin bundle — copy the whole `Robovox.vst3`
-folder to `C:\Program Files\Common Files\VST3`) and
-`Standalone/Robovox.exe` (play it without a DAW). Full instructions,
-prerequisites, and the "ways to build it wrong" table are in
-[`BUILD.md`](BUILD.md). Verified 2026-09-29
+`VST3/SSInger.vst3` (the plugin bundle — copy the whole folder to
+your system's VST3 folder; on Windows that is the VST3 folder inside
+Program Files / Common Files) and `Standalone/SSInger.exe` (play
+it without a DAW). Full instructions, prerequisites, and the "ways to
+build it wrong" table are in [`BUILD.md`](BUILD.md). Verified 2026-09-29
 with JUCE 9.0.3 (latest): VST3 links, `GetPluginFactory` exported,
-`moduleinfo.json` lists Robovox as Instrument/Synth/Vocal, offline C
-tests pass, and a sung "hello" renders end-to-end through the
-MIDI → 6850 → translator → SC-02 path (`robovox_hello.wav` in this
-directory — H-E-L-O on ch 1, E4→G4 on ch 2).
+`moduleinfo.json` lists the plugin as Instrument/Synth/Vocal, and the
+offline C tests pass, including an end-to-end sung render through the
+MIDI → 6850 → translator → SC-02 path.
 
 ## Licenses
 
 Our code (including the clean-room 6850 and translator): MIT, like the
 rest of this repository. JUCE (AGPLv3/commercial), floooh `chips` (MIT)
-keep their own terms — see `third_party/README.md`. The Robovox patent
-EP0396141A2 is withdrawn; the original Robovox firmware/Atari software is
-lost, so the translator here is a new implementation of the patent text.
+keep their own terms — see `third_party/README.md`. Plainly: the source
+here is MIT; binaries built with JUCE are AGPLv3 (JUCE's terms set the
+binary licence), unless built under JUCE's commercial licence. The
+Robovox patent EP0396141A2 is withdrawn; the original Robovox
+firmware/Atari software is lost, so the translator here is a new
+implementation of the patent text.

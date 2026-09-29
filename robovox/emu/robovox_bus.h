@@ -74,17 +74,13 @@ typedef struct robovox_bus {
     int nvoices;
     int irq_to_cpu;                /* live 6850 IRQ line level */
     robovox_state_t fw;
-    /* VST-side amplitude envelope (patent-exact when both are 0). */
-    float amp_cur[RV_NVOICES_MAX]; /* continuous 0..15 */
-    int amp_tgt[RV_NVOICES_MAX];
-    double attack_ms, release_ms;
     double *render_tmp;
     long render_cap;
 } robovox_bus_t;
 
-/* Sink: translator SC-02 writes -> 74LS245 buffer -> engine. R3 writes
- * pass through the VST amplitude envelope (instant when attack and
- * release are both 0: patent-exact velocity -> Amplitude). */
+/* Sink: translator SC-02 writes -> 74LS245 buffer -> engine. Amplitude
+ * latches exactly as the translator sends it (velocity -> Amplitude):
+ * the real unit has no attack/release envelope, so neither does the bus. */
 static void robovox_bus_sc_write(int voice, int addr, int value, void *ctx)
 {
     robovox_bus_t *b = (robovox_bus_t *)ctx;
@@ -94,68 +90,15 @@ static void robovox_bus_sc_write(int voice, int addr, int value, void *ctx)
     if (a >= 4)
         a = 4;
     value &= 0xFF;
-    if (a == 3 && (b->attack_ms > 0.0 || b->release_ms > 0.0)) {
-        int art = (value >> 4) & 7;
-        int cur = (int)(b->amp_cur[voice] + 0.5f);
-        b->amp_tgt[voice] = value & 0x0F;
-        b->regs_mirror[voice][3] = (art << 4) | cur;
-        ssi263_write(b->chip[voice], 3, b->regs_mirror[voice][3]);
-        return;
-    }
     b->regs_mirror[voice][a] = value;
     if (a == 1)
         ssi263_set_snap_pitch(b->chip[voice], 1);
-    if (a == 3) {
-        /* Keep the envelope's target in sync: with attack/release at 0
-         * the slew below must be a no-op, or it drags the voice to 0. */
-        b->amp_cur[voice] = (float)(value & 0x0F);
-        b->amp_tgt[voice] = value & 0x0F;
-    }
     ssi263_write(b->chip[voice], a, value);
 }
 
-/* Slew the amplitude nibbles toward their targets (VST envelope). */
-static void robovox_bus_slew(robovox_bus_t *b, double seconds)
-{
-    int v;
-    if (seconds <= 0.0)
-        return;
-    if (b->attack_ms <= 0.0 && b->release_ms <= 0.0)
-        return; /* patent-exact: the translator owns R3 outright */
-    for (v = 0; v < b->nvoices; v++) {
-        float cur = b->amp_cur[v];
-        float tgt = (float)b->amp_tgt[v];
-        double ms, step;
-        int nib;
-        if (cur == tgt)
-            continue;
-        ms = (tgt > cur) ? b->attack_ms : b->release_ms;
-        if (ms <= 0.0) {
-            cur = tgt;
-        } else {
-            step = 15.0 * seconds / (ms / 1000.0);
-            if (tgt > cur) {
-                cur += (float)step;
-                if (cur > tgt)
-                    cur = tgt;
-            } else {
-                cur -= (float)step;
-                if (cur < tgt)
-                    cur = tgt;
-            }
-        }
-        b->amp_cur[v] = cur;
-        nib = (int)(cur + 0.5f);
-        if (nib != (b->regs_mirror[v][3] & 0x0F)) {
-            b->regs_mirror[v][3] = (b->regs_mirror[v][3] & 0xF0) | nib;
-            if (b->chip[v])
-                ssi263_write(b->chip[v], 3, b->regs_mirror[v][3]);
-        }
-    }
-}
-
-/* Sink: master-clock (coarse pitch) changes retune the voices in place
- * (ssi263_set_xck is exact: XCK is only read per-sample, ssi263.h). */
+/* Sink: master-clock (coarse pitch) changes retune the voices in place.
+ * Fresh/idle retune is exact; a phoneme in flight keeps its started length
+ * (ssi263.h). */
 static void robovox_bus_xck_write(double hz, void *ctx)
 {
     robovox_bus_t *b = (robovox_bus_t *)ctx;
@@ -173,8 +116,21 @@ static void robovox_bus_xck_write(double hz, void *ctx)
             ssi263_set_xck(b->chip[i], hz);
 }
 
-/* Forward declarations for the static functions used before definition. */
-static int robovox_bus_build_chips(robovox_bus_t *b);
+/* Master-knob base clock in: the effective clock (base through the current
+ * Polaxis bend, if any) hits the chips. Tracked against the nominal base
+ * (not the effective clock) so the VST's per-block param poll never fights
+ * a held bend. */
+static void robovox_bus_master_write(double hz, void *ctx)
+{
+    robovox_bus_t *b = (robovox_bus_t *)ctx;
+    if (hz < 100000.0)
+        hz = 100000.0;
+    if (hz > 4000000.0)
+        hz = 4000000.0;
+    if (hz == b->fw.nominal_xck)
+        return;
+    robovox_set_nominal_xck(&b->fw, hz);
+}
 
 static void robovox_bus_on_irq(int level, void *ctx)
 {
@@ -210,8 +166,6 @@ static int robovox_bus_build_chips(robovox_bus_t *b)
         ssi263_write(b->chip[i], 4, saved[i][4]);
         ssi263_write(b->chip[i], 3, saved[i][3] & 0x7F);
         b->regs_mirror[i][3] &= 0x7F;
-        b->amp_cur[i] = (float)(b->regs_mirror[i][3] & 0x0F);
-        b->amp_tgt[i] = b->regs_mirror[i][3] & 0x0F;
     }
     return 1;
 }

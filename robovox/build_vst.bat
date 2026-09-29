@@ -1,5 +1,5 @@
 @echo off
-REM build_vst.bat -- rebuild the Robovox VST3 (Release) after a sound update.
+REM build_vst.bat -- rebuild the SSInger VST3 (Release) after a sound update.
 REM Usage: double-click, or from the repo root:  robovox\build_vst.bat
 REM Must run from the repo checkout (this script finds the root from its own path).
 setlocal EnableExtensions
@@ -39,5 +39,5 @@ if errorlevel 1 (
 
 echo.
 echo OK. VST3 folder:
-echo   build\robovox\Robovox_artefacts\Release\VST3\Robovox.vst3
-echo Copy that whole folder to "C:\Program Files\Common Files\VST3\" then rescan in your DAW.
+echo   build\robovox\Robovox_artefacts\Release\VST3\SSInger.vst3
+echo Copy that whole folder to your system's VST3 folder, then rescan in your DAW.

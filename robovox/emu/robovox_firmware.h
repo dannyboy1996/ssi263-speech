@@ -5,9 +5,11 @@
  * 6502-resident ROM image behind the same robovox_sc_write sink).
  *
  * Default: embodiment 1. Phoneme channel N: Note On -> Phoneme register
- * via note table, velocity -> Amplitude; Note Off -> Pause (code 0).
- * Pitch channel N+1: Note On -> Inflection (A4 = 440 Hz), velocity ->
- * Amplitude; Note Off -> Amplitude 0. Pitch Bend -> Filter Frequency
+ * (velocity ignored -- the pitch channel owns volume); Note Off -> Pause
+ * (code 0, silent with any latched amplitude). Pitch channel N+1:
+ * Note On -> Inflection (A4 = 440 Hz) + velocity -> Amplitude, both
+ * latched (Note Off ignored); pitch is monophonic, latest note wins.
+ * Pitch Bend -> Filter Frequency
  * (patent map) or master clock (Polaxis map); Mod wheel -> Articulation
  * (patent) or Filter (Polaxis); CC2 -> inflection fine, CC3 -> rate,
  * CC64 -> internal/external carrier (Polaxis map). Embodiment 2
@@ -81,8 +83,15 @@ typedef struct robovox_cfg {
 
 typedef struct robovox_voice {
     int phoneme;       /* current phoneme code (0 = PA) */
-    int note_held;     /* phoneme note still down (for A/R re-trigger) */
-    int pitch_note;    /* last pitch-channel note, -1 none */
+    int note_held;     /* phoneme stack non-empty (for A/R re-trigger) */
+    int pitch_note;    /* latched pitch-channel note, -1 none */
+    /* Monophonic last-note priority on the phoneme channel (performance:
+     * releasing a key falls back to the still-held one). The pitch channel
+     * latches instead (releases ignored), so it needs no stack. */
+#define RV_HELD_MAX 16
+    uint8_t phon_notes[RV_HELD_MAX];
+    uint8_t phon_vel[RV_HELD_MAX];
+    int n_phon;
     int cc2;           /* inflection fine 0-127 (64 center) */
     int amplitude;     /* current R3 amplitude nibble */
     int inflection;    /* current 12-bit I */
@@ -103,6 +112,8 @@ typedef struct robovox_state {
     void (*sc_write)(int voice, int addr, int value, void *ctx);
     void (*xck_write)(double hz, void *ctx);
     void *sink_ctx;
+    double nominal_xck;    /* Master-knob base clock (default 1 MHz) */
+    int bend_val;          /* last 14-bit pitch bend, 8192 = center */
 } robovox_state_t;
 
 static void robovox_default_cfg(robovox_cfg_t *c)
@@ -142,6 +153,7 @@ static void robovox_reset(robovox_state_t *s)
         s->v[i].phoneme = RV_PHONEME_PAUSE;
         s->v[i].note_held = 0;
         s->v[i].pitch_note = -1;
+        s->v[i].n_phon = 0;
         s->v[i].cc2 = 64;
         s->v[i].amplitude = 0;
         s->v[i].inflection = 0;
@@ -151,6 +163,8 @@ static void robovox_reset(robovox_state_t *s)
     s->running = 0;
     s->need = s->got = 0;
     s->in_sysex = 0;
+    s->nominal_xck = 1000000.0;
+    s->bend_val = 8192;
 }
 
 static void robovox_set_note_phoneme(robovox_state_t *s, int note, int phon)
@@ -277,6 +291,32 @@ static int robovox_freq_to_inflection(double f, double xck, int cc2)
     return (int)i;
 }
 
+/* Effective master clock: the nominal (Master-knob) base bent by the last
+ * Polaxis-map pitch bend. Recomputed absolutely from the base every time,
+ * so center always returns exactly and repeated bends never drift -- the
+ * clock stays performance-ready. Pitch follows XCK like the hardware
+ * (F0 = XCK/(8(4096-I))), so a bent clock transposes in exact semitones
+ * with no inflection rewrite needed. */
+static double robovox_effective_xck(const robovox_state_t *s)
+{
+    if (s->cfg.ctlmap == RV_MAP_POLAXIS) {
+        double st = (s->bend_val - 8192) / 8192.0 * s->cfg.bend_range_st;
+        return s->nominal_xck * pow(2.0, st / 12.0);
+    }
+    return s->nominal_xck;
+}
+
+/* Master-knob base in: the effective clock (base through the current bend,
+ * if any) hits the chips. */
+static void robovox_set_nominal_xck(robovox_state_t *s, double hz)
+{
+    if (!(hz > 0.0))
+        return;
+    s->nominal_xck = hz;
+    if (s->xck_write)
+        s->xck_write(robovox_effective_xck(s), s->sink_ctx);
+}
+
 static int robovox_note_to_inflection(const robovox_state_t *s, int voice)
 {
     const robovox_voice_t *v = &s->v[voice];
@@ -328,12 +368,23 @@ static void robovox_write_r0(robovox_state_t *s, int voice, int phon)
     robovox_emit(s, voice, RV_SC_R0, ((s->cfg.dur & 3) << 6) | (phon & 0x3F));
 }
 
-/* Split a 12-bit inflection across R1/R2-low and emit both (R2 keeps rate). */
+/* Split a 12-bit inflection across R1/R2-low and emit both (R2 keeps rate).
+ *
+ * R1 encoding follows the hardware (RESEARCH.md section 3): outside the
+ * pitch-glide mode (DUR=3) every R1 bit is pitch, so R1 carries the full
+ * (I>>3) and the write round-trips exactly -- earlier firmware ORed the
+ * glide param into R1's low 3 bits in all modes, detuning every note whose
+ * (I>>3)&7 differed from the glide setting (up to hundreds of cents).
+ * In DUR=3 the engine reads (R1>>3)*64 and the low bits are glide speed,
+ * so pitch there is inherently coarse and glide keeps the bits. */
 static void robovox_write_inflection(robovox_state_t *s, int voice, int infl)
 {
     int r1, r2lo;
     s->v[voice].inflection = infl & 0xFFF;
-    r1 = ((infl >> 3) & 0xF8) | (s->cfg.glide & 7);
+    if ((s->cfg.dur & 3) == 3)
+        r1 = ((infl >> 3) & 0xF8) | (s->cfg.glide & 7);
+    else
+        r1 = (infl >> 3) & 0xFF;
     r2lo = (((infl >> 11) & 1) << 3) | (infl & 7);
     robovox_emit(s, voice, RV_SC_R1, r1);
     robovox_emit(s, voice, RV_SC_R2, ((s->cfg.rate & 15) << 4) | r2lo);
@@ -372,28 +423,79 @@ static int robovox_channel_voice(const robovox_state_t *s, int ch, int *is_phone
     return rel / 2;
 }
 
+/* Mono-stack push: drop any older copy of the note (re-trigger moves to the
+ * top); overfill drops the oldest. Returns the new depth. */
+static int rv_held_push(uint8_t *ns, uint8_t *vs, int n, int note, int vel)
+{
+    int i, w = 0;
+    for (i = 0; i < n; i++)
+        if (ns[i] != note) {
+            ns[w] = ns[i];
+            vs[w] = vs[i];
+            w++;
+        }
+    if (w >= RV_HELD_MAX) {
+        memmove(ns, ns + 1, (size_t)(RV_HELD_MAX - 1));
+        memmove(vs, vs + 1, (size_t)(RV_HELD_MAX - 1));
+        w = RV_HELD_MAX - 1;
+    }
+    ns[w] = (uint8_t)note;
+    vs[w] = (uint8_t)vel;
+    return w + 1;
+}
+
+/* Release: drop every copy of the note. Returns the new depth. */
+static int rv_held_drop(uint8_t *ns, uint8_t *vs, int n, int note)
+{
+    int i, w = 0;
+    for (i = 0; i < n; i++)
+        if (ns[i] != note) {
+            ns[w] = ns[i];
+            vs[w] = vs[i];
+            w++;
+        }
+    return w;
+}
+
 static void robovox_note_on(robovox_state_t *s, int voice, int is_phoneme,
                             int note, int vel)
 {
     robovox_voice_t *v = &s->v[voice];
+    int top, before;
     if (is_phoneme) {
+        /* Articulation only: velocity never touches volume (the pitch
+         * channel owns it, so the two can never fight); releases fall
+         * back across held notes, the last one writing Pause. */
         int phon = (note >= 0 && note < 128) ? s->note2phon[note] : -1;
         if (vel == 0) {
-            v->note_held = 0;
-            robovox_write_r0(s, voice, RV_PHONEME_PAUSE);
+            before = v->n_phon;
+            v->n_phon = rv_held_drop(v->phon_notes, v->phon_vel, v->n_phon, note);
+            if (v->n_phon == before)
+                return; /* stray release: not held, nothing changes */
+            if (v->n_phon > 0) {
+                top = v->n_phon - 1;
+                phon = s->note2phon[v->phon_notes[top]];
+                if (phon < 0)
+                    phon = RV_PHONEME_PAUSE; /* table edited under us */
+                v->note_held = 1;
+                robovox_write_r0(s, voice, phon);
+            } else {
+                v->note_held = 0;
+                robovox_write_r0(s, voice, RV_PHONEME_PAUSE);
+            }
             return;
         }
         if (phon < 0)
             return;
+        v->n_phon = rv_held_push(v->phon_notes, v->phon_vel, v->n_phon, note, vel);
         v->note_held = 1;
         robovox_write_r0(s, voice, phon);
-        robovox_write_r3(s, voice, robovox_vel_to_amp(s, vel));
     } else {
-        if (vel == 0) {
-            v->pitch_note = -1;
-            robovox_write_r3(s, voice, 0);
+        /* Dynamics + pitch, latched: note-ons set inflection and amplitude
+         * together, releases are ignored (both stay until the next pitch
+         * note, latest wins). */
+        if (vel == 0)
             return;
-        }
         v->pitch_note = note;
         robovox_write_inflection(s, voice, robovox_note_to_inflection(s, voice));
         robovox_write_r3(s, voice, robovox_vel_to_amp(s, vel));
@@ -404,14 +506,13 @@ static void robovox_pitch_bend(robovox_state_t *s, int voice, int value)
 {
     /* value: 14-bit, 8192 = center. */
     if (s->cfg.ctlmap == RV_MAP_POLAXIS) {
-        /* Coarse pitch by clocking the chip: full scale = +/-bend_range_st. */
-        double st = (value - 8192) / 8192.0 * s->cfg.bend_range_st;
-        double hz = s->cfg.xck_hz * pow(2.0, st / 12.0);
+        /* Coarse pitch by clocking the chip (tour rig): absolute from the
+         * nominal base, so the held pitch transposes exactly and center
+         * always lands back on nominal. No inflection rewrite: with I
+         * computed for the nominal clock, F0 scales with XCK. */
+        s->bend_val = value;
         if (s->xck_write)
-            s->xck_write(hz, s->sink_ctx);
-        /* Retune the active inflection against the new clock. */
-        if (s->v[voice].pitch_note >= 0)
-            robovox_write_inflection(s, voice, robovox_note_to_inflection(s, voice));
+            s->xck_write(robovox_effective_xck(s), s->sink_ctx);
     } else {
         /* Patent map: bend drives vocal-tract length (Filter Frequency). */
         int ff = s->cfg.filter_ff + (value - 8192) * 64 / 8192;

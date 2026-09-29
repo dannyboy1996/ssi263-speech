@@ -33,20 +33,21 @@ ctest --test-dir build/robovox -C Release
 ```
 
 The offline C tests (`test_6850_midi`: 6850 framing/IRQ, patent MIDI
-vectors, bus path, engine smoke, envelope, VST render order) need no
+vectors, bus path, engine smoke, latch, tuning, mono priority, VST render order) need no
 JUCE and also configure standalone:
 `cmake -S robovox/tests -B build/rb-tests` + same build/test lines.
 
 ## Install
 
 - **VST3**: copy the whole folder
-  `build/robovox/Robovox_artefacts/Release/VST3/Robovox.vst3`
-  to `C:\Program Files\Common Files\VST3\`, then rescan plug-ins in
+  `build/robovox/Robovox_artefacts/Release/VST3/SSInger.vst3`
+  to your system's VST3 folder (on Windows: the VST3 folder inside
+  Program Files / Common Files), then rescan plug-ins in
   your DAW. (Ableton: Preferences → Plug-ins → Rescan. If an old build
   persists, remove the folder, rescan once with it absent, then
   re-add — DAWs cache VST3s.)
 - **Standalone**: run
-  `build/robovox/Robovox_artefacts/Release/Standalone/Robovox.exe`
+  `build/robovox/Robovox_artefacts/Release/Standalone/SSInger.exe`
   (Options → Audio/MIDI settings: enable a MIDI input).
 
 ## Ways to build it wrong
@@ -68,7 +69,9 @@ JUCE and also configure standalone:
    That is the patented method, not a bug.
 3. Key→phoneme layout: `note_map.txt` (reference; C4 = middle C).
 4. No audio checklist: MIDI reaching the track (armed/monitored?) →
-   channels 1+2 → velocity > 0 → Volume param up → pitch notes present.
+   channels 1+2 → pitch velocity > 0 (it owns volume; phoneme velocity is
+   ignored) → Volume param up → pitch notes present (pitch latches, so one
+   pitch note suffices until the next).
 
 ## Layout reference
 

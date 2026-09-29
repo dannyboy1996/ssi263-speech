@@ -41,13 +41,13 @@ juce_add_plugin(Robovox
   PLUGIN_CODE Rvox
   FORMATS VST3 Standalone
   IS_SYNTH TRUE
-  PRODUCT_NAME "Robovox"
+  PRODUCT_NAME "SSInger"
   NEEDS_MIDI_INPUT TRUE
   NEEDS_MIDI_OUTPUT FALSE
   IS_MIDI_EFFECT FALSE
   EDITOR_WANTS_KEYBOARD_FOCUS FALSE
   VST3_CATEGORIES "Instrument" "Synth" "Vocal"
-  DESCRIPTION "SC-02 singing voice in the style of Kraftwerk's 1998 Robovox rig")
+  DESCRIPTION "SSInger: SC-02 singing voice after the Robovox patent (EP0396141A2)")
 
 target_sources(Robovox PRIVATE
   plugin/RobovoxProcessor.cpp)

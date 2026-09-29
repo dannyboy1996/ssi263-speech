@@ -17,8 +17,6 @@ static const char* dur = "dur";
 static const char* velCurve = "velCurve";
 static const char* bendRange = "bendRange";
 static const char* clockSt = "clockSt";
-static const char* attack = "attack";
-static const char* release = "release";
 static const char* carrier = "carrier";
 static const char* volume = "volume";
 }
@@ -78,12 +76,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout RobovoxProcessor::createLayo
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         PID{ ids::clockSt, 1 }, "Master clock (st)",
         juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        PID{ ids::attack, 1 }, "Attack (ms)",
-        juce::NormalisableRange<float>(0.0f, 500.0f, 0.5f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>(
-        PID{ ids::release, 1 }, "Release (ms)",
-        juce::NormalisableRange<float>(0.0f, 2000.0f, 1.0f), 0.0f));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         PID{ ids::carrier, 1 }, "Carrier",
         juce::StringArray{ "Internal", "External (sidechain)" }, 0));
@@ -148,12 +140,10 @@ void RobovoxProcessor::applyParams()
         }
     }
 
-    double xck = 1000000.0 * std::pow(2.0, get(ids::clockSt) / 12.0);
-    if (xck != bus.xck_hz)
-        robovox_bus_xck_write(xck, &bus);
+    double base = 1000000.0 * std::pow(2.0, get(ids::clockSt) / 12.0);
+    if (base != bus.fw.nominal_xck)
+        robovox_bus_master_write(base, &bus);
 
-    bus.attack_ms = get(ids::attack);
-    bus.release_ms = get(ids::release);
     volumeCache = get(ids::volume);
     carrierCache = (int)get(ids::carrier);
 }
@@ -191,7 +181,6 @@ void RobovoxProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int 
     if ((long)tmp.size() < n + 1)
         tmp.resize((size_t)n + 1);
     robovox_bus_render(&bus, n, tmp.data());
-    robovox_bus_slew(&bus, n / bus.sample_rate);
     robovox_bus_service_all(&bus);
     int nch = out.getNumChannels();
     for (int ch = 0; ch < nch; ch++) {

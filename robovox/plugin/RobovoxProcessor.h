@@ -20,7 +20,7 @@ public:
     RobovoxProcessor();
     ~RobovoxProcessor() override;
 
-    const juce::String getName() const override { return "Robovox"; }
+    const juce::String getName() const override { return "SSInger"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -29,7 +29,7 @@ public:
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return "Robovox"; }
+    const juce::String getProgramName(int) override { return "SSInger"; }
     void changeProgramName(int, const juce::String&) override {}
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;

@@ -5,6 +5,13 @@ singing voice played from a MIDI sequencer/keyboard. The chip emulation is
 this repo's existing SSI-263 model (`src/csrc/ssi263.c`, the SC-02 under
 Votrax's name); this document covers everything around it.
 
+Source key used through this file: **[patent]** = the EP0396141A2 text
+(direct quotes sit in `>` blocks); **[manual]** = the Polaxis Robovox
+user manual (hardware v2019, firmware through 0.07); **[secondary]** =
+fan pages, forums, press, and auction listings. The VST product name is
+"SSInger" — this file keeps "Robovox" for the historical system
+it researches.
+
 Your recollection was right: **phonemes on channel N, pitch on channel
 N+1 via the Inflection register.** That is the patent's first embodiment,
 verbatim.
@@ -49,6 +56,11 @@ verbatim.
   velocity → Amplitude; Note Off → Amplitude 0.
 - Pitch wheel → Filter Frequency (vocal-tract length); mod wheel →
   Articulation (filter-interpolation speed); velocity → loudness.
+- VST performance deviation (§7): the two velocities would fight over one
+  Amplitude register, so the pitch channel alone owns velocity → volume
+  (latched; its Note Offs are ignored) while the phoneme channel only
+  articulates (Note Off → Pause, which gates). Program-Change phonemes
+  carry no velocity, so this rule holds in both embodiments.
 - Pairs are N/N+1; the four-chip build uses speech on **1, 3, 5, 7** and
   pitch on **2, 4, 6, 8** (patent: "keys 36-93 control speech sounds on
   channels 1, 3, 5 and 7 whereas the pitch control is controlled on
@@ -56,13 +68,13 @@ verbatim.
   phonemes (Fig. 2 groups: dark→bright vowels, voiced, voiceless,
   plosives).
 
-### 1.2 Embodiment 2 (expander style — VST option)
+### 1.2 Embodiment 2 (expander style — VST option) [patent]
 
 Channel N Note On → Inflection (pitch); velocity → Amplitude; Note Off →
 Amplitude 0; **Program Change → phoneme** via program-number table.
 Same wheels. Behaves like a normal MIDI expander with voice-like timbres.
 
-### 1.3 Five modes (front-panel rotary on the tour hardware)
+### 1.3 Five modes (front-panel rotary on the tour hardware) [patent + secondary]
 
 1. **SEQ** (sequencer): keyboard or up to N sounds from any sequencer.
 2. **POLY**: N identical voices, different pitches, Program-Change select.
@@ -78,6 +90,10 @@ Same wheels. Behaves like a normal MIDI expander with voice-like timbres.
   through the filter bank for choir/organ/vocoder timbres.
 
 ## 2. The 1998 tour rig vs the patent
+
+[patent] for the left column's source where cited; the tour-reality
+claims below are all [secondary] (equipment pages, seller accounts,
+auction photos) unless §8 gives a stronger record.
 
 - 1998 equipment list (kraftwerkfaq.com/equipment.html) names Robovox
   among the tour rig (Nord Lead 2, Kawai K5000s, Doepfer MAQ 16/3 /
@@ -113,7 +129,7 @@ Same wheels. Behaves like a normal MIDI expander with voice-like timbres.
 | 3 | Single or quad SC-02 | Rack of voices (quad mappings 1/3/5/7 + 2/4/6/8) | 1-voice SEQ default; 4-voice QUAD option |
 | 4 | Internal excitation | INT/EXT per-voice switches; vocoder/harmonizer downstream | `Carrier` audio input + INT/EXT mix (chip TP1/TP2 path is future work — see §5) |
 | 5 | Fig. 2 note→phoneme table | Same table, exact print unrecovered | Editable default table, notes 36–93 (placeholder order, §5) |
-| 6 | Envelope CC sequences | Unknown numbers | Exposed as Attack/Decay params driving Amplitude slew; CC learn |
+| 6 | Envelope CC sequences | Unknown numbers | Not modeled: the unit latches velocity straight to Amplitude (no attack/decay); CC learn |
 
 ## 3. SC-02 register map (what the translator writes)
 
@@ -139,7 +155,11 @@ Tuning math (XCK = 1 MHz default, `ssi263_defaults.h:8`):
 I(f) = 4096 − XCK/(8·f); A4 440 Hz → I = 3812 (R1 = 220, R2-lo = 0xC
 with rate in the high nibble). The translator computes this per note, so
 `Master Clock` (XCK) retunes everything coherently, exactly like the
-hardware's variable oscillator.
+hardware's variable oscillator. Polaxis pitch-bend drives the same clock
+absolutely from that base (no drift, center returns exactly); pitch
+follows XCK, so it transposes in exact semitones. R1 carries full pitch
+bits outside DUR=3 glide mode (the low 3 bits are glide speed only
+there); CC2 fine (±1 st, 64 = center) stays sample-exact with it.
 
 ## 4. Emulator decisions
 
@@ -181,22 +201,26 @@ hardware's variable oscillator.
 
 ## 6. Sources
 
-- EP0396141A2 full text (Google Patents, patents.google.com/patent/EP0396141A2/en).
-- SC-02/SSI-263A data sheets + programming guide via visual6502.org SSI-263P
+- [patent] EP0396141A2 full text (Google Patents, patents.google.com/patent/EP0396141A2/en).
+- [secondary → datasheet] SC-02/SSI-263A data sheets + programming guide via visual6502.org SSI-263P
   die page (as already cited in this repo's `docs/sources.md`).
-- Julien's Auctions: Schneider Robovox/Votrax rack lot + Gagnon archive
+- [secondary] Julien's Auctions: Schneider Robovox/Votrax rack lot + Gagnon archive
   article (SEQ/POLY/MONO/SPLIT/FILTER panel, INT/EXT switches, phoneme keyboard).
-- Polaxis Robovox (polaxis.be/robovox): patent-derived SC-02 MIDI box;
+- [manual] Polaxis Robovox (polaxis.be/robovox): patent-derived SC-02 MIDI box;
   CC1/CC2/CC3/CC64 + PEC VST sequencer behavior.
-- Hybrid Machine / Virtual Music ("Robovox 1991" account: two MIDI
+- [secondary] Hybrid Machine / Virtual Music ("Robovox 1991" account: two MIDI
   interfaces — syllables + oscillator clock; Eventide H-3000 era).
-- Kraftwerk FAQ equipment page (1998 tour list); aktivitaet/Doepfer
+- [secondary] Kraftwerk FAQ equipment page (1998 tour list); aktivitaet/Doepfer
   accounts (Atari 1040ST software, MAQ 16/3 cooperation).
-- MAME `src/devices/machine/6850acia.cpp`, `src/devices/cpu/m6502/m6502.cpp`
+- [third-party code, consulted] MAME `src/devices/machine/6850acia.cpp`, `src/devices/cpu/m6502/m6502.cpp`
   (BSD-3-Clause per-file; consulted, not vendored); floooh `chips`
   (MIT); JUCE 9.0.3 (juce-framework/JUCE releases).
 
-## 7. Polaxis Robovox (living patent-derived reference)
+## 7. Polaxis Robovox (living patent-derived reference) [manual + secondary]
+
+Everything in this section comes from the Polaxis Robovox user manual
+([manual]) and polaxis.be unless noted; performer workflows (Shaw) and
+cover-use notes are [secondary].
 
 Polaxis (Jean-Luc Deladrière, polaxis.be) ships a modern Robovox: a real
 SC-02 on a MikroBUS board for the Emy/Terminal/Kraftor hosts, firmware in
@@ -232,15 +256,20 @@ where it does not conflict with the patent:
   segment grid + live pitch lanes).
 
 Patent-vs-Polaxis control differences (both kept selectable in the VST,
-`CtlMap` param): patent pitch-bend → Filter Frequency and mod → 
+`CtlMap` param): patent pitch-bend → Filter Frequency and mod →
 Articulation; Polaxis pitch-bend → master clock, CC2 → inflection, mod →
 filter, CC3 → rate. One Reaper-automation screenshot captions the clock
 lane "CC1", contradicting the manual's 14-bit Pitch entry — treated as a
 caption slip; the manual rules. Envelope CC numbers remain unknown in
 both (patent "specific sequences"; Polaxis exposes no attack/decay CC),
-so Attack/Decay stay VST-side params on the Amplitude slew.
+and the hardware latches velocity to Amplitude with no envelope stage,
+so the VST does the same (no Attack/Release params).
 
-## 8. Surviving hardware: census and electronics evidence
+## 8. Surviving hardware: census and electronics evidence [secondary]
+
+All census claims here are [secondary] (auction listings, forums, press)
+except the VS-6 internals, which come from the primary VS-6.0 service
+manual (bitsavers).
 
 ### 8.1 The silver rack (Julien's lot 80, Nov 19 2025 — sold $76,800)
 
