@@ -6,7 +6,8 @@ Path:      src/devices/cpu/z180/
 Licence:   BSD-3-Clause, per file (LICENSE-BSD-3-Clause.txt beside this file)
 Author:    Juergen Buchmueller (copyright-holders line of every file taken)
 
-Copied UNCHANGED (byte for byte; `cmp` against upstream at the tree above):
+Copied UNCHANGED: each file's git object hash equals upstream's at the tree above (`git rev-parse HEAD:<path>` in both
+repositories; the blobs are LF, and a Windows checkout's CRLF working copy is git's autocrlf, as in MAME's own):
   z180ops.h    the instruction helper macros (flags, ALU, block ops, SLP, ...)
   z180tbl.h    the cycle tables and flag tables
   z180op.hxx   the unprefixed opcodes
