@@ -568,6 +568,86 @@ static void t_asci_efr(void)
     free_machine(m);
 }
 
+/* ---- MAME's e0deaf3898b, one test per hunk (Astra, Reply 92): each fails with its hunk reverted ------------- */
+
+/* Enabling a timer starts it from RLDR: no overflow within a few ticks (reverted: from 0, TIF at the first tick). */
+static void t_timer_start(void)
+{
+    machine *m = new_machine();
+    char d[160];
+    int i;
+    org(m, 0);
+    out0(m, 0x0E, 0x00);                        /* RLDR0 = 0100h */
+    out0(m, 0x0F, 0x01);
+    out0(m, 0x10, 0x01);                        /* TCR: TDE0 */
+    for (i = 0; i < 8; i++)
+        db(m, 1, 0x00);                         /* NOPs: a few ticks */
+    db(m, 3, 0xED, 0x38, 0x10);                 /* IN0 A,(TCR) */
+    st_a(m, 0x9000);
+    db(m, 1, 0x76);
+    z180_run(m->cpu, 2000);
+    sprintf(d, "TCR after ~%d ticks: %02X (want TIF0 40h clear: counting down from RLDR)", 150 / 20, m->mem[0x9000]);
+    report("timer_start", !(m->mem[0x9000] & 0x40), d);
+    free_machine(m);
+}
+
+/* TMDR1H is the counter's high byte (reverted: written into the low half). */
+static void t_tmdr1h(void)
+{
+    machine *m = new_machine();
+    char d[160];
+    org(m, 0);
+    out0(m, 0x15, 0x12);                        /* TMDR1H, timer 1 stopped */
+    out0(m, 0x14, 0x34);                        /* TMDR1L */
+    db(m, 3, 0xED, 0x38, 0x14);                 /* IN0 A,(TMDR1L) */
+    st_a(m, 0x9000);
+    db(m, 3, 0xED, 0x38, 0x15);                 /* IN0 A,(TMDR1H) */
+    st_a(m, 0x9001);
+    db(m, 1, 0x76);
+    z180_run(m->cpu, 2000);
+    sprintf(d, "TMDR1 reads %02X%02X (want 1234)", m->mem[0x9001], m->mem[0x9000]);
+    report("tmdr1h", m->mem[0x9001] == 0x12 && m->mem[0x9000] == 0x34, d);
+    free_machine(m);
+}
+
+/* A DMA0 terminal-count interrupt raised while IFF1 = 0 is kept, and taken only after EI and its shadow (reverted
+   DMA hunk: dropped; reverted gating hunk: taken while interrupts are disabled). */
+static void t_dma_done_di(void)
+{
+    machine *m = new_machine();
+    char d[240];
+    int i, taken, ei_nop;
+    org(m, 0);
+    ld_sp(m, 0x8000);
+    db(m, 1, 0xF3);                             /* DI */
+    out0(m, 0x33, 0x40);                        /* IL: vectors at 0040h (I = 0); DMA0's at 0048h */
+    out0(m, 0x20, 0x00); out0(m, 0x21, 0x10); out0(m, 0x22, 0x00);   /* SAR0 = 01000h */
+    out0(m, 0x23, 0x00); out0(m, 0x24, 0x20); out0(m, 0x25, 0x00);   /* DAR0 = 02000h */
+    out0(m, 0x26, 4); out0(m, 0x27, 0x00);                           /* BCR0 = 4 */
+    out0(m, 0x31, 0x02);                                             /* DMODE: burst */
+    out0(m, 0x30, 0x44);                                             /* DSTAT: DE0 | DIE0 */
+    for (i = 0; i < 6; i++)
+        db(m, 1, 0x00);                         /* the DMA is done here, interrupts still disabled */
+    db(m, 2, 0x3E, 0x11);
+    st_a(m, 0x9001);                            /* reached with the request pending but not taken */
+    db(m, 1, 0xFB);                             /* EI */
+    ei_nop = m->pos;
+    db(m, 3, 0x00, 0x00, 0x76);                 /* NOP (the shadow), NOP, HALT */
+    org(m, 0x48);
+    db(m, 2, 0x00, 0x02);                       /* DMA0 vector -> 0200h */
+    org(m, 0x200);
+    db(m, 2, 0x3E, 0x77);
+    st_a(m, 0x9000);
+    db(m, 1, 0x76);
+    z180_run(m->cpu, 20000);
+    taken = first_step_at(m, 0x200);
+    sprintf(d, "before EI: (9001h) = %02X; handler (9000h) = %02X; the NOP after EI at step %d, handler at step %d",
+            m->mem[0x9001], m->mem[0x9000], first_step_at(m, (uint32_t)ei_nop), taken);
+    report("dma_done_di", m->mem[0x9001] == 0x11 && m->mem[0x9000] == 0x77
+                          && first_step_at(m, (uint32_t)ei_nop) > 0 && taken == first_step_at(m, (uint32_t)ei_nop) + 1, d);
+    free_machine(m);
+}
+
 int main(void)
 {
     t_zero_budget();
@@ -583,6 +663,9 @@ int main(void)
     t_sleep_dma();
     t_accept_pc();
     t_asci_efr();
+    t_timer_start();
+    t_tmdr1h();
+    t_dma_done_di();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

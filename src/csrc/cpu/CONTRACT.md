@@ -190,9 +190,12 @@ controls, each undoing one driver rule, are `contract_controls.py`):
 - refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
 - the 8085's INTR injected instructions (with its core);
 - TRAP (Z180: ITC.TRAP/UFO, the stacked PC, legal prefixed instructions as negative controls), with its
-  implementation;
-- one targeted test per extra hunk of MAME's e0deaf3898b (TMDR1H readback, DMA completion while IFF1 = 0, DMA1
-  edge/level, internal IRQ gating), each failing with its hunk reverted.
+  implementation.
+
+**MAME's e0deaf3898b, one test per hunk** (each fails with its hunk reverted in `contract_controls.py`):
+`timer_start` (enabling starts from RLDR), `tmdr1h` (TMDR1H is the high byte), `dma_done_di` (a DMA0 completion
+while IFF1 = 0 is kept, and taken only after EI and its shadow: the DMA hunk and the internal-IRQ gating hunk), and
+`dma1_level` in `test_z180_whitebox.cpp` (/DREQ1's edge or level sense is DMS1; cpu.h has no DREQ lines).
 
 Acceptance per core:
 - **The z180emu adapter (legacy path)**: the Braille Lite goldens, English and Spanish, bit for bit, through

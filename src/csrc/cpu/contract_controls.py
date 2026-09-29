@@ -41,6 +41,24 @@ VARIANTS = {
         "", ["accept_pc"]),
     "EFR = 0 clears": (
         "z180_asci.cpp", "    if (!(data & CNTLA_EFR))", "    if (data & CNTLA_EFR)", ["asci_efr"]),
+    # MAME's e0deaf3898b, each hunk reverted in the generated machine file (Astra, Reply 92)
+    "e0deaf: timer from RLDR": (
+        "z180_mame_machine.cpp", "Z180_TCR_TDE0))\n\t\t\t\tm_tmdr_value[0] = m_rldr[0].w;",
+        "Z180_TCR_TDE0))\n\t\t\t\tm_tmdr_value[0] = 0;", ["timer_start", "iostop"]),
+    "e0deaf: TMDR1H shift": (
+        "z180_mame_machine.cpp", "m_tmdr_value[1] = (m_tmdr_value[1] & 0x00ff) | (m_tmdr[1].b.h << 8);",
+        "m_tmdr_value[1] = (m_tmdr_value[1] & 0x00ff) | m_tmdr[1].b.h;", ["tmdr1h"]),
+    "e0deaf: DMA0 IRQ kept": (
+        "z180_mame_machine.cpp", "\t\tif (m_dstat & Z180_DSTAT_DIE0)\n", "\t\tif (m_dstat & Z180_DSTAT_DIE0 && m_IFF1)\n",
+        ["dma_done_di"]),
+    "e0deaf: DMA1 edge = DMS1": (
+        "z180_mame_machine.cpp", "\tif (m_dcntl & Z180_DCNTL_DMS1)\n", "\tif (m_dcntl & Z180_DCNTL_DIM1)\n",
+        ["dma1_level"]),
+    "e0deaf: internal IRQ gating": (
+        "z180_mame_machine.cpp",
+        "\t\tm_int_pending[Z180_INT_ASCI1] = m_asci[1]->check_interrupt();\n\n\t\tfor (int i = 0;",
+        "\t\tm_int_pending[Z180_INT_ASCI1] = m_asci[1]->check_interrupt();\n\t}\n\t{\n\t\tfor (int i = 0;",
+        ["dma_done_di"]),
 }
 
 
@@ -55,11 +73,18 @@ def build(src_dir, out_exe, env, bindir):
                        env=env, check=True)
         objs.append(o)
     subprocess.run([os.path.join(bindir, "g++"), "-o", out_exe] + objs, env=env, check=True)
+    # the white-box tests include the core themselves
+    subprocess.run([os.path.join(bindir, "g++"), "-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti"] + inc
+                   + ["-o", out_exe + "_wb", os.path.join(src_dir, "test_z180_whitebox.cpp"),
+                      os.path.join(src_dir, "z180_asci.cpp")], env=env, check=True)
 
 
 def failing(exe):
-    out = subprocess.run([exe], capture_output=True, text=True).stdout
-    return [ln.split()[1] for ln in out.splitlines() if ln.startswith("FAIL ")]
+    f = []
+    for e in (exe, exe + "_wb"):
+        out = subprocess.run([e], capture_output=True, text=True).stdout
+        f += [ln.split()[1] for ln in out.splitlines() if ln.startswith("FAIL ")]
+    return f
 
 
 def main():

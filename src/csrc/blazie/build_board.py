@@ -59,6 +59,10 @@ def build_mame(gcc, env):
     # the CPU contract's tests (no board): ../cpu/test_z180_contract.c
     subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, "test_z180_contract.exe"), objs["test_z180_contract"],
                                         objs["z180_mame"], objs["z180_asci"]], env=env, check=True)
+    # the white-box tests (they include the core): ../cpu/test_z180_whitebox.cpp
+    subprocess.run([gxx] + MAME_CXX + MAME_LINK + inc + ["-o", os.path.join(OUT, "test_z180_whitebox.exe"),
+                                                         os.path.join(cpu, "test_z180_whitebox.cpp"), objs["z180_asci"]],
+                   env=env, check=True)
 
 
 def main():
