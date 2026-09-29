@@ -1,0 +1,92 @@
+# Robovox default note -> phoneme map (phoneme MIDI channel N)
+#
+# REFERENCE ONLY. This file documents the key layout compiled into the
+# VST (robovox_default_table in emu/robovox_firmware.h). The plugin does
+# not read it -- there is nothing to install or keep next to the .vst3.
+# A custom layout becomes a UI feature (Phase-2 PEC-style editor), not
+# a sidecar file.
+#
+# Note names use C4 = middle C = MIDI 60 (scientific pitch notation /
+# Yamaha / MMA convention: octave = (midi_number // 12) - 1, e.g.
+# 60 -> C4, 69 -> A4). Some DAWs label differently (Ableton/Cubase call
+# 60 C3, FL Studio calls it C5) -- shift every octave digit here by -1
+# or +1 to match those; the MIDI numbers are what the VST receives.
+# (The Polaxis manual writes note 36 as "C1", i.e. the C3=60 convention;
+# that is C2 here. Same key, different label.)
+#
+# Range is the patent's Fig. 2 span: notes 36-93 for the chip's 54
+# phonemes in chip-code order (dark->bright vowels, voiced stops,
+# unvoiced stops, holds, fricatives, nasals, German vowels). Notes
+# 90-93 (F#6-A6) are the patent's 4 spare keys and map to PA (silence).
+# All other notes are unmapped and ignored on the phoneme channel.
+#
+# NOTE: the Polaxis hardware anchors note 36 = U (code 0x16), i.e. its
+# table is arranged phonetically, not in chip order. Until the patent's
+# Fig. 2 keyboard print is transcribed, this chip-order table is the
+# default. Generated from the firmware -- do not hand-edit the lines
+# below without updating the code (and note_map.txt stays
+# documentation, not input).
+#
+# Phoneme mnemonics are the SC-02 die-ROM order (see
+# third_party/casso/CassoEmuCore/Devices/Ssi263.cpp): PA E E1 Y YI AY
+# IE I A AI EH EH1 AE AE1 AH AH1 AW O OU OO IU IU1 U U1 UH UH1 UH2 UH3
+# ER R R1 R2 L L1 LF W B D KV P T K HV HVC HF HFC HN Z S J SCH V F THV
+# TH M N NG :A :OH :U :UH E2 LB.
+C2=E
+C#2=E1
+D2=Y
+D#2=YI
+E2=AY
+F2=IE
+F#2=I
+G2=A
+G#2=AI
+A2=EH
+A#2=EH1
+B2=AE
+C3=AE1
+C#3=AH
+D3=AH1
+D#3=AW
+E3=O
+F3=OU
+F#3=OO
+G3=IU
+G#3=IU1
+A3=U
+A#3=U1
+B3=UH
+C4=UH1
+C#4=UH2
+D4=UH3
+D#4=ER
+E4=R
+F4=R1
+F#4=R2
+G4=L
+G#4=L1
+A4=LF
+A#4=W
+B4=B
+C5=D
+C#5=KV
+D5=P
+D#5=T
+E5=K
+F5=HV
+F#5=HVC
+G5=HF
+G#5=HFC
+A5=HN
+A#5=Z
+B5=S
+C6=J
+C#6=SCH
+D6=V
+D#6=F
+E6=THV
+F6=TH
+F#6=PA
+G6=PA
+G#6=PA
+A6=PA
