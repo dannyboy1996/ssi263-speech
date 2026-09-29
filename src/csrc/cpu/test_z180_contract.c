@@ -37,9 +37,18 @@ typedef struct {
     uint32_t wr_addr[16], wr_pc[16];           /* memory writes at 8000h and above: address, z180_pc() then */
     int n_wr;
     int rx_on;                                 /* serial_rx answers 55h on channel 0 */
+    int log_reads;                             /* record every read address (fetches included) while set */
+    uint32_t rd_addr[32];
+    int n_rd;
 } machine;
 
-static uint8_t rd(void *ctx, uint32_t a) { return ((machine *)ctx)->mem[a & 0xFFFF]; }
+static uint8_t rd(void *ctx, uint32_t a)
+{
+    machine *m = (machine *)ctx;
+    if (m->log_reads && m->n_rd < 32)
+        m->rd_addr[m->n_rd++] = a & 0xFFFF;
+    return m->mem[a & 0xFFFF];
+}
 static void wr(void *ctx, uint32_t a, uint8_t v)
 {
     machine *m = (machine *)ctx;
@@ -406,10 +415,10 @@ static machine *im0_program(int b0, int b1, int b2)
 
 static void t_im0(void)
 {
-    static const struct { const char *name; int b0, b1, b2; int acks; uint32_t pc_after, sp_after; } cases[] = {
-        {"im0_nop", 0x00, 0, 0, 1, 0x0007, 0x9000},     /* nothing pushed, nothing jumped: on at 0007h */
-        {"im0_rst", 0xC7, 0, 0, 1, 0x0000, 0x8FFE},     /* RST 0: pushes 0007h, to 0000h */
-        {"im0_call", 0xCD, 0x34, 0x12, 3, 0x1234, 0x8FFE},   /* CALL 1234h: three acknowledge bytes */
+    static const struct { const char *name; int b0, b1, b2; int acks; uint32_t pc_after, sp_after; int t; } cases[] = {
+        {"im0_nop", 0x00, 0, 0, 1, 0x0007, 0x9000, 5},     /* nothing pushed, nothing jumped: on at 0007h */
+        {"im0_rst", 0xC7, 0, 0, 1, 0x0000, 0x8FFE, 19},     /* RST 0: pushes 0007h, to 0000h */
+        {"im0_call", 0xCD, 0x34, 0x12, 3, 0x1234, 0x8FFE, 24},   /* CALL 1234h: three acknowledge bytes */
     };
     int k;
     for (k = 0; k < 3; k++) {
@@ -433,7 +442,7 @@ static void t_im0(void)
                     : (m->n_wr == 2 && m->mem[0x8FFE] == 0x07 && m->mem[0x8FFF] == 0x00);
         z180_step(m->cpu);                      /* step 6: its boundary is the next instruction */
         ok = acks_ok && pushed_ok && r.pc == cases[k].pc_after && r.sp == cases[k].sp_after && r.iff1 == 0
-             && m->pcs[5] == cases[k].pc_after && m->pcs[4] == 0x0007;
+             && m->pcs[5] == cases[k].pc_after && m->pcs[4] == 0x0007 && t5 == cases[k].t;
         sprintf(d, "acknowledge bytes read %d (indices from 0: %s), PC %04X SP %04X, stack writes %d "
                 "(pushed %02X%02X), IFF1 %d, step 5 took %d T; step 5 boundary %04X, step 6 boundary %04X",
                 m->n_ack, acks_ok ? "yes" : "no", r.pc, r.sp, m->n_wr, m->mem[0x8FFF], m->mem[0x8FFE], r.iff1, t5,
@@ -728,6 +737,164 @@ static void t_trap(void)
     }
 }
 
+/* ---- after Astra, Reply 93/94 -------------------------------------------------------------------------------- */
+
+/* The injected instruction's timing and R (printed pp. 76 and 177): with programmed waits off an injected RST is
+   13 T (T1 T2 TW* TW* T3, Ti Ti, two push cycles); each acknowledge is one M1 (R + 1); a prefixed injected
+   instruction keeps the PC and counts its second op code fetch too; an undefined one TRAPs, stacking the PC the
+   interrupt found. */
+static void t_im0_more(void)
+{
+    static const struct { const char *name; int n, b[4]; int t, r, pc, sp, trap; } cases[] = {
+        {"im0_rst_nowait", 1, {0xC7}, 13, 1, 0x0000, 0x8FFE, 0},
+        {"im0_nop_nowait", 1, {0x00}, 5, 1, 0x000C, 0x9000, 0},
+        {"im0_prefixed", 4, {0xDD, 0x21, 0x34, 0x12}, -1, 2, 0x000C, 0x9000, 0},   /* LD IX,1234h */
+        {"im0_undefined", 2, {0xDD, 0x00}, -1, 2, 0x0000, 0x8FFE, 1},
+    };
+    int k;
+    for (k = 0; k < (int)(sizeof cases / sizeof cases[0]); k++) {
+        machine *m = new_machine();
+        z180_regs r0, r1;
+        char d[220];
+        int i, t = 0, ok;
+        org(m, 0);
+        out0(m, 0x32, 0x00);                    /* 0000 DCNTL: no programmed wait states */
+        ld_sp(m, 0x9000);                       /* 0005 */
+        db(m, 2, 0xED, 0x46);                   /* 0008 IM 0 */
+        db(m, 1, 0xFB);                         /* 000A EI */
+        for (i = 0; i < 6; i++)
+            db(m, 1, 0x00);                     /* 000B.. NOPs; the interrupted instruction is at 000Ch */
+        for (i = 0; i < 4; i++)
+            m->ack[i] = cases[k].b[i];
+        z180_set_irq(m->cpu, Z180_INT0, 1);
+        for (i = 1; i <= 5; i++)                /* LD A; OUT0; LD SP; IM 0; EI */
+            z180_step(m->cpu);
+        z180_step(m->cpu);                      /* the NOP in EI's shadow (at 000B) */
+        z180_regs_get(m->cpu, &r0);
+        t = z180_step(m->cpu);                  /* accepts, runs the injected instruction */
+        z180_regs_get(m->cpu, &r1);
+        ok = ((r1.r - r0.r) & 0x7F) == cases[k].r && r1.pc == cases[k].pc && r1.sp == cases[k].sp
+             && (cases[k].t < 0 || t == cases[k].t);
+        if (cases[k].trap)
+            ok = ok && m->mem[0x8FFF] == 0x00 && m->mem[0x8FFE] == 0x0C;   /* the PC the interrupt found */
+        if (cases[k].b[0] == 0xDD && cases[k].b[1] == 0x21)
+            ok = ok && r1.ix == 0x1234;
+        sprintf(d, "%d T, R +%d, PC %04X, SP %04X, IX %04X, stacked %02X%02X", t, (r1.r - r0.r) & 0x7F, r1.pc, r1.sp,
+                r1.ix, m->mem[0x8FFF], m->mem[0x8FFE]);
+        report(cases[k].name, ok, d);
+        free_machine(m);
+    }
+}
+
+/* TRAP on the bus (printed pp. 71-72, Figures 32 and 33), programmed waits off, IX = 3000h: the cycles, the R
+   count, the reads, and the stack written PCH to SP-1 first. */
+static void t_trap_bus(void)
+{
+    static const struct { const char *name; int n, b[4]; int t, r, read3005, trap; } cases[] = {
+        {"trapbus_2nd", 2, {0xDD, 0x24}, 18, 2, 0, 1},
+        {"trapbus_3rd", 4, {0xDD, 0xCB, 0x05, 0x00}, 26, 3, 1, 1},
+        {"trapbus_legal_ddcb", 4, {0xDD, 0xCB, 0x05, 0x06}, -1, 3, 1, 0},   /* RLC (IX+5): the control */
+    };
+    int k;
+    for (k = 0; k < (int)(sizeof cases / sizeof cases[0]); k++) {
+        machine *m = new_machine();
+        z180_regs r0, r1;
+        char d[240];
+        int i, t, reads_ixd = 0, ok;
+        org(m, 0x0100);
+        for (i = 0; i < cases[k].n; i++)
+            db(m, 1, cases[k].b[i]);            /* the instruction under test at 0100h */
+        db(m, 1, 0x76);
+        org(m, 0);
+        out0(m, 0x32, 0x00);                    /* DCNTL: no programmed waits */
+        ld_sp(m, 0x9000);
+        db(m, 4, 0xDD, 0x21, 0x00, 0x30);       /* LD IX,3000h */
+        db(m, 3, 0xC3, 0x00, 0x01);             /* JP 0100h */
+        for (i = 0; i < 5; i++)
+            z180_step(m->cpu);
+        z180_regs_get(m->cpu, &r0);
+        m->log_reads = 1;
+        m->n_wr = 0;
+        t = z180_step(m->cpu);
+        m->log_reads = 0;
+        z180_regs_get(m->cpu, &r1);
+        for (i = 0; i < m->n_rd; i++)
+            reads_ixd += m->rd_addr[i] == 0x3005;
+        ok = r0.pc == 0x0100 && ((r1.r - r0.r) & 0x7F) == cases[k].r && reads_ixd == cases[k].read3005
+             && (cases[k].t < 0 || t == cases[k].t);
+        if (cases[k].trap)
+            ok = ok && r1.pc == 0x0000 && m->n_wr == 2 && m->wr_addr[0] == 0x8FFF && m->wr_addr[1] == 0x8FFE;
+        sprintf(d, "%d T (want %d), R +%d, %d read(s) of IX+d, %d reads in all; stack writes %d: %04X then %04X",
+                t, cases[k].t, (r1.r - r0.r) & 0x7F, reads_ixd, m->n_rd, m->n_wr, m->n_wr > 0 ? m->wr_addr[0] : 0,
+                m->n_wr > 1 ? m->wr_addr[1] : 0);
+        report(cases[k].name, ok, d);
+        free_machine(m);
+    }
+}
+
+/* Fixed priority, PRT0 above DMA0 (Figure 31), when both wait under DI: a PRT0 overflow (TIF0, TIE0; the timer
+   then stopped) and a finished DMA0 (DIE0).  After EI and its shadow PRT0 must be taken, in every one of 20
+   timer-clock phases (Astra's fixture: it won in 3 of 20).  With TIF0 cleared by software first (read TCR, then
+   TMDR0L), DMA0 must be taken: no stale request survives its flag. */
+static int priority_run(int phase, int clear_tif)
+{
+    machine *m = new_machine();
+    int i, got;
+    org(m, 0);
+    out0(m, 0x32, 0x00);                        /* no programmed waits */
+    ld_sp(m, 0x8000);
+    db(m, 1, 0xF3);                             /* DI */
+    out0(m, 0x33, 0xE0);                        /* IL: PRT0 at 00E4h, DMA0 at 00E8h (past the code) */
+    out0(m, 0x0E, 0x02); out0(m, 0x0F, 0x00);   /* RLDR0 = 2 */
+    out0(m, 0x10, 0x11);                        /* TCR: TIE0 | TDE0 */
+    db(m, 4, 0x06, 0x10, 0x10, 0xFE);           /* LD B,16; DJNZ $: well past the first overflow */
+    out0(m, 0x10, 0x10);                        /* TCR: TIE0 only -- the timer stops, TIF0 stays */
+    out0(m, 0x20, 0x00); out0(m, 0x21, 0x10); out0(m, 0x22, 0x00);   /* DMA0 1000h -> 2000h, 2 bytes, burst */
+    out0(m, 0x23, 0x00); out0(m, 0x24, 0x20); out0(m, 0x25, 0x00);
+    out0(m, 0x26, 2); out0(m, 0x27, 0x00);
+    out0(m, 0x31, 0x02);
+    out0(m, 0x30, 0x44);                        /* DE0 | DIE0 */
+    for (i = 0; i < phase; i++)
+        db(m, 1, 0x00);                         /* the phase: 0-19 NOPs */
+    if (clear_tif) {
+        db(m, 3, 0xED, 0x38, 0x10);             /* IN0 A,(TCR) */
+        db(m, 3, 0xED, 0x38, 0x0C);             /* IN0 A,(TMDR0L): TIF0 cleared */
+    }
+    db(m, 1, 0xFB);                             /* EI */
+    db(m, 3, 0x00, 0x00, 0x76);
+    org(m, 0xE4); db(m, 2, 0x00, 0x06);
+    org(m, 0xE8); db(m, 2, 0x00, 0x07);
+    org(m, 0x600); db(m, 2, 0x3E, 0x01); st_a(m, 0x9000); db(m, 1, 0x76);
+    org(m, 0x700); db(m, 2, 0x3E, 0x02); st_a(m, 0x9000); db(m, 1, 0x76);
+    z180_run(m->cpu, 20000);
+    got = m->mem[0x9000];
+    if (getenv("PRIORITY_DEBUG") && phase == 0) {
+        z180_regs r;
+        z180_regs_get(m->cpu, &r);
+        printf("  debug: pc %04X iff1 %d halted %d; copied %02X %02X; sp %04X top %02X%02X\n", r.pc, r.iff1, r.halted,
+               m->mem[0x2000], m->mem[0x2001], r.sp, m->mem[(r.sp + 1) & 0xFFFF], m->mem[r.sp]);
+    }
+    free_machine(m);
+    return got;
+}
+
+static void t_priority(void)
+{
+    char d[200];
+    int ph, prt = 0, dma = 0, other = 0, cleared_dma = 0;
+    for (ph = 0; ph < 20; ph++) {
+        int g = priority_run(ph, 0);
+        prt += g == 1;
+        dma += g == 2;
+        other += g != 1 && g != 2;
+        cleared_dma += priority_run(ph, 1) == 2;
+    }
+    sprintf(d, "both waiting: PRT0 taken in %d of 20 phases (DMA0 %d, other %d); TIF0 cleared first: DMA0 in %d of 20",
+            prt, dma, other, cleared_dma);
+    report("prt_priority", prt == 20, d);
+    report("prt_stale", cleared_dma == 20, d);
+}
+
 int main(void)
 {
     t_zero_budget();
@@ -747,6 +914,9 @@ int main(void)
     t_tmdr1h();
     t_dma_done_di();
     t_trap();
+    t_im0_more();
+    t_trap_bus();
+    t_priority();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

@@ -70,21 +70,43 @@ static int z180_op_length(uint8_t op)
 }
 
 // Phase E after an IM0 acceptance (CONTRACT.md 4): the step's one instruction comes from the acknowledge -- byte 0
-// the opcode, then any operands -- and does its own control transfer: an RST or a CALL pushes the interrupted PC
-// as that instruction does; a NOP pushes nothing.  No ordinary instruction follows in this step.  Its T-states
-// are the instruction's own (MAME's cycle table, plus wait states).  CHANGED from MAME, whose take_interrupt pushes
-// for any byte but CALL and JP and reads only one acknowledge byte.  A prefixed opcode (CB, DD, ED, FD) is run
-// through the same path, but its PC is not held (a known limit; no board injects one).
+// the opcode, then any operands and further op codes -- and does its own control transfer: an RST or a CALL pushes
+// the interrupted PC as that instruction does; a NOP pushes nothing.  No ordinary instruction follows in this step.
+// CHANGED from MAME, whose take_interrupt pushes for any byte but CALL and JP and reads only one acknowledge byte.
+//
+// The PC is held: an unprefixed opcode's operands are known from its length, so the PC is set back by them first
+// (an RST or CALL then pushes the interrupted address); a prefixed one never pushes the PC, so it is restored after,
+// unless the instruction moved it (JP (IX), RETN/RETI).  An undefined prefixed form TRAPs (the manual: "if an
+// invalid instruction is fetched during Mode 0 interrupt acknowledge"), stacking the interrupted PC (model).
+//
+// T-states (Zilog UM, printed page 76, Figure 36: the INT0 acknowledge cycle is T1 T2 TW* TW* T3, the two wait
+// states automatic): the instruction's own, with its 3-T opcode fetch replaced by that 5-T cycle -- an RST is
+// 5 + 2 Ti + 6 (push) = 13, as the figure.  Acknowledge bytes take no programmed memory waits (the fetch helpers'
+// charges for them are taken back); the instruction's real memory accesses (the pushes) keep theirs.
+// R counts the acknowledge's M1 cycle ("R increments for each CPU Op Code fetch cycle (each M1 cycle)", page 177),
+// and the prefixed forms' further op code fetches as ordinary fetches do.
 int z180_device::drv_injected_instruction()
 {
     m_inject.n = 0;
     m_inject.on = 1;
-    uint8_t op = z180_ack_byte(m_bus, &m_inject);
-    _PCD = (_PCD - (z180_op_length(op) - 1)) & 0xffff;
+    m_inject_pc0 = _PCD;
+    m_R++;                                // the acknowledge cycle is an M1 cycle
     m_extra_cycles = 0;
-    int t = exec_op(op);
+    uint8_t op = z180_ack_byte(m_bus, &m_inject);
+    int t;
+    if (op == 0xcb || op == 0xdd || op == 0xed || op == 0xfd) {
+        t = drv_dispatch(op);
+        if (!m_inject_trapped && ((_PCD - m_inject.n + 1) & 0xffff) == m_inject_pc0)
+            _PCD = m_inject_pc0;          // no control transfer: the PC is where the interrupt found it
+    } else {
+        _PCD = (_PCD - (z180_op_length(op) - 1)) & 0xffff;
+        t = exec_op(op) + m_extra_cycles;
+    }
+    t += 5 - 3;                           // the acknowledge cycle in place of the opcode fetch
+    t -= (m_inject.n - 1) * memory_wait_states();   // acknowledge bytes 1.. were charged memory waits by ROP/ARG
     m_inject.on = 0;
-    return t + m_extra_cycles;
+    m_inject_trapped = 0;
+    return t;
 }
 
 bool z180_device::drv_sleep_wake_request()
@@ -137,42 +159,54 @@ int z180_device::drv_instruction()
     _PPC = _PCD;
     m_R++;
     m_extra_cycles = 0;
-    uint8_t op = ROP();
-    // CHANGED: the prefixes are dispatched here, as MAME's op_cb/op_dd/op_ed/op_fd and dd_cb/fd_cb do, so that an
-    // opcode the Z180 does not define (z180_trap.hpp) TRAPs at its fetch instead of running MAME's Z80 form.
+    return drv_dispatch(ROP());
+}
+
+// CHANGED: the prefixes are dispatched here, as MAME's op_cb/op_dd/op_ed/op_fd and dd_cb/fd_cb do (their R
+// increments and cycle-table terms included), so that an opcode the Z180 does not define (z180_trap.hpp) TRAPs at
+// its fetch instead of running MAME's Z80 form.  R counts each op code fetch (M1) as it happens, a trapped one
+// too (page 177).  `op` has been fetched (and counted) by the caller.  During an injected instruction the fetches
+// read the acknowledge (z180_inject).
+int z180_device::drv_dispatch(uint8_t op)
+{
     switch (op) {
     case 0xcb: {
         uint8_t b2 = ROP();
-        if (!z180_trap::cb_defined(b2))
-            return drv_trap(false, 2);
         m_R++;
+        if (!z180_trap::cb_defined(b2))
+            return drv_trap(false);
         m_extra_cycles += exec_cb(b2);
         return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
     }
     case 0xed: {
         uint8_t b2 = ROP();
-        if (!z180_trap::ed_defined(b2))
-            return drv_trap(false, 2);
         m_R++;
+        if (!z180_trap::ed_defined(b2))
+            return drv_trap(false);
         m_extra_cycles += exec_ed(b2);
         return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
     }
     case 0xdd:
     case 0xfd: {
         uint8_t b2 = ROP();
+        m_R++;
         if (!z180_trap::xy_defined(b2))
-            return drv_trap(false, 2);
+            return drv_trap(false);
         if (b2 != 0xcb) {
-            m_R++;
             m_extra_cycles += op == 0xdd ? exec_dd(b2) : exec_fd(b2);
+            // CHANGED: every defined DD/FD body adds its own m_R++ on top of op_dd's (checked: one in each), so
+            // MAME counts DD xx three times; the manual counts op code fetches (M1): DD and xx, two
+            m_R--;
             return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
         }
-        m_R += 2;                         // op_dd's, then dd_cb's
+        m_R++;                            // dd_cb's: DD, CB and the 4th byte are op code fetches (Figure 33), three
         uint8_t d = ARG();
         uint8_t b4 = ROP();
-        if (!z180_trap::xycb_defined(b4))
-            return drv_trap(true, 4);
         m_ea = (uint32_t)(uint16_t)((op == 0xdd ? _IX : _IY) + (int8_t)d);   // EAX() / EAY()
+        if (!z180_trap::xycb_defined(b4)) {
+            RM(m_ea);                     // Figure 33: the memory read at IX+d / IY+d comes before the stacking
+            return drv_trap(true);
+        }
         m_extra_cycles += exec_xycb(b4);
         return m_cc[Z180_TABLE_op][op] + m_cc[Z180_TABLE_xy][0xcb] + m_extra_cycles;
     }
@@ -181,18 +215,27 @@ int z180_device::drv_instruction()
     }
 }
 
-// TRAP (Zilog UM, printed pages 70-71): ITC.TRAP set; UFO = 1 when the undefined byte was the third op code
+// TRAP (Zilog UM, printed pages 70-72): ITC.TRAP set; UFO = 1 when the undefined byte was the third op code
 // (DDCB/FDCB), else 0; the PC is stacked so that the instruction starts at the stacked PC - 1 (UFO 0) or - 2
 // (UFO 1); execution restarts at logical 0000h.  IEF1/IEF2 are not affected (the manual's Table 8); TRAP is not
-// maskable.  T-states (Figure 32's machine cycles, the 3rd-byte case approximated the same way): 3 for each op
-// code byte fetched, 3 internal, 6 for the two stack writes, plus the fetches' and writes' wait states.
-int z180_device::drv_trap(bool ufo, int bytes_fetched)
+// maskable.  In the contract's phases it is the step's own instruction: found at E, charged at F.
+//   Figure 32 (2nd op code): fetches 3 + 3, six states (TTP and five Ti), stacking 3 + 3 = 18 T.
+//   Figure 33 (3rd op code): fetches DD, CB, d, op 3 each, the read at IX+d 4 (T1 T2 TTP T3), four states,
+//   stacking 6 = 26 T.  Plus the programmed memory waits of every fetch, read and write (charged by the helpers).
+// The stack is written as the figures show: PCH to SP-1 first, then PCL to SP-2.  (Elsewhere -- CALL, RST, the
+// interrupt pushes -- MAME's PUSH writes the low byte first: the bytes are right, the bus order is not; a known
+// approximation.)  An injected undefined instruction stacks the PC the interrupt found (model).
+int z180_device::drv_trap(bool ufo)
 {
     m_itc = (uint8_t)((m_itc | Z180_ITC_TRAP) & ~Z180_ITC_UFO) | (ufo ? Z180_ITC_UFO : 0);
-    _PCD = (_PCD - (ufo ? 2 : 1)) & 0xffff;   // UFO 0: the undefined 2nd byte's address; UFO 1: the displacement's
-    PUSH( PC );
+    uint16_t stacked = m_inject.on ? (uint16_t)m_inject_pc0 : (uint16_t)((_PCD - (ufo ? 2 : 1)) & 0xffff);
+    if (m_inject.on)
+        m_inject_trapped = 1;
+    _SP -= 2;
+    WM((_SPD + 1) & 0xffff, (uint8_t)(stacked >> 8));
+    WM(_SPD, (uint8_t)stacked);
     _PCD = 0x0000;
-    return 3 * bytes_fetched + 3 + 6 + m_extra_cycles;
+    return (ufo ? 3 * 4 + 4 + 4 + 6 : 3 * 2 + 6 + 6) + m_extra_cycles;
 }
 
 int z180_device::drv_burst_chunk()

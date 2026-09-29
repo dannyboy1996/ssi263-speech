@@ -1517,6 +1517,12 @@ int z180_device::check_interrupts()
 		if (m_irq_state[2] != CLEAR_LINE && (m_itc & Z180_ITC_ITE2) == Z180_ITC_ITE2)
 			m_int_pending[Z180_INT_IRQ2] = 1;
 
+		// CHANGED: the PRT requests are levels of TIF and TIE, taken here before the priority choice as the
+		// ASCI's and CSIO's are (clock_timers cached them only if a timer clock fell while IFF1 was set and no EI
+		// shadow was on, so a lower source such as DMA0 could win over a waiting timer: Astra, Reply 94); a
+		// cleared TIF drops its request
+		m_int_pending[Z180_INT_PRT0] = (m_tcr & Z180_TCR_TIE0) && (m_tcr & Z180_TCR_TIF0);
+		m_int_pending[Z180_INT_PRT1] = (m_tcr & Z180_TCR_TIE1) && (m_tcr & Z180_TCR_TIF1);
 		m_int_pending[Z180_INT_CSIO] = m_csio->check_interrupt();
 		m_int_pending[Z180_INT_ASCI0] = m_asci[0]->check_interrupt();
 		m_int_pending[Z180_INT_ASCI1] = m_asci[1]->check_interrupt();

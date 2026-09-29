@@ -55,6 +55,15 @@ SUBS = [
      "\t\tm_itc = (m_itc & Z180_ITC_UFO) | (m_itc & data & Z180_ITC_TRAP)\n"
      "\t\t        | (data & Z180_ITC_MASK & ~(Z180_ITC_UFO | Z180_ITC_TRAP));",
      "ITC's TRAP bit"),
+    ("\t\tm_int_pending[Z180_INT_CSIO] = m_csio->check_interrupt();",
+     "\t\t// CHANGED: the PRT requests are levels of TIF and TIE, taken here before the priority choice as the\n"
+     "\t\t// ASCI's and CSIO's are (clock_timers cached them only if a timer clock fell while IFF1 was set and no EI\n"
+     "\t\t// shadow was on, so a lower source such as DMA0 could win over a waiting timer: Astra, Reply 94); a\n"
+     "\t\t// cleared TIF drops its request\n"
+     "\t\tm_int_pending[Z180_INT_PRT0] = (m_tcr & Z180_TCR_TIE0) && (m_tcr & Z180_TCR_TIF0);\n"
+     "\t\tm_int_pending[Z180_INT_PRT1] = (m_tcr & Z180_TCR_TIE1) && (m_tcr & Z180_TCR_TIF1);\n"
+     "\t\tm_int_pending[Z180_INT_CSIO] = m_csio->check_interrupt();",
+     "PRT requests from TIF/TIE"),
 ]
 
 

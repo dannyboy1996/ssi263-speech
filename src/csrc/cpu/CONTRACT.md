@@ -62,7 +62,19 @@ Which tests already exist and which are still to write is listed in 10.
 Lines are set with `*_set_irq(line, asserted)` and sampled at A.
 
 **Z180 (chip, except where marked):**
-- TRAP, raised by an undefined opcode, comes first. Then NMI, on an edge.
+- TRAP, raised by an undefined opcode, comes first. It is not an acceptance at A: it is found at E, at the
+  undefined byte's fetch, and is that step's instruction (its fetches, the read at IX+d for a DDCB/FDCB form, the
+  stacking of PCH to SP-1 then PCL to SP-2, and the jump to 0000h), charged at F (printed pages 70-72, Figures
+  32-33: 18 T for a 2nd op code, 26 T for a 3rd, plus programmed waits). Then NMI, on an edge.
+- R counts op code fetches (M1 cycles, printed page 177), a trapped one and an IM0 acknowledge included.
+- The on-chip requests are taken before the priority choice from their sources: PRT0/PRT1 as levels of TIF and
+  TIE (a cleared TIF drops its request), the ASCI and CSIO likewise; the DMA completions are latched.
+- IM0 timing: an injected instruction's opcode fetch is the 5-T acknowledge cycle (T1 T2 TW* TW* T3, two
+  automatic waits: printed page 76, Figure 36), so an injected RST is 13 T without programmed waits; the
+  acknowledge bytes take no programmed memory waits. An undefined injected form TRAPs, stacking the PC the
+  interrupt found **(model)**.
+- **(model)** Stack writes other than TRAP's (CALL, RST, the interrupt pushes) come from MAME's PUSH, which writes
+  the low byte first: the stacked bytes are right, their bus order is not.
 - Then the maskable sources, when IFF1 is set and no EI shadow is active: INT0, INT1, INT2 (levels, each gated by
   its ITC enable), then the on-chip sources in the Z180's order (PRT0, PRT1, DMA0, DMA1, CSIO, ASCI0, ASCI1).
 - The ASCI request is a level that follows its status bits (Astra, Reply 15).
@@ -189,7 +201,16 @@ controls, each undoing one driver rule, are `contract_controls.py`):
   exists, `investigation/section95-review/`);
 - refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
 - the 8085's INTR injected instructions (with its core);
-- TRAP on an undefined opcode injected by an IM0 acknowledge (not implemented; no board injects one).
+- the bus order of the other stack writes (see 4), if a board ever depends on it.
+
+**After Astra, Replies 93/94:** `im0_rst_nowait` (13 T, R + 1), `im0_nop_nowait` (5 T), `im0_prefixed` (LD IX,nn
+from the acknowledge: the PC held, R + 2), `im0_undefined` (DD 00h from the acknowledge TRAPs, stacking the
+interrupted PC); the first three IM0 tests now assert their T-states (5, 19, 24 with reset's wait states);
+`trapbus_2nd` (DD 24h: 18 T, R + 2, PCH written first), `trapbus_3rd` (DD CB 05 00: 26 T, R + 3, one read of
+IX+5, PCH first), `trapbus_legal_ddcb` (the control: RLC (IX+5) reads IX+5); `prt_priority` (a waiting PRT0
+overflow beats a waiting DMA0 completion in all 20 timer-clock phases; Astra's fixture had 3 of 20) and
+`prt_stale` (with TIF0 cleared first, DMA0 is taken). `contract_controls.py` checks each program's exit code,
+summary line and the full test inventory (a crash, a timeout or a missing test fails the run), and has 29 controls.
 
 **TRAP** (`z180_trap.hpp`, from the manual's op code maps): undefined second bytes after DD/FD (DD 00h, INC IXH,
 EX DE,HL), ED (the Z80's NEG duplicate, IN (C)) and CB (SLL) trap with UFO = 0 and the stacked PC at the
