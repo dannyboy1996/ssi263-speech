@@ -15,6 +15,7 @@ import queue
 import re
 import sys
 import threading
+import time
 
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
@@ -38,6 +39,12 @@ except Exception:                                       # an add-on built withou
     NativeBlazie = None
 
 BLOCK_S = 0.03
+# After speech, with "keep the channel open" and the hiss or whine on, the unit keeps running in real time: its
+# channel stays open, the hiss or whine goes on, and the firmware clicks it off itself (R3 = 00, ~9.95 s after the
+# last phoneme on Tomi's unit, and the emulated firmware's own timer).  The idle audio is fed this far ahead of the
+# player, so new speech drops at most this much of it.
+IDLE_AHEAD_S = 0.12
+_now = time.perf_counter           # the idle tail's clock (a test may speed it up)
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 # 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
 # no child process and no pipe, the same writes bit for bit (nvda/tools/golden).  The pipe host stays the fallback,
@@ -210,6 +217,8 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("numberWords", "Custom n&umber processing (fix digits above a trillion)", defaultVal=True),
         BooleanDriverSetting("voiceInflection", "Voice &inflection (the unit's own on/off)", defaultVal=True),
         DriverSetting("whine", "Unit &hiss and whine", defaultVal="off"),
+        BooleanDriverSetting("keepOpen", "&Keep the channel open after speaking (the hiss or whine until the unit "
+                             "clicks off)", defaultVal=True),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
     )
     # LangChangeCommand: NVDA's automatic language switching (and MultiLang passing a language on) sends each
@@ -239,9 +248,11 @@ class SynthDriver(SynthDriver):
         self._out_rate = self._want_rate = rates.DEFAULT   # the worker switches to _want_rate
         self._infl = self._want_infl = True                # likewise to _want_infl
         self._whine = self._want_whine = "off"
+        self._keep_open = True
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
+        self._wake = threading.Event()   # speak() / cancel() wake the idle tail
         self._stopped = False
         self._unit = None
         self._units = {}        # voice id -> its emulated unit, started on first use
@@ -291,9 +302,11 @@ class SynthDriver(SynthDriver):
             elif isinstance(item, speech.commands.LangChangeCommand):
                 items.append(("lang", item.lang))
         self._queue.put(_joined(items) if self._join else items)
+        self._wake.set()
 
     def cancel(self):
         self._cancelFlag.set()
+        self._wake.set()
         try:
             self._player.stop()
         except Exception:
@@ -389,6 +402,12 @@ class SynthDriver(SynthDriver):
         # parameter, so the worker restarts the unit (silently) before the next utterance
         if v in dict(WHINES):
             self._want_whine = v
+
+    def _get_keepOpen(self):
+        return self._keep_open
+
+    def _set_keepOpen(self, v):
+        self._keep_open = bool(v)
 
     def _get_sampleRate(self):
         return str(self._want_rate)
@@ -531,9 +550,56 @@ class SynthDriver(SynthDriver):
                     self._player.stop()
                 except Exception:
                     pass
+            elif self._tail_wanted():
+                # done once the speech has played (the tail's audio follows it), then the open channel
+                try:
+                    self._player.feed(b"", onDone=lambda: synthDoneSpeaking.notify(synth=self))
+                except Exception:
+                    synthDoneSpeaking.notify(synth=self)
+                try:
+                    self._idle_tail()
+                except Exception:
+                    log.error("Blazie: the idle tail failed", exc_info=True)
             else:
                 synthDoneSpeaking.notify(synth=self)
         self._close_units()
+
+    def _tail_wanted(self):
+        return self._keep_open and self._whine != "off" and self._queue.empty() and not self._cancelFlag.is_set()
+
+    def _idle_tail(self):
+        """The unit after speech, in real time: its channel stays open with the hiss or whine until the firmware
+        clicks it off (R3 = 00), or until new speech or a cancel.  New speech plays after the idle audio already
+        fed (at most IDLE_AHEAD_S): stopping the player there would also drop the end of the last utterance if it
+        has not played yet.  A cancel stops it (cancel() did, on NVDA's thread; again here, after the last feed).
+        The unit's own time runs meanwhile, as on the real unit: the next utterance finds it open or clicked off,
+        whichever the firmware decided."""
+        unit = self._unit
+        if unit is None:
+            return
+        gain = MAKEUP * self._volume / 100.0
+        rate = float(unit.chip.out_rate)
+        start, fed = _now(), 0.0
+        self._wake.clear()
+        while not self._stopped and self._queue.empty() and not self._cancelFlag.is_set():
+            if unit.chip.regs[3] == 0:
+                break                    # clicked off: the firmware's own end of the open channel
+            ahead = fed - (_now() - start)
+            if ahead > IDLE_AHEAD_S:
+                self._wake.wait(ahead - IDLE_AHEAD_S / 2)
+                self._wake.clear()
+                continue
+            y = unit.run(BLOCK_S)
+            fed += len(y) / rate
+            if len(y) and self._queue.empty() and not self._cancelFlag.is_set():
+                self._player.feed(unit.chip.dsp.pcm16(y, gain))
+        try:
+            if self._cancelFlag.is_set():
+                self._player.stop()
+            elif self._queue.empty():
+                self._player.idle()      # clicked off (or the driver stopping)
+        except Exception:
+            pass
 
     def _switch_rate(self):
         """A new sample rate or inflection setting: a rebooted unit (and, for a new rate, a new player, since the
@@ -638,7 +704,9 @@ class SynthDriver(SynthDriver):
         if self._cancelFlag.is_set():
             return
         try:
-            if self._queue.empty():
+            if self._tail_wanted():
+                pass                     # the idle tail follows without a gap (_run)
+            elif self._queue.empty():
                 self._player.idle()
             else:
                 # NVDA 2021-2023's buffered player holds blocks until it has 300 ms of them,

@@ -89,6 +89,11 @@ if os.path.isfile(MAME_LIVE):
     CHECKS.append(check("MAME Z180 core: CPU contract tests", [os.path.join(LIB, "test_z180_contract.exe")]))
     CHECKS.append(check("MAME Z180 core: white-box tests", [os.path.join(LIB, "test_z180_whitebox.exe")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
+# the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
+# at no cost to response time; the control runs it with keep open off and must fail
+CHECKS.append(check("keep the channel open", [PY, "keep_open_test.py"]))
+CHECKS.append(check("keep the channel open CONTROL (off, must fail)", [PY, "keep_open_test.py"],
+                    env={"KEEP_OPEN_BREAK": "1"}, expect_fail=True))
 # the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
 # bl_voice (the driver's front end in C, for speech-dispatcher and Android): the real driver's PCM, byte for byte;
 # and its control (the C side with packing flipped) must fail
