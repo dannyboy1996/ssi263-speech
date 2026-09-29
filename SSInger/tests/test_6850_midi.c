@@ -597,6 +597,57 @@ static void test_clock_base_and_bend(void)
     CHECK(l.xck == 0.0, "patent bend leaves XCK alone (%f)", l.xck);
 }
 
+/* A note played while the clock is moved sounds transposed by the move, like
+ * a note already held: the translator tunes against its fixed reference
+ * clock and the chip's clock does the transposing (F0 = XCK/(8(4096-I))).
+ * Regression: the bus copied the moved clock into that reference, so a note
+ * played during a held +12 st bend came out un-bent (440 Hz, not 880) and
+ * dropped an octave when the bend returned; the Master clock never reached
+ * new notes at all. */
+static double bus_f0(const robovox_bus_t *b)
+{
+    int r1 = b->regs_mirror[0][1], r2 = b->regs_mirror[0][2];
+    int I = ((r2 >> 3) & 1) * 2048 + (r2 & 7) + r1 * 8;   /* mode 2 (DUR 2) */
+    return b->xck_hz / (8.0 * (4096 - I));
+}
+
+static void bus_midi3(robovox_bus_t *b, int a, int c, int d)
+{
+    robovox_bus_midi_byte(b, (uint8_t)a);
+    robovox_bus_midi_byte(b, (uint8_t)c);
+    robovox_bus_midi_byte(b, (uint8_t)d);
+}
+
+static double cents(double f, double want)
+{
+    return 1200.0 * log(f / want) / log(2.0);
+}
+
+static void test_new_note_follows_clock(void)
+{
+    robovox_bus_t b;
+    ssi263_params p;
+    ssi263_default_params(&p);
+    CHECK(robovox_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "clock-follow bus init");
+    b.fw.cfg.ctlmap = RV_MAP_POLAXIS;
+    bus_midi3(&b, 0x90, 44, 100);                  /* a phoneme */
+    bus_midi3(&b, 0x91, 69, 100);                  /* A4 */
+    CHECK(fabs(cents(bus_f0(&b), 440.0)) < 12.0, "A4 at rest (%f Hz)", bus_f0(&b));
+    bus_midi3(&b, 0xE0, 0x00, 0x60);               /* bend +12 st (range 24) */
+    CHECK(fabs(cents(bus_f0(&b), 880.0)) < 12.0, "held A4 bent +12 (%f Hz)", bus_f0(&b));
+    bus_midi3(&b, 0x81, 69, 0);
+    bus_midi3(&b, 0x91, 69, 100);                  /* A4 played during the bend */
+    CHECK(fabs(cents(bus_f0(&b), 880.0)) < 12.0, "A4 played during +12 bend (%f Hz)", bus_f0(&b));
+    bus_midi3(&b, 0xE0, 0x00, 0x40);               /* bend back to centre */
+    CHECK(fabs(cents(bus_f0(&b), 440.0)) < 12.0, "that A4 after the bend returns (%f Hz)", bus_f0(&b));
+    robovox_bus_master_write(2000000.0, &b);       /* Master clock +12 st */
+    bus_midi3(&b, 0x81, 69, 0);
+    bus_midi3(&b, 0x91, 69, 100);
+    CHECK(fabs(cents(bus_f0(&b), 880.0)) < 12.0, "A4 played after Master +12 (%f Hz)", bus_f0(&b));
+    CHECK(b.fw.cfg.xck_hz == 1000000.0, "reference clock unmoved (%f)", b.fw.cfg.xck_hz);
+    robovox_bus_free(&b);
+}
+
 /* ssi263_set_xck on a fresh chip == a fresh ssi263_new at that clock:
  * byte-identical output (the narrowed exactness claim in ssi263.h). */
 static void test_xck_fresh_exact(void)
@@ -711,6 +762,7 @@ int main(void)
     test_pitch_latch();
     test_phoneme_mono_priority();
     test_clock_base_and_bend();
+    test_new_note_follows_clock();
     test_filter_slew();
     test_vst_render_path();
     printf("%s: %d checks, %d failures\n",

@@ -160,7 +160,9 @@ static void robovox_bus_xck_write(double hz, void *ctx)
     if (hz == b->xck_hz)
         return;
     b->xck_hz = hz;
-    b->fw.cfg.xck_hz = hz;
+    /* Only the chips' clock moves.  The translator keeps tuning new notes
+     * against its fixed reference clock (fw.cfg.xck_hz), so they transpose
+     * with the bend or the Master clock exactly as held notes do. */
     for (i = 0; i < b->nvoices; i++)
         if (b->chip[i])
             ssi263_set_xck(b->chip[i], hz);
