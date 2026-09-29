@@ -28,12 +28,31 @@ if [ -f "$FW/BL2SPA.BNS" ] && [ -f "$FW/bl2spa_fresh.state" ]; then
     cp "$FW/BL2SPA.BNS" "$FW/bl2spa_fresh.state" "$STAGE/share/ssi263-speech/"
 fi
 cat > "$STAGE/share/ssi263-speech/speech-dispatcher/ssi263.conf" <<'EOF'
-# sd_ssi263: the Braille Lite 2000 through an emulated SSI-263.  install.sh writes SSI263DataDir.
-# SSI263Inflection 1          the unit's voice inflection (0: off)
-# SSI263Whine "off"           off | hiss | whine: the unit's idle sound
-# SSI263Tone 7                0-26, the unit's tone (factory 7)
-# SSI263ShortPauses 1         sentences packed onto one line from the second on
+# The Braille Lite 2000 voice (sd_ssi263): the unit's own firmware speaking through an emulated SSI-263.
+#
+# This file:      speech-dispatcher's modules folder (install.sh put it there and wrote SSI263DataDir below).
+# Your own copy:  ~/.config/ssi263-speech/sd_ssi263.conf -- any line there wins over this file, needs no root,
+#                 and survives reinstalling.  Same keys, same format.
+#
+# Uncomment a line and change it to override the default.
+# After editing:  killall speech-dispatcher     (Orca reconnects by itself)
+
+# Output sample rate in Hz: 11025, 22050 or 44100 (default 22050).  22 kHz keeps everything the chip produces;
+# 44 kHz also keeps the clock images and the brightest hiss; 11 kHz sounds like the unit's own speaker.
 # SSI263SampleRate 22050
+
+# The unit's voice inflection, its own status-menu setting: 1 on (default), 0 off (questions stay flat).
+# SSI263Inflection 1
+
+# The faint sound a real unit makes under its speech: off (default), hiss (even volumes, the factory setting),
+# or whine (odd volumes).
+# SSI263Whine off
+
+# The unit's tone, 0-26 (factory 7).
+# SSI263Tone 7
+
+# Sentences packed onto one line from the second on, for shorter pauses (1, default) or not (0).
+# SSI263ShortPauses 1
 EOF
 cp "$ROOT/src/platforms/speechd/install.sh" "$ROOT/src/platforms/speechd/uninstall.sh" "$STAGE/"
 cp "$ROOT/src/platforms/speechd/README-linux.md" "$STAGE/README.md"

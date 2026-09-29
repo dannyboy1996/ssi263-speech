@@ -6,9 +6,10 @@
  * speech-dispatcher's module_process.c; the reply lines are TGSpeechBox's sd_tgsb's, proven on speech-dispatcher 0.11.  Synthesis is synchronous: stdin is polled
  * for STOP between blocks, and a STOP cancels the unit (its unspoken text dropped) so the next message starts clean.
  *
- * Config (argv[1], speech-dispatcher's module config; every key optional):
+ * Config (argv[1], speech-dispatcher's module config; then this user's own file, whose keys win:
+ * $XDG_CONFIG_HOME/ssi263-speech/sd_ssi263.conf, else ~/.config/ssi263-speech/sd_ssi263.conf; every key optional):
  *   SSI263DataDir "/usr/local/share/ssi263-speech"   BL2ENG.BNS + bl2_2003_warm.state [+ BL2SPA.BNS + bl2spa_fresh.state]
- *   SSI263SampleRate 22050
+ *   SSI263SampleRate 22050     11025 | 22050 | 44100, as the add-ons (any other value: 22050)
  *   SSI263Inflection 1         the unit's voice inflection (status menu)
  *   SSI263Whine "off"          off | hiss | whine: the unit's idle sound
  *   SSI263Tone 7               0-26, the unit's tone (factory 7)
@@ -156,6 +157,29 @@ static void read_config(const char *path)
     fclose(f);
 }
 
+/* This user's own settings, read after the module config so their keys win (as TGSpeechBox's sd_tgsb): editable
+ * without root, and kept when the voice is reinstalled. */
+static void read_user_config(void)
+{
+    char p[1200];
+    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    if (xdg && *xdg)
+        snprintf(p, sizeof p, "%s/ssi263-speech/sd_ssi263.conf", xdg);
+    else if (home && *home)
+        snprintf(p, sizeof p, "%s/.config/ssi263-speech/sd_ssi263.conf", home);
+    else
+        return;
+    read_config(p);
+}
+
+static void check_config(void)
+{
+    if (sample_rate != 11025 && sample_rate != 22050 && sample_rate != 44100) {
+        fprintf(stderr, "sd_ssi263: SSI263SampleRate %d is not one of 11025, 22050, 44100: using 22050\n", sample_rate);
+        sample_rate = 22050;
+    }
+}
+
 static int have(const char *name)
 {
     char p[1200];
@@ -276,6 +300,8 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IOFBF, 1 << 16);
     signal(SIGPIPE, SIG_IGN);
     if (argc > 1) read_config(argv[1]);
+    read_user_config();
+    check_config();
     find_datadir();
     cmd = readline_sd();
     if (!cmd || strcmp(cmd, "INIT")) return 1;

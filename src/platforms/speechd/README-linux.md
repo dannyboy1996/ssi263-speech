@@ -20,9 +20,12 @@ It is the same voice as the NVDA add-on, byte for byte.
 the default. In Orca: Preferences, Speech, Speech synthesizer: ssi263. `sudo ./uninstall.sh` removes everything
 it added.
 
-Settings are in `ssi263.conf` beside speech-dispatcher's other module settings (the installer prints where):
-voice inflection, the unit's idle hiss or whine, its tone, and the "short pauses" line packing. Rate, pitch and
-volume come from Orca or spd-say, mapped onto the unit's own: its factory rate 11 and pitch 16 at the middle.
+Settings are in `ssi263.conf` beside speech-dispatcher's other module settings (the installer prints where), each
+explained in the file: the sample rate (11, 22 or 44 kHz), voice inflection, the unit's hiss or whine, its tone,
+and the "short pauses" line packing. For your own settings, without root and kept when you reinstall, copy any of
+those lines into `~/.config/ssi263-speech/sd_ssi263.conf`: they win over the module's file. After a change,
+`killall speech-dispatcher` (Orca reconnects by itself). Rate, pitch and volume come from Orca or spd-say, mapped
+onto the unit's own: its factory rate 11 and pitch 16 at the middle.
 
 Builds: x86_64 and aarch64 (a Raspberry Pi 4 or 5 is fine: the unit runs about ten times faster than real time on
 a Pi 5). No Python, no other packages: one program.

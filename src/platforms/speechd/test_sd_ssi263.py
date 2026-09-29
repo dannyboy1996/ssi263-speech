@@ -18,6 +18,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import tempfile
 
 MODULE, LIB, DATA = sys.argv[1:4]
 LONG = ("This is a long message for the stop test, with a comma or two, that keeps going well past the moment "
@@ -36,11 +37,11 @@ lib.blv_destroy.argtypes = [ctypes.c_void_p]
 
 # ---- the reference -----------------------------------------------------------------------------------------------
 class Ref:
-    def __init__(self, spanish=False):
+    def __init__(self, spanish=False, rate=22050, whine=0):
         fw, st = (("BL2SPA.BNS", "bl2spa_fresh.state") if spanish else ("BL2ENG.BNS", "bl2_2003_warm.state"))
         err = ctypes.create_string_buffer(256)
         self.v = lib.blv_create(os.path.join(DATA, fw).encode(), os.path.join(DATA, st).encode(), int(spanish),
-                                22050.0, 1, 0, err, 256)
+                                float(rate), 1, whine, err, 256)
         assert self.v, err.value
 
     def say(self, text, rate=0, pitch=0, volume=100, blocks=None):
@@ -62,9 +63,24 @@ class Ref:
 
 # ---- the server's side of the protocol --------------------------------------------------------------------------
 class Module:
-    def __init__(self):
-        env = dict(os.environ, SSI263_DATADIR=DATA)
-        self.p = subprocess.Popen([MODULE], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    def __init__(self, conf=None, user_conf=None):
+        """conf: the module config's text (argv[1]); user_conf: this user's own file's text.  Every module gets a
+        fresh HOME, so a real ~/.config/ssi263-speech on the test machine can never change what it says."""
+        home = tempfile.mkdtemp(prefix="sd_ssi263_home_")
+        env = dict(os.environ, SSI263_DATADIR=DATA, HOME=home)
+        env.pop("XDG_CONFIG_HOME", None)
+        args = [MODULE]
+        if conf is not None:
+            path = os.path.join(home, "ssi263.conf")
+            with open(path, "w") as f:
+                f.write(conf)
+            args.append(path)
+        if user_conf is not None:
+            os.makedirs(os.path.join(home, ".config", "ssi263-speech"))
+            with open(os.path.join(home, ".config", "ssi263-speech", "sd_ssi263.conf"), "w") as f:
+                f.write(user_conf)
+        self.rates = set()
+        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
 
     def send(self, *lines):
         self.p.stdin.write(("\n".join(lines) + "\n").encode("utf-8"))
@@ -92,6 +108,8 @@ class Module:
         while not s.startswith(b"705-AUDIO"):
             if s.startswith(b"705-num_samples="):
                 n = int(s.split(b"=")[1])
+            if s.startswith(b"705-sample_rate="):
+                self.rates.add(int(s.split(b"=")[1]))
             s = self.line()
         data = s[len(b"705-AUDIO") + 1:] + b"\n"   # the payload starts after the NUL, and may contain no raw '\n'
         while not data.endswith(b"\n705 AUDIO\n"):
@@ -178,5 +196,24 @@ if os.path.isfile(os.path.join(DATA, "BL2SPA.BNS")):
 
 m.send("QUIT")
 m.p.wait(timeout=10)
+
+
+# ---- the config: the module file, this user's own file (which wins), and a rate we do not offer -------------------
+def configured(label, conf, user_conf, rate, whine=0):
+    c = Module(conf, user_conf)
+    c.send("INIT")
+    assert c.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+    pcm, _ev, _n = c.speak("Is it ready?")
+    c.send("QUIT")
+    c.p.wait(timeout=10)
+    ok = c.rates == {rate}
+    print("%-8s audio blocks declare %s Hz (want %d)" % (label, sorted(c.rates), rate))
+    return same(label, pcm, Ref(rate=rate, whine=whine).say("Is it ready?")) and ok
+
+
+results.append(configured("conf44", "SSI263SampleRate 44100\n", None, 44100))
+results.append(configured("user", "SSI263SampleRate 11025\n", "SSI263SampleRate 44100\n", 44100))
+results.append(configured("badrate", "SSI263SampleRate 48000\n", None, 22050))
+results.append(configured("userhiss", None, 'SSI263Whine "hiss"\n', 22050, whine=1))
 print("%d of %d checks passed (stop after %d blocks)" % (sum(results), len(results), blocks))
 sys.exit(0 if all(results) else 1)

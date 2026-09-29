@@ -69,4 +69,6 @@ Done.  Restart speech-dispatcher so it sees the new voice (Orca reconnects by it
 Try it:
     spd-say -o ssi263 "Hello from the Braille Lite"
 In Orca: Preferences, Speech, Speech synthesizer: ssi263.
+Settings (sample rate, inflection, hiss, tone) are explained in $MODCONF/ssi263.conf; your own copy of any
+line in ~/.config/ssi263-speech/sd_ssi263.conf wins over it.
 EOF
