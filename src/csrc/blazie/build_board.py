@@ -32,7 +32,9 @@ def main():
     gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
     env = dict(os.environ, PATH=os.path.dirname(gcc) + os.pathsep + os.environ["PATH"])
     os.makedirs(OUT, exist_ok=True)
-    inc = ["-I" + HERE, "-I" + z180, "-I" + os.path.join(z180, "z180")]
+    # z180.c keeps __FILE__ (its CPUINFO source-file string): map the checkout's path to "." so no machine path is
+    # built into the binaries (tools/check_binary_paths.py checks them)
+    inc = ["-I" + HERE, "-I" + z180, "-I" + os.path.join(z180, "z180"), "-fmacro-prefix-map=%s=." % z180]
     for exe, main_c in (("bl_live.exe", "bl_live.c"), ("test_bl_board.exe", "test_bl_board.c")):
         subprocess.run([gcc] + FLAGS + inc + ["-o", os.path.join(OUT, exe), os.path.join(HERE, "bl_unity.c"),
                                                os.path.join(HERE, main_c)], env=env, check=True)

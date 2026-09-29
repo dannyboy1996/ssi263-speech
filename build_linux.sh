@@ -25,10 +25,11 @@ mkdir -p "$OUT/obj"
 
 # the chip: plain C99, as build_native.py
 CHIP="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter"
-# the board and host: gnu89 and -fcommon for z180emu's MAME-era C, as build_board.py.  initial-exec TLS: the board's
-# current-unit pointer is read on every emulated instruction and memory access, and a shared library's default
-# model makes each read a __tls_get_addr call (perf: ~5%; the scenario 0.78 -> 0.66 s, goldens unchanged).
-BOARD="-O3 -ftls-model=initial-exec -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180"
+# the board and host: gnu89 and -fcommon for z180emu's MAME-era C, as build_board.py.  initial-exec TLS: the z180emu
+# adapter's current-instance pointer (src/csrc/cpu/z180_legacy.c) is read on every emulated instruction and memory
+# access, and a shared library's default model makes each read a __tls_get_addr call (perf: ~5%).  The prefix map
+# keeps the checkout's path out of z180.c's __FILE__ string.
+BOARD="-O3 -ftls-model=initial-exec -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
 
 $CC $CHIP -c -o "$OUT/obj/ssi263.o" "$SRC/ssi263.c"
 $CC $CHIP -c -o "$OUT/obj/ssi263dsp.o" "$SRC/ssi263dsp.c"

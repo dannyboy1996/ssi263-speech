@@ -48,6 +48,7 @@ typedef struct cpu_bus {
 typedef struct z180 z180;
 
 enum { Z180_INT0, Z180_INT1, Z180_INT2, Z180_NMI };            /* external lines; on-chip sources are internal */
+enum { Z180_PIN_DCD0, Z180_PIN_CTS0 };                         /* bus->serial_pin: the ASCI's input pins */
 #define Z180_DMA_CHUNK 16                                      /* burst DMA bytes per step (corrected path; model) */
 
 typedef struct {                                               /* for lockstep tests: the programmer-visible state */

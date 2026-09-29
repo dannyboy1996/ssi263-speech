@@ -82,15 +82,18 @@ def main():
                 if fn.endswith((".c", ".h")):
                     p = os.path.join(root, fn)
                     z.write(p, os.path.relpath(p, Z180))
-        # bl.dll's own sources (the board and the host, MIT) beside the core they link
-        blz = os.path.join(ENGINE, "csrc", "blazie")
-        for fn in sorted(os.listdir(blz)):
-            if fn.endswith((".c", ".h", ".py")):
-                z.write(os.path.join(blz, fn), "ssi263-blazie/" + fn)
-        z.write(os.path.join(ENGINE, "csrc", "ssi263.h"), "ssi263-blazie/ssi263.h")
-        z.writestr("BUILD-bl.txt", "bl.dll (the in-process unit): gcc %s -I<this folder> -I<this folder>/z180 "
-                   "-o bl.dll ssi263-blazie/bl_unity.c ssi263-blazie/bl_host.c ssi263.dll\n"
-                   "(32-bit: add -msse2 -mfpmath=sse; bl_host.c includes ../ssi263.h: see ssi263-blazie)\n"
+        # bl.dll's own sources beside the core they link, laid out as in the repository's src/csrc so every include
+        # resolves: blazie/ (the board, host and voice, MIT), cpu/ (cpu.h, MIT; z180_legacy.c, the z180emu adapter),
+        # ssi263.h at the top, z180emu's z180/ beside them
+        for sub in ("blazie", "cpu"):
+            d = os.path.join(ENGINE, "csrc", sub)
+            for fn in sorted(os.listdir(d)):
+                if fn.endswith((".c", ".h", ".py", ".md")):
+                    z.write(os.path.join(d, fn), sub + "/" + fn)
+        z.write(os.path.join(ENGINE, "csrc", "ssi263.h"), "ssi263.h")
+        z.writestr("BUILD-bl.txt", "bl.dll (the in-process unit), from this folder:\n"
+                   "  gcc %s -I. -Iz180 -o bl.dll blazie/bl_unity.c blazie/bl_host.c blazie/bl_voice.c ssi263.dll\n"
+                   "(32-bit: add -msse2 -mfpmath=sse.  ssi263.dll is the chip, in the add-on's ssi263/_bin.)\n"
                    % " ".join(build_board.DLL_FLAGS))
         z.writestr("BUILD.txt", "Built with w64devkit GCC 16.2, i686 (32-bit), as one translation unit:\n"
                    "  gcc %s -I. -Iz180 -o bns_live.exe bns_unity.c\n" % " ".join(CFLAGS + LINK[3:]))
