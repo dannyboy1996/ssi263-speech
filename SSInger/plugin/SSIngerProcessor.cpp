@@ -1,25 +1,11 @@
 #include "SSIngerProcessor.h"
+#include "SSIngerEditor.h"
 
 #include <cmath>
 #include <cstring>
 #include <vector>
 
-namespace ids {
-static const char* phonBase = "phonBase";
-static const char* voices = "voices";
-static const char* embod = "embod";
-static const char* ctlMap = "ctlMap";
-static const char* artic = "artic";
-static const char* filterFF = "filterFF";
-static const char* rate = "rate";
-static const char* glide = "glide";
-static const char* dur = "dur";
-static const char* velCurve = "velCurve";
-static const char* bendRange = "bendRange";
-static const char* clockSt = "clockSt";
-static const char* carrier = "carrier";
-static const char* volume = "volume";
-}
+namespace ids = ssinger_ids;
 
 SSIngerProcessor::SSIngerProcessor()
     : AudioProcessor(BusesProperties()
@@ -233,7 +219,7 @@ void SSIngerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
 
 juce::AudioProcessorEditor* SSIngerProcessor::createEditor()
 {
-    return new juce::GenericAudioProcessorEditor(*this);
+    return new SSIngerEditor(*this);
 }
 
 void SSIngerProcessor::getStateInformation(juce::MemoryBlock& destData)

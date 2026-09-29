@@ -5,8 +5,8 @@
  * The 6502 socket, bus map and ROM slot live in emu/ssinger_bus.h;
  * Phase 2 moves the translator into a 6502-resident ROM image.
  *
- * Editor is the generic APVTS editor (Phase 1). The PEC-style phoneme
- * score editor (text + segment grid + live pitch lanes, RESEARCH.md
+ * Editor: SSIngerEditor, the settings built for keyboard and screen-reader
+ * use (SSIngerEditor.h). The PEC-style phoneme score editor (text + segment grid + live pitch lanes, RESEARCH.md
  * section 7) is the planned custom UI.
  */
 #pragma once
@@ -14,6 +14,24 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "emu/ssinger_bus.h"
+
+/* Parameter IDs, shared by the processor and the editor. */
+namespace ssinger_ids {
+inline constexpr const char* phonBase = "phonBase";
+inline constexpr const char* voices = "voices";
+inline constexpr const char* embod = "embod";
+inline constexpr const char* ctlMap = "ctlMap";
+inline constexpr const char* artic = "artic";
+inline constexpr const char* filterFF = "filterFF";
+inline constexpr const char* rate = "rate";
+inline constexpr const char* glide = "glide";
+inline constexpr const char* dur = "dur";
+inline constexpr const char* velCurve = "velCurve";
+inline constexpr const char* bendRange = "bendRange";
+inline constexpr const char* clockSt = "clockSt";
+inline constexpr const char* carrier = "carrier";
+inline constexpr const char* volume = "volume";
+}
 
 class SSIngerProcessor : public juce::AudioProcessor {
 public:

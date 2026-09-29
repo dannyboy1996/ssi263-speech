@@ -17,7 +17,7 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 |---|---|
 | `RESEARCH.md` | Patent mapping, 1998-tour deltas, SC-02 register map, emulator decisions, VST parameter table, open questions |
 | `CMakeLists.txt` | JUCE 9.0.3 VST3 + Standalone build (JUCE via FetchContent) |
-| `plugin/` | `SSIngerProcessor` (APVTS + audio/MIDI glue), minimal editor |
+| `plugin/` | `SSIngerProcessor` (APVTS + audio/MIDI glue); `SSIngerEditor`, the settings window, built for keyboard and screen-reader use (WCAG 2.2 AA applied to a plugin: named controls with real values, grouped, Tab order, focus ring, contrast; see SSIngerEditor.h) |
 | `emu/mc6850.h` | Clean-room MC6850 ACIA model (MIDI subset: 8N1, Rx IRQ, RDRF/TDRE/OVRN) |
 | `emu/ssinger_bus.h` | System bus: 6502 socket, 2 KB RAM (6116 footprint), ROM socket, ACIA, 2x74LS245 SC-02 buffer, mode switch |
 | `emu/ssinger_firmware.h` | Clean-room translator: patent embodiment 1 (phoneme ch N, pitch ch N+1), inflection @ A=440 Hz, wheels, modes |

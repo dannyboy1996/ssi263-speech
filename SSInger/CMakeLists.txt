@@ -50,7 +50,8 @@ juce_add_plugin(SSInger
   DESCRIPTION "SSInger: SC-02 singing voice after the Robovox patent (EP0396141A2)")
 
 target_sources(SSInger PRIVATE
-  plugin/SSIngerProcessor.cpp)
+  plugin/SSIngerProcessor.cpp
+  plugin/SSIngerEditor.cpp)
 
 target_include_directories(SSInger PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
