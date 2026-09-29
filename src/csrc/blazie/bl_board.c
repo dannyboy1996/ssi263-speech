@@ -337,11 +337,18 @@ void bl_destroy(bl_unit *u)
     free(u);
 }
 
-/* the legacy path's own slicing (bns.c's): the golden vectors depend on it (CONTRACT.md 3) */
+/* the legacy path's own slicing (bns.c's): the golden vectors depend on it (CONTRACT.md 3).  Built with
+   BL_Z180_MAME (the MAME core, ../cpu/z180_mame.cpp), the corrected path runs whole steps instead: the same
+   slices, but a slice boundary changes nothing there (CONTRACT.md 2). */
+#ifdef BL_Z180_MAME
+#define BL_RUN_SLICE z180_run
+#else
+#define BL_RUN_SLICE z180_run_legacy
+#endif
 static void run_cycles(bl_unit *u, unsigned long long n)
 {
     while (n > 0) {
-        unsigned long long done = z180_run_legacy(u->cpu, n > SLICE_DEFAULT ? SLICE_DEFAULT : n);
+        unsigned long long done = BL_RUN_SLICE(u->cpu, n > SLICE_DEFAULT ? SLICE_DEFAULT : n);
         n = done >= n ? 0 : n - done;
     }
 }
