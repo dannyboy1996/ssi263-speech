@@ -101,9 +101,13 @@ with d._player.lock:
     y = np.concatenate(d._player.chunks)
 seg = y[n_speak:]
 first_loud = int(np.argmax(np.abs(seg) > 0.02)) if np.any(np.abs(seg) > 0.02) else len(seg)
-idle_before = (n_speak - d1 + first_loud) / rate
-check("B new speech stops the tail", 1.0 <= idle_before <= 3.0,
-      "%.2f s of idle between the first utterance and the next speech (the tail ran ~2 s)" % idle_before)
+# what matters is after the new speak(): the tail stops and the speech follows the idle already fed (at most
+# IDLE_AHEAD_S, plus a block).  The tail fed before it depends on how much CPU the tail thread got (the full
+# run_tests load gave 0.76 s where an idle machine gives ~1.5 s), so it is only required to have been running.
+tail_before = (n_speak - d1) / rate
+idle_after = first_loud / rate
+check("B new speech stops the tail", tail_before > 0.1 and idle_after <= 0.4,
+      "the tail had run %.2f s; %.3f s of idle after the new speak() before its speech" % (tail_before, idle_after))
 time.sleep(0.5)
 
 # C: the control -- keep open off

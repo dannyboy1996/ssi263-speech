@@ -42,8 +42,9 @@ for seed in (1, 2, 3, 4):
 for synth in ("speakout", "accent"):
     CHECKS.append(check("complete_fuzz %s" % synth, [PY, "complete_fuzz.py", "150", "1"],
                         env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": synth}))
-CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must fail)", [PY, "complete_fuzz.py", "150", "3"],
-                    env={"SIM_SPEED": "10", "COMPLETE_FUZZ_050": "1"}, expect_fail=True))
+# its must-fail control: 0.5.0's cancel put back on four seeds in parallel; it passes when a seed catches it (one seed
+# alone missed it under this suite's load about 1 run in 6)
+CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must be caught)", [PY, "complete_fuzz_control.py", "150"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
