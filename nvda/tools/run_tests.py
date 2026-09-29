@@ -71,6 +71,20 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
     CHECKS.append(check("library board: two units in one process", [os.path.join(LIB, "test_bl_board.exe"),
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
+# MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
+# timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
+MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
+if os.path.isfile(MAME_LIVE):
+    for lang in ("en", "es"):
+        CHECKS.append(check("MAME Z180 core: spoken values (%s)" % lang, [PY, "bns_equiv.py", MAME_LIVE, "--values-only",
+                            "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+    CHECKS.append(check("MAME Z180 core: spoken values CONTROL (one value flipped, must fail)",
+                        [PY, "bns_equiv.py", MAME_LIVE, "--values-only",
+                         "--against=" + os.path.join(HERE, "golden", "blazie_en.txt")],
+                        env={"BNS_EQUIV_FLIP": "1"}, expect_fail=True))
+    CHECKS.append(check("MAME Z180 core: two units in one process", [os.path.join(LIB, "test_bl_board_mame.exe"),
+                        os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
+                        os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
 # bl_voice (the driver's front end in C, for speech-dispatcher and Android): the real driver's PCM, byte for byte;

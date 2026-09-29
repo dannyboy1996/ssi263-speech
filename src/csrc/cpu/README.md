@@ -16,6 +16,12 @@ The cores never know which board they are in.
 | `z180_asci.hpp`, `z180_asci.cpp` | Our own byte-level serial ports (ASCI 0 and 1) with MAME's register method names, and a CSI/O stub. Divisors from the chip's registers, `/DCD0`, the interrupt as a level. |
 | `test_z180_zex.c` | Runs a CP/M instruction exerciser (zexdoc/zexall, not in the repo) on either core. |
 
+Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
+`test_bl_board_mame.exe`, beside the legacy ones) and `../../../build_linux.sh` (`test_bl_board_mame`). Gated in
+`nvda/tools/run_tests.py`: the spoken values of both goldens (`bns_equiv.py --values-only`; times are not
+compared, they legitimately differ), a must-fail control with one value flipped, and two units in one process.
+The shipped libraries still use the legacy core.
+
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.
 

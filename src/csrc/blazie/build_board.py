@@ -6,6 +6,10 @@
 
 w64devkit gcc, i686 (as bns_live.exe), one translation unit (bl_unity.c) with the Z180 core from the z180emu tree
 (paths.local Z180EMU).  python src/csrc/blazie/build_board.py
+
+The same two programs on MAME's Z180 core (../cpu/z180_mame.cpp, the corrected path; not yet accepted, see
+../cpu/README.md), for comparing the cores:
+  bl_live_mame.exe, test_bl_board_mame.exe
 """
 import os
 import subprocess
@@ -27,6 +31,31 @@ DLL_FLAGS = ["-O3", "-fcommon", "-std=gnu89", "-ffp-contract=off", "-shared", "-
 ARCHES = {"x86": ("W64DEVKIT_X86", ["-msse2", "-mfpmath=sse"]), "x64": ("W64DEVKIT", [])}
 
 
+# MAME's Z180 core: C++17 without exceptions or RTTI, libstdc++ and libgcc linked statically (one .exe, no DLLs)
+MAME_CXX = ["-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-msse2", "-mfpmath=sse", "-Wall"]
+MAME_LINK = ["-static", "-static-libstdc++", "-static-libgcc", "-s"]
+
+
+def build_mame(gcc, env):
+    gxx = os.path.join(os.path.dirname(gcc), "g++.exe")
+    cpu = os.path.join(os.path.dirname(HERE), "cpu")
+    obj = os.path.join(OUT, "obj_mame")
+    os.makedirs(obj, exist_ok=True)
+    inc = ["-I" + HERE, "-I" + cpu, "-I" + os.path.dirname(HERE)]
+    objs = {}
+    for name, src, cc, flags in (
+            ("z180_mame", os.path.join(cpu, "z180_mame.cpp"), gxx, MAME_CXX),
+            ("z180_asci", os.path.join(cpu, "z180_asci.cpp"), gxx, MAME_CXX),
+            ("bl_board", os.path.join(HERE, "bl_board.c"), gcc, ["-O3", "-std=gnu89", "-DBL_Z180_MAME"]),
+            ("bl_live", os.path.join(HERE, "bl_live.c"), gcc, ["-O3", "-std=gnu89"]),
+            ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"])):
+        objs[name] = os.path.join(obj, name + ".o")
+        subprocess.run([cc] + flags + inc + ["-c", "-o", objs[name], src], env=env, check=True)
+    core = [objs["bl_board"], objs["z180_mame"], objs["z180_asci"]]
+    for exe, main_o in (("bl_live_mame.exe", "bl_live"), ("test_bl_board_mame.exe", "test_bl_board")):
+        subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, exe), objs[main_o]] + core, env=env, check=True)
+
+
 def main():
     z180 = repo_paths.external("Z180EMU")
     gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
@@ -38,6 +67,7 @@ def main():
     for exe, main_c in (("bl_live.exe", "bl_live.c"), ("test_bl_board.exe", "test_bl_board.c")):
         subprocess.run([gcc] + FLAGS + inc + ["-o", os.path.join(OUT, exe), os.path.join(HERE, "bl_unity.c"),
                                                os.path.join(HERE, main_c)], env=env, check=True)
+    build_mame(gcc, env)
     engine = os.path.dirname(os.path.dirname(HERE))
     for arch, (key, extra) in ARCHES.items():
         bindir = repo_paths.bin_dir(key, path_fallback=(arch == "x64"))

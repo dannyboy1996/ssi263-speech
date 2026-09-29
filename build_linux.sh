@@ -43,6 +43,17 @@ $CC $BOARD -o "$OUT/test_bl_board" "$SRC/blazie/test_bl_board.c" "$OUT/obj/bl_un
 # the speech-dispatcher module: one static-linked program (no .so to install beside it)
 $CC $BOARD -o "$OUT/sd_ssi263" "$ROOT/src/platforms/speechd/sd_ssi263.c" "$OUT"/obj/*.o -lm
 
+# MAME's Z180 core (src/csrc/cpu/z180_mame.cpp; not yet accepted, the .so above keeps z180emu): the two-unit test
+# on it, so the C++ is built and checked on every platform.  Its own object folder: the .so's glob stays unchanged.
+CXX="${CXX:-c++}"
+MAME="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -Wall -I$SRC/cpu -I$SRC"
+mkdir -p "$OUT/obj_mame"
+$CXX $MAME -c -o "$OUT/obj_mame/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
+$CXX $MAME -c -o "$OUT/obj_mame/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
+$CC -O3 -std=gnu89 -ffp-contract=off -DBL_Z180_MAME -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/bl_board.o" "$SRC/blazie/bl_board.c"
+$CC -O3 -std=gnu89 -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
+$CXX -o "$OUT/test_bl_board_mame" "$OUT"/obj_mame/*.o -lm
+
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"
 cp "$OUT/libssi263speech.so" "$ROOT/src/ssi263/_bin/$PLAT/"

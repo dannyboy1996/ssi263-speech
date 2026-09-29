@@ -41,7 +41,10 @@ if "--native" in sys.argv:
 NATIVE = "--native" in sys.argv              # the in-process host: EXE is bl.dll (hosts/native_blazie.py)
 SPANISH = "--es" in sys.argv                # the Spanish unit (BL2SPA.BNS, cp850) and Spanish lines
 AGAINST = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--against=")), None)   # a golden file
-ARGS = [a for a in sys.argv[1:] if a not in ("--es", "--native") and not a.startswith("--against=")]
+# with --against: compare only what was spoken -- every SSI-263 write's register and value, in order -- not the
+# times, serial bytes or audio.  For a different CPU core (bl_live_mame.exe) whose timing is expected to differ.
+VALUES_ONLY = "--values-only" in sys.argv
+ARGS = [a for a in sys.argv[1:] if a not in ("--es", "--native", "--values-only") and not a.startswith("--against=")]
 EXE = os.path.abspath(ARGS[0])
 OUT = ARGS[1] if len(ARGS) > 1 else None
 ENG = os.path.join(REPO, "nvda", "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
@@ -124,6 +127,25 @@ print("%s: %d writes, audio %s, scenario %.2f s wall, cancels %s ms" % (
 if OUT:
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(sig) + "\n")
+if os.environ.get("BNS_EQUIV_FLIP"):          # a must-fail control: one write value changed mid-scenario
+    ws = [k for k, ln in enumerate(sig) if ln.startswith("W ")]
+    k = ws[len(ws) // 2]
+    parts = sig[k].split()
+    parts[3] = "%02X" % (int(parts[3], 16) ^ 0x01)
+    sig[k] = " ".join(parts)
+if AGAINST and VALUES_ONLY:
+    def spoken(lines):
+        return [ln.split()[2:] for ln in lines if ln.startswith("W ")]
+    gold, now = spoken(open(AGAINST, encoding="utf-8").read().splitlines()), spoken(sig)
+    diff = next((k for k, (x, y) in enumerate(zip(gold, now)) if x != y), None)
+    if diff is None and len(gold) == len(now):
+        print("write values match %s (%d writes; times not compared)" % (os.path.basename(AGAINST), len(now)))
+        sys.exit(0)
+    k = diff if diff is not None else min(len(gold), len(now))
+    print("write values DIFFER from %s at write %d of %d/%d: golden %s, now %s" % (
+        os.path.basename(AGAINST), k, len(gold), len(now), gold[k] if k < len(gold) else "-",
+        now[k] if k < len(now) else "-"))
+    sys.exit(1)
 if AGAINST:
     gold = open(AGAINST, encoding="utf-8").read().splitlines()
     diff = next((k for k, (x, y) in enumerate(zip(gold, sig)) if x != y), None)
