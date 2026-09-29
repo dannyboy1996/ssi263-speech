@@ -811,7 +811,9 @@ void z180_device::z180_internal_port_write(uint8_t port, uint8_t data)
 
 	case 0x34:
 		LOG("Z180 ITC    wr $%02x ($%02x)\n", data,  data & Z180_ITC_MASK & ~Z180_ITC_UFO);
-		m_itc = (m_itc & Z180_ITC_UFO) | (data & Z180_ITC_MASK & ~Z180_ITC_UFO);
+		// CHANGED: software can clear ITC.TRAP but never set it (Zilog UM, ITC); UFO stays read-only
+		m_itc = (m_itc & Z180_ITC_UFO) | (m_itc & data & Z180_ITC_TRAP)
+		        | (data & Z180_ITC_MASK & ~(Z180_ITC_UFO | Z180_ITC_TRAP));
 		break;
 
 	case 0x36:

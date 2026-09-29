@@ -184,6 +184,7 @@ public:
     int drv_burst_chunk();                // phase E of a burst-DMA step
     bool drv_burst() const;               // is the next step a burst-DMA chunk?
     int drv_injected_instruction();       // phase E after an IM0 acceptance: the instruction from the acknowledge
+    int drv_trap(bool ufo, int bytes_fetched);   // an undefined opcode (z180_trap.hpp): TRAP to 0000h
     z180_inject m_inject;                 // reads redirected to the acknowledge while on
     int m_inject_pending;                 // A accepted an IM0 request; E runs the injected instruction
 

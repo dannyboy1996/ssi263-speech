@@ -50,6 +50,11 @@ SUBS = [
     ("void z180_device::device_start()\n{",
      "void z180_device::init_tables()   // CHANGED: was device_start(); only its flag-table part is kept\n{",
      "device_start"),
+    ("\t\tm_itc = (m_itc & Z180_ITC_UFO) | (data & Z180_ITC_MASK & ~Z180_ITC_UFO);",
+     "\t\t// CHANGED: software can clear ITC.TRAP but never set it (Zilog UM, ITC); UFO stays read-only\n"
+     "\t\tm_itc = (m_itc & Z180_ITC_UFO) | (m_itc & data & Z180_ITC_TRAP)\n"
+     "\t\t        | (data & Z180_ITC_MASK & ~(Z180_ITC_UFO | Z180_ITC_TRAP));",
+     "ITC's TRAP bit"),
 ]
 
 

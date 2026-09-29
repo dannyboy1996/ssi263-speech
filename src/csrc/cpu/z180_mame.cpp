@@ -30,10 +30,15 @@
 //   - IM0: the acknowledged instruction is injected at E (drv_injected_instruction), operands from further
 //     acknowledge bytes; MAME's take_interrupt pushes for any byte but CALL and JP and reads one byte.
 //   - SLEEP stops the DMAC, including in the step whose instruction is the SLP; HALT does not.
-// Known limits: MAME has no TRAP (an undefined opcode is logged and skipped); the legacy core has one.  Memory and
-// I/O wait states are MAME's: DCNTL's MWI/IWI are charged on every access (the legacy core charged them only in
-// DMA).  Every one of these goes into the comparison with the legacy core before new goldens.
+//   - TRAP: MAME has none (it logs an undefined opcode and runs the Z80's form).  Here the prefixes are dispatched
+//     by drv_instruction, which TRAPs every opcode the Z180's op code maps leave undefined (z180_trap.hpp), and
+//     software can clear ITC.TRAP but not set it (the extraction's ITC substitution).
+// Known limits: an undefined opcode injected by an IM0 acknowledge does not TRAP (the manual says it should; no
+// board injects one), and a prefixed injected opcode's PC is not held.  Memory and I/O wait states are MAME's:
+// DCNTL's MWI/IWI are charged on every access (the legacy core charged them only in DMA).  Every one of these goes
+// into the comparison with the legacy core before new goldens.
 #include "z180_mame_machine.cpp"
+#include "z180_trap.hpp"
 
 #include <new>
 
@@ -132,8 +137,62 @@ int z180_device::drv_instruction()
     _PPC = _PCD;
     m_R++;
     m_extra_cycles = 0;
-    int t = exec_op(ROP());
-    return t + m_extra_cycles;
+    uint8_t op = ROP();
+    // CHANGED: the prefixes are dispatched here, as MAME's op_cb/op_dd/op_ed/op_fd and dd_cb/fd_cb do, so that an
+    // opcode the Z180 does not define (z180_trap.hpp) TRAPs at its fetch instead of running MAME's Z80 form.
+    switch (op) {
+    case 0xcb: {
+        uint8_t b2 = ROP();
+        if (!z180_trap::cb_defined(b2))
+            return drv_trap(false, 2);
+        m_R++;
+        m_extra_cycles += exec_cb(b2);
+        return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
+    }
+    case 0xed: {
+        uint8_t b2 = ROP();
+        if (!z180_trap::ed_defined(b2))
+            return drv_trap(false, 2);
+        m_R++;
+        m_extra_cycles += exec_ed(b2);
+        return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
+    }
+    case 0xdd:
+    case 0xfd: {
+        uint8_t b2 = ROP();
+        if (!z180_trap::xy_defined(b2))
+            return drv_trap(false, 2);
+        if (b2 != 0xcb) {
+            m_R++;
+            m_extra_cycles += op == 0xdd ? exec_dd(b2) : exec_fd(b2);
+            return m_cc[Z180_TABLE_op][op] + m_extra_cycles;
+        }
+        m_R += 2;                         // op_dd's, then dd_cb's
+        uint8_t d = ARG();
+        uint8_t b4 = ROP();
+        if (!z180_trap::xycb_defined(b4))
+            return drv_trap(true, 4);
+        m_ea = (uint32_t)(uint16_t)((op == 0xdd ? _IX : _IY) + (int8_t)d);   // EAX() / EAY()
+        m_extra_cycles += exec_xycb(b4);
+        return m_cc[Z180_TABLE_op][op] + m_cc[Z180_TABLE_xy][0xcb] + m_extra_cycles;
+    }
+    default:
+        return exec_op(op) + m_extra_cycles;
+    }
+}
+
+// TRAP (Zilog UM, printed pages 70-71): ITC.TRAP set; UFO = 1 when the undefined byte was the third op code
+// (DDCB/FDCB), else 0; the PC is stacked so that the instruction starts at the stacked PC - 1 (UFO 0) or - 2
+// (UFO 1); execution restarts at logical 0000h.  IEF1/IEF2 are not affected (the manual's Table 8); TRAP is not
+// maskable.  T-states (Figure 32's machine cycles, the 3rd-byte case approximated the same way): 3 for each op
+// code byte fetched, 3 internal, 6 for the two stack writes, plus the fetches' and writes' wait states.
+int z180_device::drv_trap(bool ufo, int bytes_fetched)
+{
+    m_itc = (uint8_t)((m_itc | Z180_ITC_TRAP) & ~Z180_ITC_UFO) | (ufo ? Z180_ITC_UFO : 0);
+    _PCD = (_PCD - (ufo ? 2 : 1)) & 0xffff;   // UFO 0: the undefined 2nd byte's address; UFO 1: the displacement's
+    PUSH( PC );
+    _PCD = 0x0000;
+    return 3 * bytes_fetched + 3 + 6 + m_extra_cycles;
 }
 
 int z180_device::drv_burst_chunk()

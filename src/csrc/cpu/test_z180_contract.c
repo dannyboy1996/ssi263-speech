@@ -648,6 +648,86 @@ static void t_dma_done_di(void)
     free_machine(m);
 }
 
+/* ---- TRAP (Zilog UM, printed pages 70-71; the op code maps, pages 247-251) ------------------------------------
+   0000h tells a reset from a TRAP by ITC.TRAP: on a reset it jumps to 0100h (LD SP,9000h; EI; the instruction
+   under test at 0104h; then (9001h) = 55h and HALT).  On a TRAP it stores ITC at 9000h, writes ITC = 01h (clear
+   TRAP) and stores it at 9002h, writes 81h (try to set TRAP) and stores it at 9003h, then HALTs. */
+static machine *trap_program(const int *ins, int n)
+{
+    machine *m = new_machine();
+    int i;
+    org(m, 0);
+    db(m, 3, 0xED, 0x38, 0x34);                 /* 0000 IN0 A,(ITC) */
+    db(m, 2, 0xE6, 0x80);                       /* AND 80h */
+    db(m, 3, 0xCA, 0x00, 0x01);                 /* JP Z,0100h: a reset */
+    db(m, 3, 0xED, 0x38, 0x34);
+    st_a(m, 0x9000);
+    out0(m, 0x34, 0x01);                        /* clear TRAP (ITE0 kept) */
+    db(m, 3, 0xED, 0x38, 0x34);
+    st_a(m, 0x9002);
+    out0(m, 0x34, 0x81);                        /* try to set TRAP */
+    db(m, 3, 0xED, 0x38, 0x34);
+    st_a(m, 0x9003);
+    db(m, 1, 0x76);
+    org(m, 0x100);
+    ld_sp(m, 0x9000);
+    db(m, 1, 0xFB);                             /* EI: IEF1 = 1, to see that TRAP leaves it */
+    for (i = 0; i < n; i++)
+        db(m, 1, ins[i]);                       /* 0104h: the instruction under test */
+    db(m, 2, 0x3E, 0x55);
+    st_a(m, 0x9001);
+    db(m, 1, 0x76);
+    return m;
+}
+
+static void t_trap(void)
+{
+    static const struct { const char *name; int n, b[4]; int traps, ufo; } cases[] = {
+        {"trap_dd_nop", 2, {0xDD, 0x00}, 1, 0},            /* DD before a non-HL instruction */
+        {"trap_ixh", 2, {0xDD, 0x24}, 1, 0},               /* INC IXH: H as a plain register */
+        {"trap_fd_exdehl", 2, {0xFD, 0xEB}, 1, 0},         /* EX DE,HL is named illegal after DD/FD */
+        {"trap_ed_dup", 2, {0xED, 0x54}, 1, 0},            /* the Z80's NEG duplicate */
+        {"trap_ed_in_c", 2, {0xED, 0x70}, 1, 0},           /* the Z80's IN (C) */
+        {"trap_cb_sll", 2, {0xCB, 0x30}, 1, 0},            /* SLL B */
+        {"trap_ddcb_reg", 4, {0xDD, 0xCB, 0x7F, 0x00}, 1, 1},   /* DDCB d 00: not an (IX+d) form: 3rd op code */
+        {"trap_ddcb_sll", 4, {0xFD, 0xCB, 0x7F, 0x36}, 1, 1},   /* SLL (IY+d) */
+        {"legal_ld_ix", 4, {0xDD, 0x21, 0x34, 0x12}, 0, 0},     /* the negative controls */
+        {"legal_ddcb", 4, {0xDD, 0xCB, 0x7F, 0x06}, 0, 0},      /* RLC (IX+7Fh) */
+        {"legal_ed_neg", 2, {0xED, 0x44}, 0, 0},
+        {"legal_ed_mlt", 2, {0xED, 0x4C}, 0, 0},
+        {"legal_cb_srl", 2, {0xCB, 0x38}, 0, 0},
+        {"legal_fd_jp", 2, {0xFD, 0xE9}, 0, 0},            /* JP (IY): IY = FFFFh after reset -> not taken far */
+    };
+    int k;
+    for (k = 0; k < (int)(sizeof cases / sizeof cases[0]); k++) {
+        machine *m = trap_program(cases[k].b, cases[k].n);
+        z180_regs r;
+        char d[240];
+        unsigned stacked;
+        int ok;
+        if (cases[k].b[0] == 0xFD && cases[k].b[1] == 0xE9)
+            m->mem[0xFFFF] = 0x76;              /* JP (IY) lands on a HALT at FFFFh */
+        z180_run(m->cpu, 4000);
+        z180_regs_get(m->cpu, &r);
+        stacked = (unsigned)(m->mem[0x8FFF] << 8 | m->mem[0x8FFE]);
+        if (cases[k].traps) {
+            unsigned want = 0x0104 + 1 + cases[k].ufo;          /* start + 1 (UFO 0) or + 2 (UFO 1) */
+            ok = (m->mem[0x9000] & 0xC0) == (0x80 | (cases[k].ufo ? 0x40 : 0)) && stacked == want && r.sp == 0x8FFE
+                 && r.iff1 == 1 && m->mem[0x9001] == 0 && !(m->mem[0x9002] & 0x80) && !(m->mem[0x9003] & 0x80);
+            sprintf(d, "ITC %02X (TRAP, UFO %d wanted), stacked %04X (want %04X), IFF1 %d, after clearing %02X, "
+                    "after writing 1 %02X", m->mem[0x9000], cases[k].ufo, stacked, want, r.iff1, m->mem[0x9002],
+                    m->mem[0x9003]);
+        } else {
+            ok = m->mem[0x9000] == 0 && (m->mem[0x9001] == 0x55 || cases[k].b[1] == 0xE9);
+            sprintf(d, "no TRAP: ITC record %02X, marker %02X, halted at %04X", m->mem[0x9000], m->mem[0x9001], r.pc);
+            if (cases[k].b[1] == 0xE9)
+                ok = ok && r.pc == 0xFFFF;
+        }
+        report(cases[k].name, ok, d);
+        free_machine(m);
+    }
+}
+
 int main(void)
 {
     t_zero_budget();
@@ -666,6 +746,7 @@ int main(void)
     t_timer_start();
     t_tmdr1h();
     t_dma_done_di();
+    t_trap();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

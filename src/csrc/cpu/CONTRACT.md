@@ -189,8 +189,13 @@ controls, each undoing one driver rule, are `contract_controls.py`):
   exists, `investigation/section95-review/`);
 - refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
 - the 8085's INTR injected instructions (with its core);
-- TRAP (Z180: ITC.TRAP/UFO, the stacked PC, legal prefixed instructions as negative controls), with its
-  implementation.
+- TRAP on an undefined opcode injected by an IM0 acknowledge (not implemented; no board injects one).
+
+**TRAP** (`z180_trap.hpp`, from the manual's op code maps): undefined second bytes after DD/FD (DD 00h, INC IXH,
+EX DE,HL), ED (the Z80's NEG duplicate, IN (C)) and CB (SLL) trap with UFO = 0 and the stacked PC at the
+instruction's start + 1; undefined DDCB/FDCB fourth bytes trap with UFO = 1 and start + 2; IEF1 unaffected;
+software clears ITC.TRAP and cannot set it; legal prefixed instructions (LD IX, an (IX+d) CB form, NEG, MLT,
+SRL, JP (IY)) are the negative controls.
 
 **MAME's e0deaf3898b, one test per hunk** (each fails with its hunk reverted in `contract_controls.py`):
 `timer_start` (enabling starts from RLDR), `tmdr1h` (TMDR1H is the high byte), `dma_done_di` (a DMA0 completion

@@ -13,6 +13,7 @@ The cores never know which board they are in.
 | `z180_mame_machine.cpp` | **Generated; do not edit.** MAME's machine-level Z180 code: the internal registers (Z8S180's included), the MMU, DMA, the timers, the interrupt check, reset. |
 | `z180_mame.hpp` | Our class around MAME's code: the member names it expects (from MAME's `z180.h`), the flag tables as members, and small stand-ins for the MAME framework (the bus, the daisy chain, logging). The class is the Z8S180. |
 | `z180_mame.cpp` | **Our step driver** (the contract's phases A-G, following MAME's `execute_run`) and the `cpu.h` functions with C linkage. It includes `z180_mame_machine.cpp`: build this file, never the generated one alone. The header comment lists every deliberate difference from MAME. |
+| `z180_trap.hpp` | Which prefixed opcodes the Z180 defines, from the manual's op code maps; every other one TRAPs. Ours; it decides, not MAME's tables. |
 | `z180_asci.hpp`, `z180_asci.cpp` | Our own byte-level serial ports (ASCI 0 and 1) with MAME's register method names, and a CSI/O stub. Divisors from the chip's registers, `/DCD0`, the interrupt as a level. |
 | `test_z180_zex.c` | Runs a CP/M instruction exerciser (zexdoc/zexall, not in the repo) on either core. |
 
@@ -41,5 +42,7 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
     measured at 335,299 cycles at that wake.
   - The unit's XON/XOFF stream differs with those times.
 - Two units in one process (`../blazie/test_bl_board.c` built with `BL_Z180_MAME`): identical alone and interleaved.
-- Known limits of the MAME core: no TRAP; MAME's wait states (DCNTL, charged on every access; the legacy core
+- TRAP (after Astra, Reply 92): the MAME core now TRAPs every opcode the Z180's op code maps leave undefined
+  (`z180_trap.hpp`, from the manual's Tables 48-50), with ITC.TRAP/UFO and the stacked PC as the manual says.
+- Known limits of the MAME core: MAME's wait states (DCNTL, charged on every access; the legacy core
   charged them only in DMA).

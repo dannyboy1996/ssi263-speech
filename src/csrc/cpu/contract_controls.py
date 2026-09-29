@@ -41,6 +41,23 @@ VARIANTS = {
         "", ["accept_pc"]),
     "EFR = 0 clears": (
         "z180_asci.cpp", "    if (!(data & CNTLA_EFR))", "    if (data & CNTLA_EFR)", ["asci_efr"]),
+    # TRAP (z180_trap.hpp, drv_trap): each classification, the stacked PC and ITC's set-protection
+    "TRAP: CB map": (
+        "z180_mame.cpp", "        if (!z180_trap::cb_defined(b2))", "        if (0)", ["trap_cb_sll"]),
+    "TRAP: ED map": (
+        "z180_mame.cpp", "        if (!z180_trap::ed_defined(b2))", "        if (0)", ["trap_ed_dup", "trap_ed_in_c"]),
+    "TRAP: DD/FD rule": (
+        "z180_mame.cpp", "        if (!z180_trap::xy_defined(b2))", "        if (0)",
+        ["trap_dd_nop", "trap_ixh", "trap_fd_exdehl"]),
+    "TRAP: DDCB/FDCB rule": (
+        "z180_mame.cpp", "        if (!z180_trap::xycb_defined(b4))", "        if (0)", ["trap_ddcb_reg", "trap_ddcb_sll"]),
+    "TRAP: UFO's stacked PC": (
+        "z180_mame.cpp", "    _PCD = (_PCD - (ufo ? 2 : 1)) & 0xffff;", "    _PCD = (_PCD - 1) & 0xffff;",
+        ["trap_ddcb_reg", "trap_ddcb_sll"]),
+    "TRAP: ITC cannot be set": (
+        "z180_mame_machine.cpp", "(m_itc & data & Z180_ITC_TRAP)", "(data & Z180_ITC_TRAP)",
+        ["trap_dd_nop", "trap_ixh", "trap_fd_exdehl", "trap_ed_dup", "trap_ed_in_c", "trap_cb_sll", "trap_ddcb_reg",
+         "trap_ddcb_sll"]),
     # MAME's e0deaf3898b, each hunk reverted in the generated machine file (Astra, Reply 92)
     "e0deaf: timer from RLDR": (
         "z180_mame_machine.cpp", "Z180_TCR_TDE0))\n\t\t\t\tm_tmdr_value[0] = m_rldr[0].w;",
