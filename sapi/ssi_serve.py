@@ -17,10 +17,12 @@ render.  A cancel only acts when its seq is the one rendering.
 
 rate/pitch/volume are the drivers' own 0-100 integers; name is a voice id "<driver module>:<voice>", as --list
 prints it.  The response is 'OSPR' | status, then PCM in chunks as the driver produces them -- u32 frame count, then
-frames*2 bytes of 16-bit mono at 22050 Hz -- and a zero frame count to finish.
+frames*2 bytes of 16-bit mono at the --rate (default 22050 Hz) -- and a zero frame count to finish.
 
 `--list` prints one voice per line: "id<TAB>name<TAB>language".
 `--inflection 1|0` and `--whine off|hiss|whine`: the Braille Lite's voice inflection and hiss/whine (the dialog's).
+`--rate 11025|22050|44100`: the output sample rate of every voice (the dialog's; the DLL declares the same rate).
+`--accent-inflection 0..100`: the Accent's intonation, as its NVDA slider (five steps; 100, full, by default).
 """
 import os
 import struct
@@ -31,7 +33,7 @@ import types
 import importlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RATE = 22050                # the add-ons' default rate (ssi263_rates.DEFAULT), what the DLL declares
+RATE = 22050                # the add-ons' default rate (ssi263_rates.DEFAULT); --rate picks another of theirs
 REQ = 0x4F535034            # 'OSP4'
 RSP = 0x4F535052            # 'OSPR'
 CANCEL = 0x4F535043         # 'OSPC'
@@ -175,13 +177,16 @@ def _install_fakes():
 _drivers = {}
 # The settings no SAPI request carries (the settings dialog, sapi/settings.ps1): the engine DLL passes them on the
 # command line and replaces this server when they change.
-OPTIONS = {"inflection": True, "whine": "off"}
+OPTIONS = {"inflection": True, "whine": "off", "rate": RATE, "accent_inflection": 100}
 
 
 def driver(module):
     """One resident driver per add-on, made on first use, with the dialog's settings."""
     if module not in _drivers:
         d = importlib.import_module("synthDrivers." + module).SynthDriver()
+        d._set_sampleRate(str(OPTIONS["rate"]))       # every driver: the rate the DLL declared to SAPI
+        if module == "accentmini":
+            d._set_inflection(OPTIONS["accent_inflection"])     # its NVDA slider's 0-100 (five steps)
         if module == "blazie":
             d._set_voiceInflection(OPTIONS["inflection"])
             d._set_whine(OPTIONS["whine"])
@@ -234,6 +239,10 @@ def main():
             OPTIONS["inflection"] = args[k + 1] not in ("0", "off", "false")
         elif args[k] == "--whine" and args[k + 1] in ("off", "hiss", "whine"):
             OPTIONS["whine"] = args[k + 1]
+        elif args[k] == "--rate" and args[k + 1] in ("11025", "22050", "44100"):
+            OPTIONS["rate"] = int(args[k + 1])
+        elif args[k] == "--accent-inflection" and args[k + 1].isdigit():
+            OPTIONS["accent_inflection"] = max(0, min(100, int(args[k + 1])))
     done_evt = _install_fakes()
     if "--list" in args:
         try:

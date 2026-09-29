@@ -34,9 +34,12 @@ static const unsigned REQ_MAGIC = 0x4F535034, RSP_MAGIC = 0x4F535052, CANCEL_MAG
  * it has never heard of.  Found by Tomi's ear inside ten minutes of the
  * first build reaching a real SAPI client. */
 static const GUID Ssi263WaveFormatEx = {0xc31adbae,0x527f,0x4ff5,{0xa2,0x30,0xf6,0x2b,0xb6,0x1f,0xf7,0x0c}};
-/* The add-ons' default output rate (nvda/shared/ssi263_rates.py): 22 kHz keeps everything the chip produces.
- * The server renders at this rate; every constant below that counts frames follows it. */
-static const DWORD NATIVE_RATE = 22050;
+/* The output rates the add-ons offer (nvda/shared/ssi263_rates.py), 22 kHz by default.  The settings dialog's
+ * SampleRate chooses one for every voice; GetOutputFormat declares it, Speak renders at the rate SAPI then hands
+ * back (so a setting changed in between can never put audio at an undeclared rate), and the server is started
+ * with it (--rate). */
+static const DWORD DEFAULT_RATE = 22050, MAX_RATE = 44100;
+static DWORD valid_rate(DWORD r) { return (r == 11025 || r == 22050 || r == 44100) ? r : DEFAULT_RATE; }
 
 /* The black box -- **off unless somebody asks for it.**
  *
@@ -57,8 +60,10 @@ static const DWORD NATIVE_RATE = 22050;
 static const DWORD LOG_CAP = 4u * 1024u * 1024u;
 
 /* Settings, per user then per machine, in "Software\\SSI-263 SAPI" (the settings dialog, settings.ps1, writes
- * this user's): Inflection (1 = on, the default), Whine (0 off, 1 hiss, 2 whine), Diagnostics (0 = off) and
- * ReadTimeoutMs. */
+ * this user's): Inflection (the Braille Lite's own on/off: 1 = on, the default), AccentInflection (the Accent's
+ * intonation, 0 25 50 75 100 as its NVDA slider; 100 = full, the default), Whine (0 off, 1 hiss, 2 whine),
+ * SampleRate (11025 / 22050 / 44100, every voice), Diagnostics (0 = off) and ReadTimeoutMs.  Each reaches the
+ * next thing spoken: a change respawns the server (host_ensure), since SAPI gives no way to reload a voice. */
 static DWORD setting_dword(const wchar_t *name, DWORD def) {
     const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     for (int r = 0; r < 2; r++) {
@@ -201,7 +206,7 @@ static bool host_alive() {
  * script now keeps stray prints off the stream entirely; this is armor for
  * whatever corrupts it anyway, because a *small* misread is arithmetic
  * this side cannot detect at all. */
-static const unsigned MAX_CHUNK_FRAMES = NATIVE_RATE * 10u;
+static const unsigned MAX_CHUNK_FRAMES = MAX_RATE * 10u;
 
 static DWORD read_timeout_ms() {
     DWORD v = setting_dword(L"ReadTimeoutMs", 30000);
@@ -252,7 +257,7 @@ struct CsLock {
     CsLock(CRITICAL_SECTION *c):cs(c){EnterCriticalSection(cs);}
     ~CsLock(){LeaveCriticalSection(cs);}
 };
-static bool host_ensure(DWORD inflection, DWORD whine) {
+static bool host_ensure(DWORD inflection, DWORD whine, DWORD accentInfl, DWORD rate) {
     sweep_logs();
     std::wstring base=module_dir();
     /* The embeddable Python the installer puts beside the DLLs; either DLL bitness uses it -- the server is its
@@ -262,7 +267,9 @@ static bool host_ensure(DWORD inflection, DWORD whine) {
     std::wstring py=base+L"\\python\\python.exe";
     const wchar_t *whines[]={L"off",L"hiss",L"whine"};
     std::wstring cmd=L"\""+py+L"\" -I \""+base+L"\\ssi_serve.py\" --serve --inflection "+
-                     (inflection?L"1":L"0")+L" --whine "+whines[whine<3?whine:0];
+                     (inflection?L"1":L"0")+L" --whine "+whines[whine<3?whine:0]+
+                     L" --accent-inflection "+std::to_wstring(accentInfl>100?100:accentInfl)+
+                     L" --rate "+std::to_wstring(valid_rate(rate));
     if(host_alive()&&cmd==g_hostCmd)return true;
     host_drop();
     /* A megabyte of buffer each way against the four-kilobyte default: a
@@ -319,16 +326,20 @@ public:
     STDMETHODIMP GetObjectToken(ISpObjectToken **t){if(!t)return E_POINTER;*t=token;if(token)token->AddRef();return token?S_OK:S_FALSE;}
     STDMETHODIMP GetOutputFormat(const GUID*,const WAVEFORMATEX*,GUID *id,WAVEFORMATEX **wf){
         if(!id||!wf)return E_POINTER; *id=Ssi263WaveFormatEx;
-        WAVEFORMATEX f={WAVE_FORMAT_PCM,1,NATIVE_RATE,NATIVE_RATE*2,2,16,0};
+        const DWORD r=valid_rate(setting_dword(L"SampleRate",DEFAULT_RATE));
+        WAVEFORMATEX f={WAVE_FORMAT_PCM,1,r,r*2,2,16,0};
         *wf=(WAVEFORMATEX*)CoTaskMemAlloc(sizeof f);if(!*wf)return E_OUTOFMEMORY;**wf=f;return S_OK;
     }
-    STDMETHODIMP Speak(DWORD,REFGUID,const WAVEFORMATEX*,const SPVTEXTFRAG *frags,ISpTTSEngineSite *site){
+    STDMETHODIMP Speak(DWORD,REFGUID,const WAVEFORMATEX *wfx,const SPVTEXTFRAG *frags,ISpTTSEngineSite *site){
         /* A COM method must never let an exception out: SAPI has no
          * handler for one and the client application dies of it.  The
          * frame-count clamp below makes the known thrower unreachable,
          * but the guarantee belongs at the boundary, whatever the cause. */
         try {
-            return speakInner(frags,site);
+            /* Render at the rate SAPI agreed to (what GetOutputFormat declared then), not a setting re-read now. */
+            DWORD rate=(wfx&&wfx->wFormatTag==WAVE_FORMAT_PCM)?valid_rate(wfx->nSamplesPerSec)
+                                                            :valid_rate(setting_dword(L"SampleRate",DEFAULT_RATE));
+            return speakInner(frags,site,rate);
         } catch(...) {
             if(g_lockReady){
                 CsLock lock(&g_hostLock);
@@ -337,7 +348,7 @@ public:
             return E_FAIL;
         }
     }
-    HRESULT speakInner(const SPVTEXTFRAG *frags,ISpTTSEngineSite *site){
+    HRESULT speakInner(const SPVTEXTFRAG *frags,ISpTTSEngineSite *site,DWORD outRate){
         if(!token||!site)return E_UNEXPECTED;
         /* Timing for the diagnostic log: SAPI's call to our first audio, and to the end -- what the engine adds,
          * apart from the playback buffering of the program that asked. */
@@ -390,9 +401,10 @@ public:
         unsigned long long total=0;
         unsigned seq=++g_seq;
         if(!text.empty()){
-            /* The Braille Lite's two settings SAPI's own request cannot carry, read fresh so a change in the
-             * settings dialog reaches the next thing spoken. */
-            ok=host_ensure(setting_dword(L"Inflection",1),setting_dword(L"Whine",0));
+            /* The settings SAPI's own request cannot carry, read fresh so a change in the settings dialog reaches
+             * the next thing spoken (the server is replaced when they differ). */
+            ok=host_ensure(setting_dword(L"Inflection",1),setting_dword(L"Whine",0),
+                           setting_dword(L"AccentInflection",100),outRate);
             ok=ok&&exact(g_in,&req,4,true)&&exact(g_in,&seq,4,true)&&exact(g_in,&rate,4,true)&&exact(g_in,&pitch,4,true)&&exact(g_in,&volume,4,true)&&exact(g_in,&nv,4,true)&&exact(g_in,&nt,4,true)&&exact(g_in,(void*)v.data(),nv,true)&&exact(g_in,(void*)u.data(),nt,true);
             unsigned magic=0;status=-1;
             /* Response reads wait rather than block -- exact_wait watches
@@ -483,8 +495,8 @@ public:
              * makes what it eats silent.  NVDA's own player drains
              * properly, which is why the add-on never needed this. */
             if(total){
-                BYTE pad[6614]={0};                /* 150 ms at 22050 Hz */
-                ULONG wrote=0;site->Write(pad,sizeof pad,&wrote);
+                std::vector<BYTE> pad((size_t)(outRate*3/20)*2,0);   /* 150 ms at the output rate */
+                ULONG wrote=0;site->Write(pad.data(),(ULONG)pad.size(),&wrote);
             }
         }
         /* A desynced pipe is never reused -- and that has to include a

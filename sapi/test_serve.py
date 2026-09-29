@@ -129,5 +129,41 @@ if "blazie:blazie" in [v[0] for v in vs]:
         ok = voiced(heard[label]) and heard[label] != heard["default"]
         bad += not ok
         print("%-4s setting %-15s changes the Braille Lite's sound: %s" % ("ok" if ok else "FAIL", label, ok))
+# the dialog's Accent inflection reaches its driver: the default twice is identical (the control), 0 changes it
+if "accentmini:mini" in [v[0] for v in vs]:
+    heard = {}
+    for label, extra in (("default", []), ("default again", []), ("inflection 0", ["--accent-inflection", "0"])):
+        c = Client(extra)
+        try:
+            c.send("accentmini:mini", "Is it ready?")
+            _s, heard[label] = c.response()
+        finally:
+            c.close()
+    ok = heard["default again"] == heard["default"] and voiced(heard["inflection 0"]) \
+        and heard["inflection 0"] != heard["default"]
+    bad += not ok
+    print("%-4s the Accent's inflection setting changes its sound (and the default repeats exactly): %s" % (
+        "ok" if ok else "FAIL", ok))
+# --rate (the dialog's sample rate, declared by the DLL): the same phrase lasts the same time at every rate, so the
+# sample count scales with it.  A server that ignored --rate would give equal sample counts -- half or double the
+# duration -- and fail this.  Within 10 %: the Speak-Out's length itself depends on the rate (0.771 s at 22 kHz,
+# 0.810 at 11 kHz, 0.796 at 44 kHz, identical run to run; the same in its NVDA driver), an open item of its own.
+for vid in ("blazie:blazie", "speakout:speakout", "accentmini:mini"):
+    if vid not in [v[0] for v in vs]:
+        continue
+    secs = {}
+    for r in (11025, 22050, 44100):
+        c = Client(["--rate", str(r)])
+        try:
+            c.send(vid, "OK button")
+            _s, pcm = c.response()
+        finally:
+            c.close()
+        secs[r] = (len(pcm) / 2 / r, len(pcm) // 2, voiced(pcm))
+    base = secs[22050][0]
+    ok = all(v[2] and abs(v[0] - base) <= 0.10 * base for v in secs.values())
+    bad += not ok
+    print("%-4s %-22s --rate: %s" % ("ok" if ok else "FAIL", vid, "; ".join(
+        "%d Hz %d samples = %.3f s" % (r, v[1], v[0]) for r, v in sorted(secs.items()))))
 print("serve: %s" % ("ok" if not bad else "%d FAILED" % bad))
 sys.exit(1 if bad else 0)

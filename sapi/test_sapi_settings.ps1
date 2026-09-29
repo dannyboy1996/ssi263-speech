@@ -1,29 +1,41 @@
-# The settings dialog's values reach the voice through SAPI: the Braille Lite speaks the same line with the
-# defaults, the defaults again (the control: identical), inflection off and the whine on (each must differ), with
-# the diagnostic log on for the timing.  This user's settings are put back as they were afterwards.
+# The settings dialog's values reach the voices through SAPI: the Braille Lite speaks the same line with the
+# defaults, the defaults again (the control: identical), inflection off and the whine on (each must differ); the
+# Accent with its inflection at 0 (must differ from its default); and every sample rate (the WAV SAPI writes carries
+# that rate and lasts as long as the default's), with the diagnostic log on for the timing.  This user's settings
+# are put back as they were afterwards.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File sapi\test_sapi_settings.ps1
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $key = 'HKCU:\Software\SSI-263 SAPI'
-$names = @('Inflection', 'Whine', 'Diagnostics')
+$names = @('Inflection', 'Whine', 'Diagnostics', 'AccentInflection', 'SampleRate')
 $saved = @{}
 if (Test-Path $key) { foreach ($n in $names) { try { $saved[$n] = (Get-ItemProperty $key -Name $n -ErrorAction Stop).$n } catch {} } }
 New-Item -Path $key -Force | Out-Null
 function Set-S([string]$n, [int]$v) { New-ItemProperty -Path $key -Name $n -Value $v -PropertyType DWord -Force | Out-Null }
 $log = Join-Path $env:TEMP 'ssi263_sapi.log'
 if (Test-Path $log) { Remove-Item $log }
-function Say([string]$tag) {
+function Say([string]$tag, [string]$voice = 'Braille Lite 2000 (June 2003)') {
     $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    $s.SelectVoice('Braille Lite 2000 (June 2003)')
+    $s.SelectVoice($voice)
     $wav = Join-Path $env:TEMP "sapi_setting_$tag.wav"
     $s.SetOutputToWaveFile($wav); $s.Speak('Is it ready?'); $s.SetOutputToNull(); $s.Dispose()
     [System.IO.File]::ReadAllBytes($wav)
 }
 function Same($a, $b) { if ($a.Length -ne $b.Length) { return $false }; for ($i = 0; $i -lt $a.Length; $i++) { if ($a[$i] -ne $b[$i]) { return $false } }; $true }
+# a canonical PCM WAV: the rate at byte 24, the data chunk's size after its 'data' tag
+function WavRate($b) { [BitConverter]::ToInt32($b, 24) }
+function WavSeconds($b) {
+    for ($i = 12; $i -lt $b.Length - 8; ) {
+        $id = [Text.Encoding]::ASCII.GetString($b, $i, 4); $size = [BitConverter]::ToInt32($b, $i + 4)
+        if ($id -eq 'data') { return $size / 2.0 / (WavRate $b) }
+        $i += 8 + $size
+    }
+    -1
+}
 $bad = 0
 try {
-    Set-S 'Diagnostics' 1; Set-S 'Inflection' 1; Set-S 'Whine' 0
+    Set-S 'Diagnostics' 1; Set-S 'Inflection' 1; Set-S 'Whine' 0; Set-S 'AccentInflection' 100; Set-S 'SampleRate' 22050
     $default = Say 'default'
     # every setting change restarts the server cold; the control must be cold too, so toggle one and come back
     Set-S 'Whine' 1; $null = Say 'toggle'; Set-S 'Whine' 0
@@ -32,9 +44,31 @@ try {
     $flat = Say 'inflection_off'
     Set-S 'Inflection' 1; Set-S 'Whine' 2
     $whine = Say 'whine'
+    Set-S 'Whine' 0
+    $accent = Say 'accent_default' 'Accent-mini'
+    Set-S 'AccentInflection' 0
+    $accentFlat = Say 'accent_inflection0' 'Accent-mini'
+    Set-S 'AccentInflection' 100
+    $rates = @{}
+    foreach ($r in 11025, 22050, 44100) { Set-S 'SampleRate' $r; $rates[$r] = Say "rate_$r" }
+    Set-S 'SampleRate' 22050
     $checks = @(@('the same settings twice give identical audio', (Same $default $again)),
                 @('inflection off changes the sound', -not (Same $default $flat)),
-                @('the whine changes the sound', -not (Same $default $whine)))
+                @('the whine changes the sound', -not (Same $default $whine)),
+                @('the Accent''s inflection 0 changes its sound', -not (Same $accent $accentFlat)))
+    # System.Speech writes its WAV in its own default format and converts what the engine gives it, so the file's
+    # header cannot show the engine's rate.  Two checks instead: the engine's own log (the last three utterances)
+    # shows the bytes it produced scaling with the rate, and the file lasts as long at every rate -- which it only
+    # does if SAPI read the rate the engine declared (a wrong declaration plays the audio fast or slow).
+    $written = @(Get-Content $log | Select-String 'bytes-written=(\d+)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
+    $n = $written.Count
+    $bytes = @{ 11025 = $written[$n - 3]; 22050 = $written[$n - 2]; 44100 = $written[$n - 1] }
+    $base = WavSeconds $rates[22050]
+    foreach ($r in 11025, 22050, 44100) {
+        $secs = WavSeconds $rates[$r]; $ratio = $bytes[$r] / [double]$bytes[22050]
+        $checks += ,@(('sample rate {0}: the engine wrote {1} bytes ({2:N3} x the 22 kHz), the file lasts {3:N3} s (22 kHz: {4:N3} s)' -f $r, $bytes[$r], $ratio, $secs, $base),
+                      (([Math]::Abs($ratio - $r / 22050.0) -le 0.05 * $r / 22050.0) -and ([Math]::Abs($secs - $base) -le 0.05 * $base)))
+    }
     foreach ($c in $checks) { if (-not $c[1]) { $bad++ }; Write-Host ('{0,-4} {1}' -f $(if ($c[1]) { 'ok' } else { 'FAIL' }), $c[0]) }
 } finally {
     foreach ($n in $names) {

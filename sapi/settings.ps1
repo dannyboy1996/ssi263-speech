@@ -67,7 +67,7 @@ function Invoke-Elevated([string]$switches) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'SSI-263 SAPI settings'; $form.Size = New-Object Drawing.Size(640, 470)
+$form.Text = 'SSI-263 SAPI settings'; $form.Size = New-Object Drawing.Size(640, 580)
 $form.StartPosition = 'CenterScreen'
 $label = New-Object Windows.Forms.Label
 $label.Text = '&Voices:'; $label.AutoSize = $true; $label.Location = New-Object Drawing.Point(12, 14)
@@ -123,17 +123,45 @@ $whine.DropDownStyle = 'DropDownList'; $whine.AccessibleName = 'Unit hiss and wh
 $whine.AccessibleDescription = 'The faint sound a real Braille Lite makes under its speech, generated from the chip''s clock. Off by default.'
 $whine.Location = New-Object Drawing.Point(150, 57); $whine.Size = New-Object Drawing.Size(300, 24)
 foreach ($item in @('Off', 'Hiss (even volumes, as the factory setting)', 'Whine (odd volumes)')) { [void]$whine.Items.Add($item) }
+# The Accent's own voice setting, as its NVDA add-on's Inflection slider (five steps).
+$accentGroup = New-Object Windows.Forms.GroupBox
+$accentGroup.Text = 'Accent'; $accentGroup.Location = New-Object Drawing.Point(12, 364); $accentGroup.Size = New-Object Drawing.Size(600, 60)
+$accentLabel = New-Object Windows.Forms.Label
+$accentLabel.Text = 'Accent i&nflection:'; $accentLabel.AutoSize = $true
+$accentLabel.Location = New-Object Drawing.Point(12, 26)
+$accentInfl = New-Object Windows.Forms.ComboBox
+$accentInfl.DropDownStyle = 'DropDownList'; $accentInfl.AccessibleName = 'Accent inflection'
+$accentInfl.AccessibleDescription = 'How much the Accent card varies its pitch, as the Inflection slider of its NVDA add-on. 100, the card''s own setting at power-up, is the default.'
+$accentInfl.Location = New-Object Drawing.Point(150, 23); $accentInfl.Size = New-Object Drawing.Size(300, 24)
+$accentSteps = @(100, 75, 50, 25, 0)
+foreach ($item in @('100 (the card''s own, the default)', '75', '50', '25', '0')) { [void]$accentInfl.Items.Add($item) }
+# Every voice's output rate, as the add-ons' Sample rate.
+$rateLabel = New-Object Windows.Forms.Label
+$rateLabel.Text = '&Sample rate (every voice):'; $rateLabel.AutoSize = $true
+$rateLabel.Location = New-Object Drawing.Point(12, 440)
+$rate = New-Object Windows.Forms.ComboBox
+$rate.DropDownStyle = 'DropDownList'; $rate.AccessibleName = 'Sample rate, every voice'
+$rate.AccessibleDescription = '22 kHz keeps everything the chip produces. 44 kHz keeps the clock images and the brightest hiss, 11 kHz sounds like a unit''s own speaker. Takes effect with the next thing spoken.'
+$rate.Location = New-Object Drawing.Point(190, 437); $rate.Size = New-Object Drawing.Size(260, 24)
+$rateSteps = @(11025, 22050, 44100)
+foreach ($item in @('11 kHz', '22 kHz (default)', '44 kHz')) { [void]$rate.Items.Add($item) }
 $diagnostics = New-Object Windows.Forms.CheckBox
 $diagnostics.Text = 'Write a &diagnostic log'
 $diagnostics.AccessibleName = 'Write a diagnostic log'
 $diagnostics.AccessibleDescription = 'Off by default. Records what the engine did, not what was spoken, to a file in your temp folder. Turn it on only if a bug report asks for it.'
-$diagnostics.Location = New-Object Drawing.Point(12, 370); $diagnostics.AutoSize = $true
+$diagnostics.Location = New-Object Drawing.Point(12, 476); $diagnostics.AutoSize = $true
 
 $inflection.Checked = [bool](Load-Setting 'Inflection' 1)
 $whine.SelectedIndex = [Math]::Max(0, [Math]::Min(2, (Load-Setting 'Whine' 0)))
+$ai = [Array]::IndexOf($accentSteps, (Load-Setting 'AccentInflection' 100)); if ($ai -lt 0) { $ai = 0 }
+$accentInfl.SelectedIndex = $ai
+$ri = [Array]::IndexOf($rateSteps, (Load-Setting 'SampleRate' 22050)); if ($ri -lt 0) { $ri = 1 }
+$rate.SelectedIndex = $ri
 $diagnostics.Checked = [bool](Load-Setting 'Diagnostics' 0)
 $inflection.Add_CheckedChanged({ Save-Setting 'Inflection' ([int]$inflection.Checked) })
 $whine.Add_SelectedIndexChanged({ if ($whine.SelectedIndex -ge 0) { Save-Setting 'Whine' $whine.SelectedIndex } })
+$accentInfl.Add_SelectedIndexChanged({ if ($accentInfl.SelectedIndex -ge 0) { Save-Setting 'AccentInflection' $accentSteps[$accentInfl.SelectedIndex] } })
+$rate.Add_SelectedIndexChanged({ if ($rate.SelectedIndex -ge 0) { Save-Setting 'SampleRate' $rateSteps[$rate.SelectedIndex] } })
 $diagnostics.Add_CheckedChanged({ Save-Setting 'Diagnostics' ([int]$diagnostics.Checked) })
 
 $register.Add_Click({
@@ -151,12 +179,13 @@ $unregister.Add_Click({
 $close.Add_Click({ $form.Close() })
 $form.CancelButton = $close
 $group.Controls.AddRange(@($inflection, $whineLabel, $whine))
-$form.Controls.AddRange(@($label, $list, $status, $register, $unregister, $close, $group, $diagnostics))
+$accentGroup.Controls.AddRange(@($accentLabel, $accentInfl))
+$form.Controls.AddRange(@($label, $list, $status, $register, $unregister, $close, $group, $accentGroup, $rateLabel, $rate, $diagnostics))
 Refresh-Voices
 if ($Check) {
     foreach ($item in $list.Items) { Write-Output ('voice: ' + $item) }
     Write-Output ('status: ' + $status.Text)
-    Write-Output ('inflection: {0}; whine: {1}; diagnostics: {2}' -f $inflection.Checked, $whine.SelectedItem, $diagnostics.Checked)
+    Write-Output ('inflection: {0}; whine: {1}; accent inflection: {2}; sample rate: {3}; diagnostics: {4}' -f $inflection.Checked, $whine.SelectedItem, $accentInfl.SelectedItem, $rate.SelectedItem, $diagnostics.Checked)
     exit 0
 }
 $form.Add_Shown({ $list.Focus() })
