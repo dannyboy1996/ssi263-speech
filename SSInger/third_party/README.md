@@ -15,7 +15,7 @@ real 6502 execution on the emulated bus:
 git clone --depth 1 https://github.com/floooh/chips.git third_party/chips
 ```
 
-then configure with `-DROBOVOX_HAVE_M6502=ON`. Only `chips/m6502.h`
+then configure with `-DSSINGER_HAVE_M6502=ON`. Only `chips/m6502.h`
 (header-only, MIT, cycle-steppable via pin-callback interface) is used.
 `#include "chips/m6502.h"` must resolve — e.g. `-I third_party/chips`.
 

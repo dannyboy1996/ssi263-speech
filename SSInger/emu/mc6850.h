@@ -10,8 +10,8 @@
  * No MAME code is used here (see ../third_party/README.md for why).
  * Behavior is pinned by tests/test_6850_midi.c.
  */
-#ifndef ROBOVOX_MC6850_H
-#define ROBOVOX_MC6850_H
+#ifndef SSINGER_MC6850_H
+#define SSINGER_MC6850_H
 
 #include <stdint.h>
 
@@ -160,4 +160,4 @@ static void mc6850_receive_byte(mc6850_t *m, uint8_t v, int framing_error)
 
 static int mc6850_irq_level(const mc6850_t *m) { return m->irq_level; }
 
-#endif /* ROBOVOX_MC6850_H */
+#endif /* SSINGER_MC6850_H */

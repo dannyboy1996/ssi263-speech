@@ -1,8 +1,8 @@
-/* RobovoxProcessor -- JUCE shell around the emulated Robovox system.
+/* SSIngerProcessor -- JUCE shell around the emulated Robovox system.
  *
  * MIDI in -> emulated 6850 ACIA -> clean-room translator (patent
  * EP0396141A2, embodiment 1 default) -> 1 or 4 ssi263 (SC-02) engines.
- * The 6502 socket, bus map and ROM slot live in emu/robovox_bus.h;
+ * The 6502 socket, bus map and ROM slot live in emu/ssinger_bus.h;
  * Phase 2 moves the translator into a 6502-resident ROM image.
  *
  * Editor is the generic APVTS editor (Phase 1). The PEC-style phoneme
@@ -13,12 +13,12 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
-#include "emu/robovox_bus.h"
+#include "emu/ssinger_bus.h"
 
-class RobovoxProcessor : public juce::AudioProcessor {
+class SSIngerProcessor : public juce::AudioProcessor {
 public:
-    RobovoxProcessor();
-    ~RobovoxProcessor() override;
+    SSIngerProcessor();
+    ~SSIngerProcessor() override;
 
     const juce::String getName() const override { return "SSInger"; }
     bool acceptsMidi() const override { return true; }
@@ -49,7 +49,7 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 private:
-    robovox_bus_t bus{};
+    ssinger_bus_t bus{};
     bool busOk = false;
     ssi263_params engDefaults{};
     unsigned char engRom[SSI263_ROM_BYTES]{};
@@ -64,5 +64,5 @@ private:
     void renderChunk(juce::AudioBuffer<float>& out, int from, int to);
     void feedMessage(const juce::MidiMessage& m);
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(RobovoxProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SSIngerProcessor)
 };

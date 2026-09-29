@@ -18,7 +18,7 @@ VS installer put the compiler on PATH).
 
 ```
 cmake -S SSInger -B build/SSInger
-cmake --build build/SSInger --target Robovox_VST3 --config Release
+cmake --build build/SSInger --target SSInger_VST3 --config Release
 ```
 
 `--config Release` is mandatory: MSVC is multi-config and the default
@@ -27,7 +27,7 @@ is a Debug build (works, but slow, with assert popups).
 Other targets from the same tree:
 
 ```
-cmake --build build/SSInger --target Robovox_Standalone --config Release
+cmake --build build/SSInger --target SSInger_Standalone --config Release
 cmake --build build/SSInger --target test_6850_midi --config Release
 ctest --test-dir build/SSInger -C Release
 ```
@@ -40,25 +40,25 @@ JUCE and also configure standalone:
 ## Install
 
 - **VST3**: copy the whole folder
-  `build/SSInger/Robovox_artefacts/Release/VST3/SSInger.vst3`
+  `build/SSInger/SSInger_artefacts/Release/VST3/SSInger.vst3`
   to your system's VST3 folder (on Windows: the VST3 folder inside
   Program Files / Common Files), then rescan plug-ins in
   your DAW. (Ableton: Preferences → Plug-ins → Rescan. If an old build
   persists, remove the folder, rescan once with it absent, then
   re-add — DAWs cache VST3s.)
 - **Standalone**: run
-  `build/SSInger/Robovox_artefacts/Release/Standalone/SSInger.exe`
+  `build/SSInger/SSInger_artefacts/Release/Standalone/SSInger.exe`
   (Options → Audio/MIDI settings: enable a MIDI input).
 
 ## Ways to build it wrong
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| No `.vst3` anywhere, only a folder with `Contents/x86_64-win/` empty or a `.lib` | Built target `Robovox` (shared-code library) instead of `Robovox_VST3` | Build `--target Robovox_VST3` |
+| No `.vst3` anywhere, only a folder with `Contents/x86_64-win/` empty or a `.lib` | Built target `SSInger` (shared-code library) instead of `SSInger_VST3` | Build `--target SSInger_VST3` |
 | Plugin loads but audio stutters / asserts | Debug build (forgot `--config Release`) | Rebuild with `--config Release`, reinstall |
 | New build, old behavior | DAW cached the previous `.vst3` | Remove, rescan empty, re-add, rescan |
 | `ctest` reports "Not Run" | Test binary not built, or `-C` missing | Build `--target test_6850_midi`, run `ctest -C Release` |
-| `LNK1104 cannot open .obj` / `LNK1136 corrupt file` mid-build | Stale `cl`/`MSBuild` processes from an interrupted build holding locks (then killed mid-compile) | Kill strays (`Get-Process cl,msbuild`), delete `build/SSInger/Robovox.dir`, rebuild. Build one `--target` per invocation. |
+| `LNK1104 cannot open .obj` / `LNK1136 corrupt file` mid-build | Stale `cl`/`MSBuild` processes from an interrupted build holding locks (then killed mid-compile) | Kill strays (`Get-Process cl,msbuild`), delete `build/SSInger/SSInger.dir`, rebuild. Build one `--target` per invocation. |
 | Configure re-downloads JUCE every time | Deleted `build/` | Keep `build/` (git-ignored); reconfigure reuses `build/_deps` |
 
 ## First sound (two-track method, per the patent)
@@ -76,6 +76,6 @@ JUCE and also configure standalone:
 ## Layout reference
 
 `CMakeLists.txt` (JUCE 9.0.3 via FetchContent, VST3 + Standalone),
-`plugin/` (processor), `emu/` (`mc6850.h`, `robovox_bus.h`,
-`robovox_firmware.h`), `tests/`, `note_map.txt`, `robovox_hello.wav`
+`plugin/` (processor), `emu/` (`mc6850.h`, `ssinger_bus.h`,
+`ssinger_firmware.h`), `tests/`, `note_map.txt`, `ssinger_hello.wav`
 (demo render), `RESEARCH.md` (patent/tour/hardware analysis).

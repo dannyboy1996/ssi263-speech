@@ -19,7 +19,7 @@ if errorlevel 1 (
 )
 
 echo [2/3] Build VST3 (Release)...
-cmake --build build/SSInger --target Robovox_VST3 --config Release
+cmake --build build/SSInger --target SSInger_VST3 --config Release
 if errorlevel 1 (
   echo ERROR: VST3 build failed.
   exit /b 1
@@ -39,5 +39,5 @@ if errorlevel 1 (
 
 echo.
 echo OK. VST3 folder:
-echo   build\SSInger\Robovox_artefacts\Release\VST3\SSInger.vst3
+echo   build\SSInger\SSInger_artefacts\Release\VST3\SSInger.vst3
 echo Copy that whole folder to your system's VST3 folder, then rescan in your DAW.

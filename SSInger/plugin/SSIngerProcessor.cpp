@@ -1,4 +1,4 @@
-#include "RobovoxProcessor.h"
+#include "SSIngerProcessor.h"
 
 #include <cmath>
 #include <cstring>
@@ -21,7 +21,7 @@ static const char* carrier = "carrier";
 static const char* volume = "volume";
 }
 
-RobovoxProcessor::RobovoxProcessor()
+SSIngerProcessor::SSIngerProcessor()
     : AudioProcessor(BusesProperties()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)
                          .withInput("Carrier", juce::AudioChannelSet::stereo(), false)),
@@ -31,15 +31,15 @@ RobovoxProcessor::RobovoxProcessor()
     std::memcpy(engRom, ssi263_default_rom(), sizeof(engRom));
 }
 
-RobovoxProcessor::~RobovoxProcessor()
+SSIngerProcessor::~SSIngerProcessor()
 {
     if (busOk) {
-        robovox_bus_free(&bus);
+        ssinger_bus_free(&bus);
         busOk = false;
     }
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout RobovoxProcessor::createLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout SSIngerProcessor::createLayout()
 {
     using PID = juce::ParameterID;
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -54,7 +54,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout RobovoxProcessor::createLayo
         juce::StringArray{ "N/N+1 phoneme+pitch", "Expander (PC)" }, 0));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         PID{ ids::ctlMap, 1 }, "Wheel map",
-        juce::StringArray{ "Patent (bend=filter)", "Polaxis (bend=clock)" }, 1));
+        juce::StringArray{ "Patent (bend=filter)", "Clock bend (Polaxis-style)" }, 1));
     /* SC-02 registers, straight off the chip (RESEARCH.md section 3). */
     layout.add(std::make_unique<juce::AudioParameterInt>(
         PID{ ids::artic, 1 }, "Articulation (ART)", 0, 7, 5));
@@ -85,17 +85,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout RobovoxProcessor::createLayo
     return layout;
 }
 
-void RobovoxProcessor::rebuildBus(double sampleRate, int nvoices)
+void SSIngerProcessor::rebuildBus(double sampleRate, int nvoices)
 {
     if (busOk)
-        robovox_bus_free(&bus);
-    busOk = robovox_bus_init(&bus, sampleRate, nvoices, &engDefaults, engRom) != 0;
+        ssinger_bus_free(&bus);
+    busOk = ssinger_bus_init(&bus, sampleRate, nvoices, &engDefaults, engRom) != 0;
     voicesCache = nvoices;
     if (busOk)
         applyParams();
 }
 
-void RobovoxProcessor::applyParams()
+void SSIngerProcessor::applyParams()
 {
     if (!busOk)
         return;
@@ -109,8 +109,8 @@ void RobovoxProcessor::applyParams()
 
     auto& cfg = bus.fw.cfg;
     cfg.base_channel = juce::jlimit(0, 15, (int)get(ids::phonBase) - 1);
-    cfg.embodiment = (int)get(ids::embod) == 0 ? RV_EMB_PHONEME_PITCH : RV_EMB_EXPANDER;
-    cfg.ctlmap = (int)get(ids::ctlMap) == 0 ? RV_MAP_PATENT : RV_MAP_POLAXIS;
+    cfg.embodiment = (int)get(ids::embod) == 0 ? SG_EMB_PHONEME_PITCH : SG_EMB_EXPANDER;
+    cfg.ctlmap = (int)get(ids::ctlMap) == 0 ? SG_MAP_PATENT : SG_MAP_POLAXIS;
 
     int newRate = (int)get(ids::rate);
     int newArt = (int)get(ids::artic);
@@ -120,12 +120,12 @@ void RobovoxProcessor::applyParams()
         cfg.rate = newRate & 15;
         cfg.glide = newGlide & 7;
         for (int v = 0; v < bus.nvoices; v++)
-            robovox_write_inflection(&bus.fw, v, bus.fw.v[v].inflection);
+            ssinger_write_inflection(&bus.fw, v, bus.fw.v[v].inflection);
     }
     if (newArt != cfg.articulation) {
         cfg.articulation = newArt & 7;
         for (int v = 0; v < bus.nvoices; v++)
-            robovox_write_r3(&bus.fw, v, bus.fw.v[v].amplitude);
+            ssinger_write_r3(&bus.fw, v, bus.fw.v[v].amplitude);
     }
     cfg.dur = newDur & 3;
     cfg.vel_curve = (int)get(ids::velCurve);
@@ -136,28 +136,28 @@ void RobovoxProcessor::applyParams()
         cfg.filter_ff = newFF & 0xFF;
         for (int v = 0; v < bus.nvoices; v++) {
             bus.fw.v[v].filter_ff = cfg.filter_ff;
-            robovox_bus_sc_write(v, RV_SC_R4, cfg.filter_ff, &bus);
+            ssinger_bus_sc_write(v, SG_SC_R4, cfg.filter_ff, &bus);
         }
     }
 
     double base = 1000000.0 * std::pow(2.0, get(ids::clockSt) / 12.0);
     if (base != bus.fw.nominal_xck)
-        robovox_bus_master_write(base, &bus);
+        ssinger_bus_master_write(base, &bus);
 
     volumeCache = get(ids::volume);
     carrierCache = (int)get(ids::carrier);
 }
 
-void RobovoxProcessor::prepareToPlay(double sampleRate, int)
+void SSIngerProcessor::prepareToPlay(double sampleRate, int)
 {
     rebuildBus(sampleRate, 1);
 }
 
-void RobovoxProcessor::releaseResources()
+void SSIngerProcessor::releaseResources()
 {
 }
 
-bool RobovoxProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+bool SSIngerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
     auto out = layouts.getMainOutputChannelSet();
     if (out != juce::AudioChannelSet::stereo() && out != juce::AudioChannelSet::mono())
@@ -166,23 +166,23 @@ bool RobovoxProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
     return true;
 }
 
-void RobovoxProcessor::feedMessage(const juce::MidiMessage& m)
+void SSIngerProcessor::feedMessage(const juce::MidiMessage& m)
 {
     auto* d = m.getRawData();
     for (int i = 0; i < m.getRawDataSize(); i++)
-        robovox_bus_midi_byte(&bus, d[i]);
+        ssinger_bus_midi_byte(&bus, d[i]);
 }
 
-void RobovoxProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int to)
+void SSIngerProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int to)
 {
     int n = to - from;
     if (n <= 0)
         return;
     if ((long)tmp.size() < n + 1)
         tmp.resize((size_t)n + 1);
-    robovox_bus_render(&bus, n, tmp.data());
-    robovox_bus_slew_filters(&bus, n / bus.sample_rate);
-    robovox_bus_service_all(&bus);
+    ssinger_bus_render(&bus, n, tmp.data());
+    ssinger_bus_slew_filters(&bus, n / bus.sample_rate);
+    ssinger_bus_service_all(&bus);
     int nch = out.getNumChannels();
     for (int ch = 0; ch < nch; ch++) {
         float* dst = out.getWritePointer(ch, from);
@@ -193,7 +193,7 @@ void RobovoxProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int 
     }
 }
 
-void RobovoxProcessor::processBlock(juce::AudioBuffer<float>& buffer,
+void SSIngerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                     juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -231,18 +231,18 @@ void RobovoxProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
 }
 
-juce::AudioProcessorEditor* RobovoxProcessor::createEditor()
+juce::AudioProcessorEditor* SSIngerProcessor::createEditor()
 {
     return new juce::GenericAudioProcessorEditor(*this);
 }
 
-void RobovoxProcessor::getStateInformation(juce::MemoryBlock& destData)
+void SSIngerProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary(*xml, destData);
 }
 
-void RobovoxProcessor::setStateInformation(const void* data, int sizeInBytes)
+void SSIngerProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
         apvts.replaceState(juce::ValueTree::fromXml(*xml));
@@ -250,5 +250,5 @@ void RobovoxProcessor::setStateInformation(const void* data, int sizeInBytes)
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new RobovoxProcessor();
+    return new SSIngerProcessor();
 }

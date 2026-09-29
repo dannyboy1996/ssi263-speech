@@ -17,10 +17,10 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 |---|---|
 | `RESEARCH.md` | Patent mapping, 1998-tour deltas, SC-02 register map, emulator decisions, VST parameter table, open questions |
 | `CMakeLists.txt` | JUCE 9.0.3 VST3 + Standalone build (JUCE via FetchContent) |
-| `plugin/` | `RobovoxProcessor` (APVTS + audio/MIDI glue), minimal editor |
+| `plugin/` | `SSIngerProcessor` (APVTS + audio/MIDI glue), minimal editor |
 | `emu/mc6850.h` | Clean-room MC6850 ACIA model (MIDI subset: 8N1, Rx IRQ, RDRF/TDRE/OVRN) |
-| `emu/robovox_bus.h` | System bus: 6502 socket, 2 KB RAM (6116 footprint), ROM socket, ACIA, 2x74LS245 SC-02 buffer, mode switch |
-| `emu/robovox_firmware.h` | Clean-room translator: patent embodiment 1 (phoneme ch N, pitch ch N+1), inflection @ A=440 Hz, wheels, modes |
+| `emu/ssinger_bus.h` | System bus: 6502 socket, 2 KB RAM (6116 footprint), ROM socket, ACIA, 2x74LS245 SC-02 buffer, mode switch |
+| `emu/ssinger_firmware.h` | Clean-room translator: patent embodiment 1 (phoneme ch N, pitch ch N+1), inflection @ A=440 Hz, wheels, modes |
 | `tests/` | Offline (no-JUCE) C tests: 6850 framing/IRQ, translator vectors, SSI-263 smoke render |
 | `third_party/README.md` | Vendoring notes: JUCE, floooh `chips` m6502, why not MAME |
 
@@ -57,10 +57,10 @@ VST3 (needs network once for JUCE 9.0.3 + a C++20 toolchain):
 
 ```
 cmake -S SSInger -B build/SSInger -DCMAKE_BUILD_TYPE=Release
-cmake --build build/SSInger --target Robovox_VST3 --config Release
+cmake --build build/SSInger --target SSInger_VST3 --config Release
 ```
 
-Artifacts land in `build/SSInger/Robovox_artefacts/Release/`:
+Artifacts land in `build/SSInger/SSInger_artefacts/Release/`:
 `VST3/SSInger.vst3` (the plugin bundle — copy the whole folder to
 your system's VST3 folder; on Windows that is the VST3 folder inside
 Program Files / Common Files) and `Standalone/SSInger.exe` (play

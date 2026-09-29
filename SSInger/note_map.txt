@@ -1,7 +1,7 @@
-# Robovox default note -> phoneme map (phoneme MIDI channel N)
+# SSInger default note -> phoneme map (phoneme MIDI channel N)
 #
 # REFERENCE ONLY. This file documents the key layout compiled into the
-# VST (robovox_default_table in emu/robovox_firmware.h). The plugin does
+# VST (ssinger_default_table in emu/ssinger_firmware.h). The plugin does
 # not read it -- there is nothing to install or keep next to the .vst3.
 # A custom layout becomes a UI feature (Phase-2 PEC-style editor), not
 # a sidecar file.

@@ -1,13 +1,13 @@
-# Robovox VST3 — JUCE 9.0.3 build
+# SSInger VST3 — JUCE 9.0.3 build
 cmake_minimum_required(VERSION 3.22)
-project(Robovox VERSION 0.1.0 LANGUAGES C CXX)
+project(SSInger VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 99)
 
-option(ROBOVOX_BUILD_TESTS "Build offline C tests (no JUCE needed)" ON)
-option(ROBOVOX_HAVE_M6502 "Enable real 6502 stepping (needs third_party/chips)" OFF)
+option(SSINGER_BUILD_TESTS "Build offline C tests (no JUCE needed)" ON)
+option(SSINGER_HAVE_M6502 "Enable real 6502 stepping (needs third_party/chips)" OFF)
 
 # --- JUCE 9.0.3, fetched once at configure time ---------------------------
 include(FetchContent)
@@ -19,9 +19,9 @@ FetchContent_MakeAvailable(JUCE)
 
 # --- floooh chips (m6502.h) -------------------------------------------------
 # Clone once: git clone --depth 1 https://github.com/floooh/chips.git third_party/chips
-if(ROBOVOX_HAVE_M6502)
+if(SSINGER_HAVE_M6502)
   if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips/chips/m6502.h")
-    message(FATAL_ERROR "ROBOVOX_HAVE_M6502=ON but third_party/chips/chips/m6502.h missing. See third_party/README.md.")
+    message(FATAL_ERROR "SSINGER_HAVE_M6502=ON but third_party/chips/chips/m6502.h missing. See third_party/README.md.")
   endif()
 endif()
 
@@ -35,10 +35,10 @@ if(UNIX)
 endif()
 
 # --- The plugin --------------------------------------------------------------
-juce_add_plugin(Robovox
+juce_add_plugin(SSInger
   COMPANY_NAME "ssi263-speech"
   PLUGIN_MANUFACTURER_CODE S263
-  PLUGIN_CODE Rvox
+  PLUGIN_CODE Ssng
   FORMATS VST3 Standalone
   IS_SYNTH TRUE
   PRODUCT_NAME "SSInger"
@@ -49,30 +49,30 @@ juce_add_plugin(Robovox
   VST3_CATEGORIES "Instrument" "Synth" "Vocal"
   DESCRIPTION "SSInger: SC-02 singing voice after the Robovox patent (EP0396141A2)")
 
-target_sources(Robovox PRIVATE
-  plugin/RobovoxProcessor.cpp)
+target_sources(SSInger PRIVATE
+  plugin/SSIngerProcessor.cpp)
 
-target_include_directories(Robovox PRIVATE
+target_include_directories(SSInger PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${SSI263_CSRC_DIR}")
 
-if(ROBOVOX_HAVE_M6502)
-  target_include_directories(Robovox PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips")
-  target_compile_definitions(Robovox PRIVATE ROBOVOX_HAVE_M6502=1)
+if(SSINGER_HAVE_M6502)
+  target_include_directories(SSInger PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/chips")
+  target_compile_definitions(SSInger PRIVATE SSINGER_HAVE_M6502=1)
 endif()
 
-target_compile_definitions(Robovox PUBLIC
+target_compile_definitions(SSInger PUBLIC
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
   JUCE_VST3_CAN_REPLACE_VST2=0)
 
-target_link_libraries(Robovox PRIVATE
+target_link_libraries(SSInger PRIVATE
   ssi263
   juce::juce_audio_utils
   juce::juce_audio_processors)
 
 # --- Offline tests (plain C, no JUCE) -----------------------------------------
-if(ROBOVOX_BUILD_TESTS)
+if(SSINGER_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
