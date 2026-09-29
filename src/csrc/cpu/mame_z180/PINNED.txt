@@ -1,0 +1,24 @@
+MAME's Z180 instruction core, vendored.
+
+Upstream:  https://github.com/mamedev/mame
+Tree:      c0d36776743 (2026-08-27); last change to src/devices/cpu/z180: e0deaf3898b1 (2026-08-16)
+Path:      src/devices/cpu/z180/
+Licence:   BSD-3-Clause, per file (LICENSE-BSD-3-Clause.txt beside this file)
+Author:    Juergen Buchmueller (copyright-holders line of every file taken)
+
+Copied UNCHANGED (byte for byte; `cmp` against upstream at the tree above):
+  z180ops.h    the instruction helper macros (flags, ALU, block ops, SLP, ...)
+  z180tbl.h    the cycle tables and flag tables
+  z180op.hxx   the unprefixed opcodes
+  z180cb.hxx   CB-prefixed opcodes
+  z180dd.hxx   DD-prefixed (IX) opcodes
+  z180fd.hxx   FD-prefixed (IY) opcodes
+  z180ed.hxx   ED-prefixed opcodes (incl. the Z180's own: MLT, TST, IN0/OUT0, OTIM..., SLP)
+  z180xy.hxx   DDCB / FDCB opcodes
+
+NOT taken: z180.cpp / z180.h (MAME's device class: the framework, save states, the run loop), z180asci.*, z180csio.*
+(MAME devices), z180dasm.* (the disassembler), hd647180x.* (another part).  The few machine-level functions this
+library needs from z180.cpp are re-created in ../z180_mame.cpp, each marked with the upstream function it follows.
+
+To update: copy the same files from a newer MAME, re-run the checks in ../README.md, and record the new revision here.
+Never edit these files in place; any local change belongs in our own files, marked.
