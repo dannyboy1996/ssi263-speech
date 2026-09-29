@@ -141,8 +141,8 @@ uint8_t z180_asci::rdr_r()
 void z180_asci::cntla_w(uint8_t data)
 {
     m_cntla = data;
-    if (!(data & CNTLA_EFR))              // writing EFR = 0 resets the error flags (Zilog UM, CNTLA bit 3)
-        m_stat &= ~STAT_ERRORS;
+    if (!(data & CNTLA_EFR))              // EFR = 0 resets the error flags: UNVERIFIED (recalled from Zilog's manual,
+        m_stat &= ~STAT_ERRORS;           // not checked; MAME clears them on EFR = 1).  Never exercised yet.
     update_rate();
 }
 

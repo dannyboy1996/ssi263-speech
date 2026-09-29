@@ -5,10 +5,11 @@
  * DE) answered through three external OUTs of a stub at FF00h, and a HALT at 0000h for the warm boot.  Memory is a
  * flat 64K: after reset the Z180's MMU maps logical to physical one to one.
  *
- * Expected on a Z180: the groups that use the Z80's undocumented IXH/IXL/IYH/IYL instructions fail (the Z180
- * treats DD/FD before an H or L instruction as an undefined opcode; MAME's core then runs the plain H/L form).
- * The acceptance for the MAME core is that every documented group passes and that the failures are the same as
- * the legacy core's.
+ * On a Z180, DD/FD before an instruction that doesn't use HL (DD 40h, ...) is undefined and TRAPs.  zexall's
+ * `ld <bcdexya>` group runs those: the legacy core (z180emu, which has TRAP) jumps to 0000h there and the run ends
+ * at the warm boot; MAME's core has no TRAP, runs the unprefixed instruction and finishes.  Both implement the
+ * IX/IY-half forms (ld ixh,n, ...).  The acceptance for the MAME core: every zexdoc group passes, and the groups
+ * before that point give the same results (CRCs included) on both cores.  The last line says where it halted.
  *
  *   build (MAME):   g++ -O2 -I. -I.. -x c test_z180_zex.c -x c++ z180_mame.cpp z180_asci.cpp -o zex_mame
  *   build (legacy): gcc -O2 -DZEX_LEGACY -I. -I.. -I<z180emu> -I<z180emu>/z180 test_z180_zex.c z180_legacy.c ...

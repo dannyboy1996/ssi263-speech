@@ -22,11 +22,18 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
 ## The MAME core against the legacy one (first comparison, 2026-09-29)
 
 - The instruction exercisers: zexdoc's and zexall's first 50 groups give the same result on both cores, CRCs
-  included. Then the legacy core TRAPs on an undefined opcode (z180emu added the Z180's TRAP); MAME's core has none,
-  runs the plain H/L form of a DD/FD-prefixed H/L instruction, and finishes (zexdoc: every group OK).
-- The Braille Lite (`nvda/tools/bns_equiv.py`, English): the same 3,709 SSI-263 writes, every value identical. The
-  times differ: phonemes inside an utterance within 11 microseconds, utterance starts by up to about 2 ms (the
-  serial port: back-to-back bytes took 12 bit times on the legacy core, 10 here, as on the chip), and one wait at
-  start-up by 34-47 ms (under investigation). The unit's XON/XOFF stream differs with those times.
+  included. Then the legacy core TRAPs on an undefined opcode (z180emu added the Z180's TRAP; zexall's
+  `ld <bcdexya>` runs DD/FD before non-HL instructions); MAME's core has none, runs the unprefixed instruction, and
+  finishes (zexdoc: every group OK).
+- The Braille Lite (`nvda/tools/bns_equiv.py`): the same SSI-263 writes, every value identical (English 3,709,
+  Spanish 3,597). The times differ:
+  - phonemes inside an utterance: within 11 microseconds;
+  - utterance starts: up to 2.7 ms. That's the serial port: back-to-back bytes took 12 bit times on the legacy
+    core, 10 here, as on the chip;
+  - one start-up wait: 34 ms (English) and 60 ms (Spanish). The CPU sleeps until the 100 ms PRT0 tick, and on the
+    legacy core the timers fall behind board time at each SLP. That's its slice-ending quirk (CONTRACT.md 3),
+    measured at 335,299 cycles at that wake.
+  - The unit's XON/XOFF stream differs with those times.
+- Two units in one process (`../blazie/test_bl_board.c` built with `BL_Z180_MAME`): identical alone and interleaved.
 - Known limits of the MAME core: no TRAP; MAME's wait states (DCNTL, charged on every access; the legacy core
   charged them only in DMA).
