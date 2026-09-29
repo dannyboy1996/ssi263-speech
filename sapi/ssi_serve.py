@@ -190,6 +190,11 @@ def driver(module):
         if module == "blazie":
             d._set_voiceInflection(OPTIONS["inflection"])
             d._set_whine(OPTIONS["whine"])
+            # never the open channel after speech: SAPI gives the engine its next text only after this utterance's
+            # stream ends, so the idle hiss would hold every queued utterance back by up to ~10 s (the driver's
+            # tail would feed on and this server would wait for it: a response ends 0.12 s after the last feed)
+            if hasattr(d, "_set_keepOpen") and os.environ.get("SSI263_SAPI_KEEP_OPEN") != "1":   # 1: a test control
+                d._set_keepOpen(False)
         _drivers[module] = d
     return _drivers[module]
 

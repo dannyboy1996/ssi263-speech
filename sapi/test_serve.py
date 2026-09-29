@@ -129,6 +129,14 @@ if "blazie:blazie" in [v[0] for v in vs]:
         ok = voiced(heard[label]) and heard[label] != heard["default"]
         bad += not ok
         print("%-4s setting %-15s changes the Braille Lite's sound: %s" % ("ok" if ok else "FAIL", label, ok))
+    # ... but never the NVDA driver's open channel: SAPI sends the next text only after this stream ends, so the
+    # idle whine after speech would hold every queued utterance back ~10 s.  The whine's utterance lasts as long
+    # as the plain one (SSI263_SAPI_KEEP_OPEN=1 in the server: the check must fail).
+    extra_s = (len(heard["whine"]) - len(heard["default"])) / 2.0 / RATE
+    ok = abs(extra_s) < 0.5
+    bad += not ok
+    print("%-4s with the whine on, the utterance ends with its speech (%+.2f s against the plain one)" % (
+        "ok" if ok else "FAIL", extra_s))
 # the dialog's Accent inflection reaches its driver: the default twice is identical (the control), 0 changes it
 if "accentmini:mini" in [v[0] for v in vs]:
     heard = {}
