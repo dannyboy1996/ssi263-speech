@@ -31,6 +31,7 @@ if [ "$DATA" != "$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie" ]; th
 fi
 check "two units in one process" ./build/linux/test_bl_board "$DATA/BL2ENG.BNS" "$DATA/bl2_2003_warm.state" \
     "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
+check "CPU contract tests (MAME Z180 core)" ./build/linux/test_z180_contract
 check "two units in one process (MAME Z180 core)" ./build/linux/test_bl_board_mame "$DATA/BL2ENG.BNS" \
     "$DATA/bl2_2003_warm.state" "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
 check "golden (en)" python3 nvda/tools/bns_equiv.py --native "$LIB" --against=nvda/tools/golden/blazie_en.txt

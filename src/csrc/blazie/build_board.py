@@ -10,6 +10,7 @@ w64devkit gcc, i686 (as bns_live.exe), one translation unit (bl_unity.c) with th
 The same two programs on MAME's Z180 core (../cpu/z180_mame.cpp, the corrected path; not yet accepted, see
 ../cpu/README.md), for comparing the cores:
   bl_live_mame.exe, test_bl_board_mame.exe
+and the CPU contract's own tests on that core, test_z180_contract.exe.
 """
 import os
 import subprocess
@@ -48,12 +49,16 @@ def build_mame(gcc, env):
             ("z180_asci", os.path.join(cpu, "z180_asci.cpp"), gxx, MAME_CXX),
             ("bl_board", os.path.join(HERE, "bl_board.c"), gcc, ["-O3", "-std=gnu89", "-DBL_Z180_MAME"]),
             ("bl_live", os.path.join(HERE, "bl_live.c"), gcc, ["-O3", "-std=gnu89"]),
-            ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"])):
+            ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"]),
+            ("test_z180_contract", os.path.join(cpu, "test_z180_contract.c"), gcc, ["-O2", "-std=gnu89"])):
         objs[name] = os.path.join(obj, name + ".o")
         subprocess.run([cc] + flags + inc + ["-c", "-o", objs[name], src], env=env, check=True)
     core = [objs["bl_board"], objs["z180_mame"], objs["z180_asci"]]
     for exe, main_o in (("bl_live_mame.exe", "bl_live"), ("test_bl_board_mame.exe", "test_bl_board")):
         subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, exe), objs[main_o]] + core, env=env, check=True)
+    # the CPU contract's tests (no board): ../cpu/test_z180_contract.c
+    subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, "test_z180_contract.exe"), objs["test_z180_contract"],
+                                        objs["z180_mame"], objs["z180_asci"]], env=env, check=True)
 
 
 def main():

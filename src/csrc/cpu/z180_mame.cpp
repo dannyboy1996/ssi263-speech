@@ -186,8 +186,8 @@ int z180_step(z180 *c)
     int ins = burst ? d.drv_burst_chunk() : d.drv_instruction();   // E
     charge(c, ins);                       // F
 
-    int dma = 0;                          // G
-    if (!burst && !sleeping && (d.m_dstat & Z180_DSTAT_DME)) {
+    int dma = 0;                          // G -- not when burst mode is on now (execute_run re-checks it first:
+    if (!burst && !sleeping && (d.m_dstat & Z180_DSTAT_DME) && !d.drv_burst()) {   // the next step is a chunk)
         int t = d.z180_dma0(6);
         charge(c, t);
         dma += t;

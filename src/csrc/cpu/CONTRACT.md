@@ -167,13 +167,22 @@ opcode fetch already happens before the charge), not by a constant. Before migra
 - `investigation/section95-review/`: NMI sampled at slice entry against per boundary, and the Python 8085's EI/TRAP
   behaviour.
 
-**Tests still to write** (none exists yet):
-- burst-DMA chunks, their acceptance and boundary order, and the legacy budget-taking chunk;
-- SLP wake-without-service, IOSTOP, and DMA and refresh stopped in sleep;
-- interrupt arrival at both edges of a HALT or SLP slot;
-- injected instructions: an INTR NOP (no push), an RST and a CALL (their own pushes), the byte index restarting,
-  exactly one instruction per step;
-- a zero budget, reset, and two instances interleaved.
+**Written for the MAME Z180 core** (`test_z180_contract.c`, in run_tests and the Linux gate; its must-fail
+controls, each undoing one driver rule, are `contract_controls.py`):
+- a zero budget; reset (counts zeroed, a pending NMI edge dropped, a held INT0 re-sampled); two instances
+  interleaved;
+- NMI taken at the step after the boundary that raised it (IFF1 into IFF2); the EI shadow;
+- an interrupt raised at a HALT slot's boundary, accepted at the next step (the slot is 3 T);
+- SLP wake-without-service with IEF1 = 0, and HALT staying halted in the same program;
+- IOSTOP stopping the PRT;
+- burst DMA in chunks of 16 bytes, each its own step with a boundary and no instruction.
+
+**Tests still to write:**
+- the legacy exceptions on `z180_legacy.c`: the budget-taking burst chunk and the SLP slice end (the NMI one
+  exists, `investigation/section95-review/`);
+- DMA and refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
+- injected instructions (the 8085's INTR; the Z180's IM0): an INTR NOP (no push), an RST and a CALL (their own
+  pushes), the byte index restarting, exactly one instruction per step.
 
 Acceptance per core:
 - **The z180emu adapter (legacy path)**: the Braille Lite goldens, English and Spanish, bit for bit, through

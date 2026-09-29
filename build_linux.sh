@@ -53,6 +53,8 @@ $CXX $MAME -c -o "$OUT/obj_mame/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
 $CC -O3 -std=gnu89 -ffp-contract=off -DBL_Z180_MAME -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/bl_board.o" "$SRC/blazie/bl_board.c"
 $CC -O3 -std=gnu89 -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
 $CXX -o "$OUT/test_bl_board_mame" "$OUT"/obj_mame/*.o -lm
+$CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/test_z180_contract.o" "$SRC/cpu/test_z180_contract.c"
+$CXX -o "$OUT/test_z180_contract" "$OUT/test_z180_contract.o" "$OUT/obj_mame/z180_mame.o" "$OUT/obj_mame/z180_asci.o"
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"
