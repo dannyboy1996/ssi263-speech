@@ -32,10 +32,33 @@ typedef struct {
     z180 *cpu;
     int raise_at_step, raise_line;             /* raise this line in the boundary of that step (0 = never) */
     long raised_step;
+    int ack[4];                                /* the interrupt acknowledge's bytes, by index */
+    int ack_idx[8], n_ack;                     /* the indices asked for, in order */
+    uint32_t wr_addr[16], wr_pc[16];           /* memory writes at 8000h and above: address, z180_pc() then */
+    int n_wr;
+    int rx_on;                                 /* serial_rx answers 55h on channel 0 */
 } machine;
 
 static uint8_t rd(void *ctx, uint32_t a) { return ((machine *)ctx)->mem[a & 0xFFFF]; }
-static void wr(void *ctx, uint32_t a, uint8_t v) { ((machine *)ctx)->mem[a & 0xFFFF] = v; }
+static void wr(void *ctx, uint32_t a, uint8_t v)
+{
+    machine *m = (machine *)ctx;
+    m->mem[a & 0xFFFF] = v;
+    if ((a & 0xFFFF) >= 0x8000 && (a & 0xFFFF) < 0x9000 && m->n_wr < 16) {   /* the stack region */
+        m->wr_addr[m->n_wr] = a & 0xFFFF;
+        m->wr_pc[m->n_wr++] = z180_pc(m->cpu);
+    }
+}
+static int ack(void *ctx, int line, int n)
+{
+    machine *m = (machine *)ctx;
+    (void)line;
+    if (m->n_ack < 8)
+        m->ack_idx[m->n_ack++] = n;
+    return n < 4 ? m->ack[n] : -1;
+}
+static int serial_rx(void *ctx, int channel) { return channel == 0 && ((machine *)ctx)->rx_on ? 0x55 : -1; }
+static int serial_pin(void *ctx, int pin) { (void)ctx; return pin == Z180_PIN_DCD0; }   /* carrier present */
 static uint8_t in(void *ctx, uint16_t p) { (void)ctx; (void)p; return 0xFF; }
 static void out(void *ctx, uint16_t p, uint8_t v) { (void)ctx; (void)p; (void)v; }
 
@@ -61,6 +84,9 @@ static machine *new_machine(void)
     bus.in = in;
     bus.out = out;
     bus.boundary = boundary;
+    bus.irq_ack = ack;
+    bus.serial_rx = serial_rx;
+    bus.serial_pin = serial_pin;
     m->cpu = z180_create(&bus, 6144000.0);
     return m;
 }
@@ -359,6 +385,189 @@ static void t_two_cores(void)
     free_machine(b);
 }
 
+/* IM0 with INT0 held: LD SP,9000h; IM 0; EI; NOPs from 0007h.  Step 4 is the NOP in EI's shadow; step 5 accepts
+   at A and runs the acknowledged instruction at E; step 6 is whatever comes next. */
+static machine *im0_program(int b0, int b1, int b2)
+{
+    machine *m = new_machine();
+    int i;
+    org(m, 0);
+    ld_sp(m, 0x9000);                           /* 0000 */
+    db(m, 2, 0xED, 0x46);                       /* 0003 IM 0 */
+    db(m, 1, 0xFB);                             /* 0005 EI */
+    for (i = 0; i < 8; i++)
+        db(m, 1, 0x00);                         /* 0006.. NOPs */
+    m->ack[0] = b0;
+    m->ack[1] = b1;
+    m->ack[2] = b2;
+    z180_set_irq(m->cpu, Z180_INT0, 1);
+    return m;
+}
+
+static void t_im0(void)
+{
+    static const struct { const char *name; int b0, b1, b2; int acks; uint32_t pc_after, sp_after; } cases[] = {
+        {"im0_nop", 0x00, 0, 0, 1, 0x0007, 0x9000},     /* nothing pushed, nothing jumped: on at 0007h */
+        {"im0_rst", 0xC7, 0, 0, 1, 0x0000, 0x8FFE},     /* RST 0: pushes 0007h, to 0000h */
+        {"im0_call", 0xCD, 0x34, 0x12, 3, 0x1234, 0x8FFE},   /* CALL 1234h: three acknowledge bytes */
+    };
+    int k;
+    for (k = 0; k < 3; k++) {
+        machine *m = im0_program(cases[k].b0, cases[k].b1, cases[k].b2);
+        z180_regs r;
+        char d[260];
+        int i, acks_ok = m->n_ack == 0, pushed_ok, t5 = 0, ok;
+        for (i = 1; i <= 5; i++) {
+            int t = z180_step(m->cpu);
+            if (i == 4)
+                acks_ok = m->n_ack == 0;        /* nothing acknowledged before the accepting step */
+            if (i == 5)
+                t5 = t;
+        }
+        z180_regs_get(m->cpu, &r);
+        for (i = 0; i < m->n_ack; i++)
+            if (m->ack_idx[i] != i)
+                acks_ok = 0;                    /* the index restarts at 0 and counts up */
+        acks_ok = acks_ok && m->n_ack == cases[k].acks;
+        pushed_ok = cases[k].sp_after == 0x9000 ? m->n_wr == 0
+                    : (m->n_wr == 2 && m->mem[0x8FFE] == 0x07 && m->mem[0x8FFF] == 0x00);
+        z180_step(m->cpu);                      /* step 6: its boundary is the next instruction */
+        ok = acks_ok && pushed_ok && r.pc == cases[k].pc_after && r.sp == cases[k].sp_after && r.iff1 == 0
+             && m->pcs[5] == cases[k].pc_after && m->pcs[4] == 0x0007;
+        sprintf(d, "acknowledge bytes read %d (indices from 0: %s), PC %04X SP %04X, stack writes %d "
+                "(pushed %02X%02X), IFF1 %d, step 5 took %d T; step 5 boundary %04X, step 6 boundary %04X",
+                m->n_ack, acks_ok ? "yes" : "no", r.pc, r.sp, m->n_wr, m->mem[0x8FFF], m->mem[0x8FFE], r.iff1, t5,
+                m->pcs[4], m->pcs[5]);
+        report(cases[k].name, ok, d);
+        free_machine(m);
+    }
+}
+
+/* Cycle-stealing DMA0, memory to memory, 32 bytes waiting; then SLP (or HALT). */
+static machine *dma_sleep_program(int use_slp)
+{
+    machine *m = new_machine();
+    int i;
+    org(m, 0);
+    out0(m, 0x20, 0x00); out0(m, 0x21, 0x10); out0(m, 0x22, 0x00);   /* SAR0 = 01000h */
+    out0(m, 0x23, 0x00); out0(m, 0x24, 0x20); out0(m, 0x25, 0x00);   /* DAR0 = 02000h */
+    out0(m, 0x26, 32); out0(m, 0x27, 0x00);                          /* BCR0 = 32 */
+    out0(m, 0x31, 0x00);                                             /* DMODE: memory+1 -> memory+1, cycle steal */
+    out0(m, 0x30, 0x40);                                             /* DSTAT: DE0 -> DME; step 20 */
+    if (use_slp)
+        db(m, 2, 0xED, 0x76);                                        /* 0032 SLP: step 21 */
+    else
+        db(m, 2, 0x76, 0x00);                                        /* 0032 HALT */
+    for (i = 0; i < 32; i++)
+        m->mem[0x1000 + i] = (uint8_t)(0xB0 + i);
+    return m;
+}
+
+static int dma_copied(const machine *m)
+{
+    int i, n = 0;
+    for (i = 0; i < 32; i++)
+        n += m->mem[0x2000 + i] == (uint8_t)(0xB0 + i);
+    return n;
+}
+
+static void t_sleep_dma(void)
+{
+    machine *s = dma_sleep_program(1), *h = dma_sleep_program(0), *n = dma_sleep_program(0);
+    char d[240];
+    int i, s20, s21, h_after, n_before, n_after;
+    for (i = 0; i < 20; i++)
+        z180_step(s->cpu);
+    s20 = dma_copied(s);                        /* the DSTAT write's own step moves one byte */
+    z180_step(s->cpu);
+    s21 = dma_copied(s);                        /* the SLP step: none */
+    for (i = 0; i < 40; i++)
+        z180_step(s->cpu);
+    for (i = 0; i < 60; i++)
+        z180_step(h->cpu);
+    h_after = dma_copied(h);                    /* the control: HALT leaves the DMAC running */
+    sprintf(d, "SLP: %d byte(s) after the DSTAT write, %d after the SLP step, %d after 40 sleep slots; "
+            "HALT control: %d of 32", s20, s21, dma_copied(s), h_after);
+    report("sleep_dma", s20 == 1 && s21 == 1 && dma_copied(s) == 1 && h_after == 32, d);
+
+    /* an NMI wakes a HALT and disables DMA (DME cleared): the copy stops there */
+    for (i = 0; i < 24; i++)
+        z180_step(n->cpu);
+    n_before = dma_copied(n);
+    z180_set_irq(n->cpu, Z180_NMI, 1);
+    for (i = 0; i < 30; i++)
+        z180_step(n->cpu);
+    n_after = dma_copied(n);
+    sprintf(d, "HALT with DMA running: %d bytes when NMI raised, %d after 30 more steps (want one more at most: "
+            "the raising step's own transfer)", n_before, n_after);
+    report("nmi_stops_dma", n_before > 1 && n_before < 32 && n_after <= n_before + 1, d);
+    free_machine(s);
+    free_machine(h);
+    free_machine(n);
+}
+
+static void t_accept_pc(void)
+{
+    machine *a = new_machine(), *h = new_machine();
+    char d[240];
+    int i;
+    org(a, 0);                                  /* a NOP at 0000h, then the NMI: the interrupted instruction is 0001h */
+    db(a, 4, 0x00, 0x00, 0x00, 0x00);
+    org(a, 0x66);
+    db(a, 1, 0x76);
+    z180_step(a->cpu);
+    z180_set_irq(a->cpu, Z180_NMI, 1);
+    z180_step(a->cpu);
+    org(h, 0);                                  /* HALT at 0003h: interrupted there, resuming at 0004h */
+    ld_sp(h, 0x9000);
+    db(h, 1, 0x76);
+    org(h, 0x66);
+    db(h, 1, 0x76);
+    for (i = 0; i < 4; i++)
+        z180_step(h->cpu);
+    z180_set_irq(h->cpu, Z180_NMI, 1);
+    z180_step(h->cpu);
+    /* the reset SP is 0000h: the first NMI pushes to FFFEh-FFFFh, outside the recorded region -- read it back */
+    sprintf(d, "after a NOP: pushed %02X%02X; from HALT at 0003h: stack writes %d seeing z180_pc %04X %04X, pushed "
+            "%02X%02X", a->mem[0xFFFF], a->mem[0xFFFE], h->n_wr, h->n_wr > 0 ? h->wr_pc[0] : 0,
+            h->n_wr > 1 ? h->wr_pc[1] : 0, h->mem[0x8FFF], h->mem[0x8FFE]);
+    report("accept_pc", a->mem[0xFFFF] == 0x00 && a->mem[0xFFFE] == 0x01 && h->n_wr == 2 && h->wr_pc[0] == 0x0004
+                        && h->wr_pc[1] == 0x0004 && h->mem[0x8FFF] == 0x00 && h->mem[0x8FFE] == 0x04, d);
+    free_machine(a);
+    free_machine(h);
+}
+
+/* ASCI0 error flags: bytes arrive without being read, the FIFO overruns; OVRN shows at the fourth read; a CNTLA
+   write with EFR = 1 leaves it, one with EFR = 0 clears it (Zilog UM, printed pages 126 and 128). */
+static void t_asci_efr(void)
+{
+    machine *m = new_machine();
+    char d[200];
+    int i;
+    org(m, 0);
+    out0(m, 0x02, 0x00);                        /* CNTLB0: SS = 0, PS = 0, DR = 0: 160 T a bit */
+    out0(m, 0x00, 0x64);                        /* CNTLA0: RE, TE, 8 bits */
+    for (i = 0; i < 4; i++)
+        db(m, 4, 0x06, 0x00, 0x10, 0xFE);       /* LD B,0; DJNZ $ -- four times: well over 5 frames */
+    for (i = 0; i < 4; i++)
+        db(m, 3, 0xED, 0x38, 0x08);             /* IN0 A,(RDR0) x4 */
+    db(m, 3, 0xED, 0x38, 0x04);                 /* IN0 A,(STAT0) */
+    st_a(m, 0x9000);
+    out0(m, 0x00, 0x2C);                        /* CNTLA0: TE, 8 bits, EFR = 1 (RE off) */
+    db(m, 3, 0xED, 0x38, 0x04);
+    st_a(m, 0x9001);
+    out0(m, 0x00, 0x24);                        /* EFR = 0 */
+    db(m, 3, 0xED, 0x38, 0x04);
+    st_a(m, 0x9002);
+    db(m, 1, 0x76);
+    m->rx_on = 1;
+    z180_run(m->cpu, 200000);
+    sprintf(d, "STAT0 after the fourth read %02X, after EFR = 1 %02X, after EFR = 0 %02X (want OVRN 40h, 40h, clear)",
+            m->mem[0x9000], m->mem[0x9001], m->mem[0x9002]);
+    report("asci_efr", (m->mem[0x9000] & 0x40) && (m->mem[0x9001] & 0x40) && !(m->mem[0x9002] & 0x40), d);
+    free_machine(m);
+}
+
 int main(void)
 {
     t_zero_budget();
@@ -370,6 +579,10 @@ int main(void)
     t_burst_dma();
     t_reset();
     t_two_cores();
+    t_im0();
+    t_sleep_dma();
+    t_accept_pc();
+    t_asci_efr();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

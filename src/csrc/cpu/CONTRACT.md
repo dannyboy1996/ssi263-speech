@@ -114,7 +114,9 @@ legacy path, SLP keeps today's slice-ending quirk (3).
 ## 7. What callbacks see, by phase
 
 - **A** (vectored acceptance only): the stack writes and any vector read (`irq_ack`, byte 0). `*_cycles()` is the
-  step's start. `*_pc()` is the interrupted instruction's address. There has been no boundary for the vector's first
+  step's start. `*_pc()` is the interrupted instruction's address: where execution resumes, the address acceptance
+  pushes. For a halted core that is the address after its HALT or SLP **(model)**; during the slot itself (D, E)
+  `*_pc()` stays on the HALT, or on SLP's first byte (MAME's convention; the legacy core reports SLP's second). There has been no boundary for the vector's first
   instruction yet. An injected instruction makes no bus access at A.
 - **E** for an injected instruction: its bytes come from `irq_ack` (*n* = 0, 1, …), and any stack writes are the
   instruction's own.
@@ -175,14 +177,22 @@ controls, each undoing one driver rule, are `contract_controls.py`):
 - an interrupt raised at a HALT slot's boundary, accepted at the next step (the slot is 3 T);
 - SLP wake-without-service with IEF1 = 0, and HALT staying halted in the same program;
 - IOSTOP stopping the PRT;
-- burst DMA in chunks of 16 bytes, each its own step with a boundary and no instruction.
+- burst DMA in chunks of 16 bytes, each its own step with a boundary and no instruction;
+- (after Astra, Reply 92) IM0 injected instructions: a NOP (nothing pushed, no instruction after it in the step),
+  an RST and a CALL (their own pushes of the interrupted PC; the CALL's operands from acknowledge bytes 1 and 2),
+  the byte index from 0; DMA stopped by SLEEP, including in the SLP's own step, with HALT's DMA as the positive
+  control; an NMI waking a HALT and disabling DMA; the acceptance-phase `*_pc()`, from HALT too; the ASCI's
+  error flags cleared by EFR = 0 and not by EFR = 1.
 
 **Tests still to write:**
 - the legacy exceptions on `z180_legacy.c`: the budget-taking burst chunk and the SLP slice end (the NMI one
   exists, `investigation/section95-review/`);
-- DMA and refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
-- injected instructions (the 8085's INTR; the Z180's IM0): an INTR NOP (no push), an RST and a CALL (their own
-  pushes), the byte index restarting, exactly one instruction per step.
+- refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
+- the 8085's INTR injected instructions (with its core);
+- TRAP (Z180: ITC.TRAP/UFO, the stacked PC, legal prefixed instructions as negative controls), with its
+  implementation;
+- one targeted test per extra hunk of MAME's e0deaf3898b (TMDR1H readback, DMA completion while IFF1 = 0, DMA1
+  edge/level, internal IRQ gating), each failing with its hunk reverted.
 
 Acceptance per core:
 - **The z180emu adapter (legacy path)**: the Braille Lite goldens, English and Spanish, bit for bit, through

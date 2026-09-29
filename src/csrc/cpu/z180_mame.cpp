@@ -6,15 +6,17 @@
 //
 // The driver is ours.  It follows MAME's execute_run (z180.cpp, the revision in mame_z180/PINNED.txt) piece by
 // piece, one step at a time, in the contract's phases:
-//   A  NMI (edge) first, as execute_run's entry check but at every step; else the maskable sources through MAME's
-//      check_interrupts (IFF1 and the EI shadow gate them).  A burst-DMA step accepts only the NMI, which stops DMA.
+//   A  NMI (edge) first, as execute_run's entry check but at every step; else INT0 in IM0 (injected: nothing
+//      pushed or read here); else the maskable sources through MAME's check_interrupts (IFF1 and the EI shadow
+//      gate them).  A burst-DMA step accepts only the NMI, which stops DMA.  z180_pc() is the interrupted address.
 //   B  the acceptance T-states, and the on-chip timers clocked by them (handle_io_timers).
 //   C  the EI shadow ends.
 //   D  steps++, the saved PC, the ASCI catch-up, bus->boundary.
-//   E  one instruction, or one HALT/SLP slot of 3 T-states (as execute_run), or one burst-DMA chunk.
+//   E  one instruction (the injected one after an IM0 acceptance), or one HALT/SLP slot of 3 T-states (as
+//      execute_run), or one burst-DMA chunk.
 //   F  its T-states, and the timers clocked by them.
 //   G  cycle-stolen DMA as execute_run does it after each instruction (channel 0, one transfer, then channel 1),
-//      only while DME is set, and none in SLEEP (Zilog: SLEEP stops the DMAC).
+//      only while DME is set, and none in SLEEP as it stands after E (Zilog: SLEEP stops the DMAC).
 //
 // Differences from MAME, each deliberate:
 //   - NMI is sampled at every step (MAME: at execute_run's entry only; the legacy core keeps that quirk).
@@ -25,7 +27,10 @@
 //     unchanged: a request masked by IEF1 leaves it halted.
 //   - IOSTOP (ICR bit 5) stops the PRT/FRC and the ASCI (Zilog UM); MAME clocks them regardless.
 //   - The ASCI is ours (z180_asci.hpp); its interrupt request is a level.
-// Known limits: MAME has no TRAP (an undefined opcode is logged and skipped); nor has the legacy core.  Memory and
+//   - IM0: the acknowledged instruction is injected at E (drv_injected_instruction), operands from further
+//     acknowledge bytes; MAME's take_interrupt pushes for any byte but CALL and JP and reads one byte.
+//   - SLEEP stops the DMAC, including in the step whose instruction is the SLP; HALT does not.
+// Known limits: MAME has no TRAP (an undefined opcode is logged and skipped); the legacy core has one.  Memory and
 // I/O wait states are MAME's: DCNTL's MWI/IWI are charged on every access (the legacy core charged them only in
 // DMA).  Every one of these goes into the comparison with the legacy core before new goldens.
 #include "z180_mame_machine.cpp"
@@ -36,8 +41,45 @@
 
 bool z180_device::drv_burst() const
 {
-    return (m_dstat & Z180_DSTAT_DME) && (m_dstat & Z180_DSTAT_DE0)
+    return m_HALT != 2                    // SLEEP stops the DMAC (Zilog UM); HALT does not
+           && (m_dstat & Z180_DSTAT_DME) && (m_dstat & Z180_DSTAT_DE0)
            && (m_dmode & Z180_DMODE_MMOD) == Z180_DMODE_MMOD;
+}
+
+// The length of an unprefixed opcode (its operand bytes follow it).  For an injected instruction the PC must not
+// move, so it is set back by the operand count before the operands are read; ROP/ARG then bring it to where it was.
+static int z180_op_length(uint8_t op)
+{
+    switch (op) {
+    case 0x01: case 0x11: case 0x21: case 0x31: case 0x22: case 0x2a: case 0x32: case 0x3a:
+    case 0xc2: case 0xc3: case 0xc4: case 0xca: case 0xcc: case 0xcd: case 0xd2: case 0xd4: case 0xda: case 0xdc:
+    case 0xe2: case 0xe4: case 0xea: case 0xec: case 0xf2: case 0xf4: case 0xfa: case 0xfc:
+        return 3;
+    case 0x06: case 0x0e: case 0x16: case 0x1e: case 0x26: case 0x2e: case 0x36: case 0x3e:
+    case 0x10: case 0x18: case 0x20: case 0x28: case 0x30: case 0x38:
+    case 0xc6: case 0xce: case 0xd6: case 0xde: case 0xe6: case 0xee: case 0xf6: case 0xfe: case 0xd3: case 0xdb:
+        return 2;
+    default:
+        return 1;
+    }
+}
+
+// Phase E after an IM0 acceptance (CONTRACT.md 4): the step's one instruction comes from the acknowledge -- byte 0
+// the opcode, then any operands -- and does its own control transfer: an RST or a CALL pushes the interrupted PC
+// as that instruction does; a NOP pushes nothing.  No ordinary instruction follows in this step.  Its T-states
+// are the instruction's own (MAME's cycle table, plus wait states).  CHANGED from MAME, whose take_interrupt pushes
+// for any byte but CALL and JP and reads only one acknowledge byte.  A prefixed opcode (CB, DD, ED, FD) is run
+// through the same path, but its PC is not held (a known limit; no board injects one).
+int z180_device::drv_injected_instruction()
+{
+    m_inject.n = 0;
+    m_inject.on = 1;
+    uint8_t op = z180_ack_byte(m_bus, &m_inject);
+    _PCD = (_PCD - (z180_op_length(op) - 1)) & 0xffff;
+    m_extra_cycles = 0;
+    int t = exec_op(op);
+    m_inject.on = 0;
+    return t + m_extra_cycles;
 }
 
 bool z180_device::drv_sleep_wake_request()
@@ -65,6 +107,14 @@ int z180_device::drv_accept(bool burst)
     }
     if (burst)
         return 0;                         // the DMAC has the bus
+    // INT0 in IM0 is an injected instruction: accepted here (IFF1 and IFF2 cleared, HALT left), nothing pushed or
+    // read; E runs it.  INT0 is the highest maskable source, so check_interrupts would have taken it first.
+    if (m_IM == 0 && m_IFF1 && !m_after_EI && m_irq_state[0] != CLEAR_LINE && (m_itc & Z180_ITC_ITE0)) {
+        LEAVE_HALT();
+        m_IFF1 = m_IFF2 = 0;
+        m_inject_pending = 1;
+        return 0;
+    }
     int t = check_interrupts();
     if (t == 0 && m_HALT == 2 && !m_IFF1 && drv_sleep_wake_request())
         LEAVE_HALT();                     // CHANGED: SLEEP ends without service; on after SLP
@@ -73,6 +123,10 @@ int z180_device::drv_accept(bool burst)
 
 int z180_device::drv_instruction()
 {
+    if (m_inject_pending) {
+        m_inject_pending = 0;
+        return drv_injected_instruction();
+    }
     if (m_HALT)
         return 3;                         // a HALT or SLP slot (execute_run: 3 T-states)
     _PPC = _PCD;
@@ -154,6 +208,8 @@ void z180_reset(z180 *c)
     c->dev->m_asci_0.reset();
     c->dev->m_asci_1.reset();
     c->dev->m_csio_0.reset();
+    c->dev->m_inject_pending = 0;
+    c->dev->m_inject.on = 0;
     c->cycles = c->steps = 0;
     c->pc = 0;
     apply_lines(c);
@@ -164,6 +220,10 @@ int z180_step(z180 *c)
     z180_device &d = *c->dev;
     bool burst = d.drv_burst();
 
+    // A's callbacks (the stack writes, a vector read) see the interrupted instruction's address: where execution
+    // resumes, which is what acceptance pushes.  A halted core's PC rests on its HALT (or on SLP's first byte), so
+    // that address is past it.  D then sets the saved instruction-start PC as usual.
+    c->pc = (uint32_t)((d.m_PC.w.l + (d.m_HALT == 2 ? 2 : d.m_HALT ? 1 : 0)) & 0xffff);
     int acc = d.drv_accept(burst);        // A
     charge(c, acc);                       // B
     d.m_after_EI = 0;                     // C
@@ -182,12 +242,13 @@ int z180_step(z180 *c)
     if (c->bus.boundary)
         c->bus.boundary(c->bus.ctx, c->pc);
 
-    bool sleeping = d.m_HALT == 2;
     int ins = burst ? d.drv_burst_chunk() : d.drv_instruction();   // E
     charge(c, ins);                       // F
 
-    int dma = 0;                          // G -- not when burst mode is on now (execute_run re-checks it first:
-    if (!burst && !sleeping && (d.m_dstat & Z180_DSTAT_DME) && !d.drv_burst()) {   // the next step is a chunk)
+    // G: not in SLEEP as it stands now (an SLP just executed stops the DMAC too), and not when burst mode is on
+    // now (execute_run re-checks it first: the next step is a chunk).  A HALT leaves the DMAC running.
+    int dma = 0;
+    if (!burst && d.m_HALT != 2 && (d.m_dstat & Z180_DSTAT_DME) && !d.drv_burst()) {
         int t = d.z180_dma0(6);
         charge(c, t);
         dma += t;

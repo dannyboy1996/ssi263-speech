@@ -86,15 +86,35 @@ enum {
 };
 
 // ---- the framework's stand-ins ----------------------------------------------------------------------------------
+// An IM0 injected instruction (CONTRACT.md 4): while `on`, opcode and operand reads take the next acknowledge byte
+// from the bus (byte n = 0, 1, ...) instead of memory.
+struct z180_inject {
+    int on, n;
+};
+
+inline u8 z180_ack_byte(const cpu_bus *bus, z180_inject *inj)
+{
+    int v = bus->irq_ack ? bus->irq_ack(bus->ctx, Z180_INT0, inj->n) : -1;
+    inj->n++;
+    return v < 0 ? 0xff : (u8)v;
+}
+
 struct z180_mem {                         // m_program, m_cprogram: memory at the physical (post-MMU) address
     const cpu_bus *bus;
-    u8 read_byte(offs_t a) const { return bus->read(bus->ctx, a); }
+    z180_inject *inj;                     // m_cprogram only (operand reads); null for m_program (data)
+    u8 read_byte(offs_t a) const { return inj && inj->on ? z180_ack_byte(bus, inj) : bus->read(bus->ctx, a); }
     void write_byte(offs_t a, u8 v) const { bus->write(bus->ctx, a, v); }
 };
 
 struct z180_opcodes {                     // m_copcodes: opcode fetches
     const cpu_bus *bus;
-    u8 read_byte(offs_t a) const { return bus->fetch ? bus->fetch(bus->ctx, a) : bus->read(bus->ctx, a); }
+    z180_inject *inj;
+    u8 read_byte(offs_t a) const
+    {
+        if (inj->on)
+            return z180_ack_byte(bus, inj);
+        return bus->fetch ? bus->fetch(bus->ctx, a) : bus->read(bus->ctx, a);
+    }
 };
 
 struct z180_io {                          // m_io: external I/O only (the internal registers never get here)
@@ -129,8 +149,10 @@ class z180_device {
 public:
     explicit z180_device(const cpu_bus *bus)
         : m_extended_io(false), m_asci_0(0, bus), m_asci_1(1, bus),
-          m_cprogram{bus}, m_program{bus}, m_copcodes{bus}, m_io{bus}, m_bus(bus)
+          m_cprogram{bus, &m_inject}, m_program{bus, nullptr}, m_copcodes{bus, &m_inject}, m_io{bus}, m_bus(bus)
     {
+        m_inject.on = m_inject.n = 0;
+        m_inject_pending = 0;
         m_asci[0] = &m_asci_0;
         m_asci[1] = &m_asci_1;
         m_csio = &m_csio_0;
@@ -161,6 +183,9 @@ public:
     int drv_instruction();                // phase E: one instruction, or one HALT/SLP slot
     int drv_burst_chunk();                // phase E of a burst-DMA step
     bool drv_burst() const;               // is the next step a burst-DMA chunk?
+    int drv_injected_instruction();       // phase E after an IM0 acceptance: the instruction from the acknowledge
+    z180_inject m_inject;                 // reads redirected to the acknowledge while on
+    int m_inject_pending;                 // A accepted an IM0 request; E runs the injected instruction
 
     // ---- from z180.h (protected there) ----
     virtual uint8_t z180_internal_port_read(uint8_t port);
