@@ -411,6 +411,43 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
         CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame at 8 MHz: experimental smoke test)",
                             [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
 
+# The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; opt-in,
+# SSI263_ACCENT_SA_CORE=c, the add-on keeps the Python 8085): the board's rules (test_as_board.c; their must-fail
+# controls, seventeen builds, are accentsa/as_controls.py's, run by hand as so_controls.py); the C host against the
+# Python host (compare_accent_sa.py --quick: every write's value and chip time, the audio and the counting events
+# identical) with two controls, one value flipped and the core's own counting (writes identical, the counting
+# predicate must catch it); the C API alone (as_render: the ROMs from their folder, a text into a WAV, no Python); and
+# the built add-on's Accent SA voice on it, 64- and 32-bit.  Built by src/csrc/accentsa/build_board.py.
+ASA_LIB = os.path.join(os.path.dirname(HERE), "dist", "accentsa-lib")
+ASA_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "accentsa")
+ASA_ROMS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "aicom-accent-sa")
+if os.path.isfile(os.path.join(ASA_LIB, "test_as_board.exe")):
+    CHECKS.append(check("Accent SA board (MAME 8085): its rules", [os.path.join(ASA_LIB, "test_as_board.exe")]))
+    CHECKS.append(check("Accent SA: the C API alone (as_render)",
+                        [os.path.join(ASA_LIB, "as_render.exe"), ASA_ROMS, "Testing one two three.",
+                         os.path.join(HERE, "out", "as_render_test.wav")],
+                        ok=lambda out: bool(re.search(r"^[1-9]\d*\.\d\d s of audio in ", out, re.M))))
+    if os.path.isfile(os.path.join(ASA_LIB, "x64", "accent_sa.dll")):
+        CMP_ASA = os.path.join(ASA_DIR, "compare_accent_sa.py")
+        CHECKS.append(check("Accent SA: C host = Python host (writes, times, audio, counting)", [PY, CMP_ASA, "--quick"]))
+        CHECKS.append(check("Accent SA: C host CONTROL (a value flipped, must fail)",
+                            [PY, CMP_ASA, "--quick", "--only", "commands"],
+                            env={"ACCENTSA_COMPARE_FLIP": "1"}, expect_fail=True,
+                            fail_marks=[r"^FAIL values +write values DIFFER at write 100 of \d+/\d+",
+                                        r"^ok +times +every write's chip time identical", r"^accent_sa cores: FAILED$"]))
+        CHECKS.append(check("Accent SA: C host CONTROL (the core's own counting, must fail)",
+                            [PY, CMP_ASA, "--quick", "--only", "commands"],
+                            env={"ACCENTSA_COMPARE_SLICES": "chip"}, expect_fail=True,
+                            fail_marks=[r"^FAIL counting +the Python host: [1-9]\d* acceptance\(s\) ended a slice, "
+                                        r"0 TRAP\(s\) in EI's shadow; the C board: 0 carried, 0 held",
+                                        r"^ok +values", r"^ok +times", r"^accent_sa cores: FAILED$"]))
+        CHECKS.append(check("driver_sim accentsa on the C host (NVDA 64-bit)",
+                            [PY, "-S", "driver_sim.py", "accentsa", NVDA, "rt-c"], env={"SSI263_ACCENT_SA_CORE": "c"}))
+        if os.path.isfile(PY37) and os.path.isdir(os.path.join(WIN7, "nvda2023app")):      # the x86 DLL
+            CHECKS.append(check("driver_sim accentsa on the C host (nvda2023app, 32-bit)",
+                                [PY37, "run37.py", "../driver_sim.py", "accentsa", "nvda2023app", "rt-c"],
+                                env={"NVDA_APP": "nvda2023app", "SSI263_ACCENT_SA_CORE": "c"}, cwd=WIN7))
+
 # MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
 # clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
 # both CPUs, every promised invariant identical -- write values and times, audio, registers, FLAGS by its policy

@@ -58,6 +58,10 @@ def main():
     shutil.copy2(os.path.join(ENGINE, "hosts", "pc86.py"), eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "accent_sa.py"), os.path.join(eng, "accent_sa_host.py"))
     shutil.copy2(os.path.join(ENGINE, "hosts", "i8085.py"), eng)
+    # the same host in C on MAME's 8085: opt-in only (SSI263_ACCENT_SA_CORE=c; accent_sa.dll, which the add-on does
+    # not carry, from SSI263_ACCENT_SA_DLL or the research tree); the module alone, so the tests can run the built
+    # add-on on it
+    shutil.copy2(os.path.join(ENGINE, "hosts", "accent_sa_c.py"), eng)
     os.makedirs(os.path.join(eng, "accent-sa"))
     for name in ("u2.BIN", "u3.BIN", "u4.BIN"):
         shutil.copy2(os.path.join(SA_ROMS, name), os.path.join(eng, "accent-sa", name))

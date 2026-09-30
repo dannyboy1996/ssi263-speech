@@ -376,6 +376,14 @@ if WHICH == "blazie":
     print("blazie spanish: voice listed %s, spoken, language switching: %s" % ("blazie_es" in voices, "ok" if es_ok else "FAILED"))
     rate_ok = rate_ok and es_ok
 
+if SA:
+    # the Accent SA's host: the Python 8085 by default; SSI263_ACCENT_SA_CORE=c (opt-in) the C host on MAME's 8085
+    # (src/csrc/accentsa) -- a silent fallback would be a failure
+    host = type(d._box).__name__
+    want = "AccentSAC" if os.environ.get("SSI263_ACCENT_SA_CORE", "").strip().lower() == "c" else "AccentSA"
+    print("accent sa host: %s (want %s): %s" % (host, want, "ok" if host == want else "FAILED"))
+    rate_ok = rate_ok and host == want
+
 # the Sample rate combo box: 22 kHz by default; each rate gets its own player and the same speech (length and level)
 from array import array  # noqa: E402
 srate_default = d._out_rate == 22050 and d._get_sampleRate() == "22050"

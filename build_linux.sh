@@ -62,7 +62,7 @@ $CXX -o "$OUT/test_bl_board_mame" "$OUT"/obj_mame/*.o -lm
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/test_z180_contract.o" "$SRC/cpu/test_z180_contract.c"
 $CXX -o "$OUT/test_z180_contract" "$OUT/test_z180_contract.o" "$OUT/obj_mame/z180_mame.o" "$OUT/obj_mame/z180_asci.o"
 $CXX $MAME -o "$OUT/test_z180_whitebox" "$SRC/cpu/test_z180_whitebox.cpp" "$OUT/obj_mame/z180_asci.o"
-# MAME's 8085 core (src/csrc/cpu/i8085_mame.cpp, the Accent SA's; no board yet): the CPU contract's tests.  Its own
+# MAME's 8085 core (src/csrc/cpu/i8085_mame.cpp, the Accent SA's; its board below): the CPU contract's tests.  Its own
 # object folder, outside obj_mame's glob.
 mkdir -p "$OUT/obj_i8085"
 $CXX $MAME -Wno-sign-compare -c -o "$OUT/obj_i8085/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
@@ -89,6 +89,21 @@ $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i86/test_i86_contract.o" "$
 $CXX -o "$OUT/test_i86_contract" "$OUT/obj_i86/test_i86_contract.o" "$OUT/obj_i86/i86_mame.o"
 $CC -O3 -std=gnu89 -fPIC -I$SRC/cpu -c -o "$OUT/obj_i86/pc86.o" "$SRC/pc86/pc86.c"
 $CXX -shared -o "$OUT/libpc86.so" "$OUT/obj_i86/pc86.o" "$OUT/obj_i86/i86_mame.o"
+
+# The Accent SA (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host in C; opt-in, the add-on keeps
+# the Python 8085): the board's tests, as_render (the C API alone, the chip built in) and libaccent_sa.so for
+# src/hosts/accent_sa_c.py.  The .so leaves the chip's functions undefined: they come from the libssi263speech.so
+# that ssi263/native.py loaded, made global by accent_sa_c.py first, so the host drives the caller's chip.  Own folder.
+mkdir -p "$OUT/obj_accentsa"
+$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_accentsa/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
+for f in as_board as_usart as_host; do
+    $CC -O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/accentsa -I$SRC -c -o "$OUT/obj_accentsa/$f.o" "$SRC/accentsa/$f.c"
+done
+$CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC/accentsa -c -o "$OUT/test_as_board.o" "$SRC/accentsa/test_as_board.c"
+$CXX -o "$OUT/test_as_board" "$OUT/test_as_board.o" "$OUT/obj_accentsa/as_board.o" "$OUT/obj_accentsa/as_usart.o" "$OUT/obj_accentsa/i8085_mame.o"
+$CC -O2 -std=gnu89 -I$SRC/accentsa -I$SRC -c -o "$OUT/as_render.o" "$SRC/accentsa/as_render.c"
+$CXX -o "$OUT/as_render" "$OUT/as_render.o" "$OUT"/obj_accentsa/*.o "$OUT/obj/ssi263.o" "$OUT/obj/ssi263dsp.o" -lm
+$CXX -shared -o "$OUT/libaccent_sa.so" "$OUT"/obj_accentsa/*.o -lm
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"
