@@ -248,15 +248,18 @@ if os.path.isfile(RA_TEST):
     for arg, marks in (
             ("old-completion", [r"^FAIL last load, no cleanup: final load seen 0, ended while the chip still sounded 1, "
                                 r"0 samples played$", r"^FAIL final load never ends: ended as state 5 ",
-                                r"^run ahead contract: 4 of 10 FAILED$"]),
+                                r"^run ahead contract: 4 of 11 FAILED$"]),
             ("old-limit", [r"^FAIL owed, first load at 3\.1 s: ended as state 5 \(limit = 6\)",
-                           r"^run ahead contract: 1 of 10 FAILED$"]),
+                           r"^run ahead contract: 1 of 11 FAILED$"]),
             ("old-alloc", [r"^FAIL allocation fails \(acknowledgements\): ended as state 5 .* after 300 of 300 loads$",
                            r"^FAIL allocation fails \(writes\): ended as state 6 .* after 1024 of 1050 writes$",
-                           r"^run ahead contract: 2 of 10 FAILED$"]),
+                           r"^run ahead contract: 2 of 11 FAILED$"]),
             ("old-reading", [r"^FAIL 5 ms threshold .*first wrong: load 5 answered 0\.0\d\d ms after the request$",
                              r"^FAIL slow service \(50 ms answers in speech\): worst answer off by 49\.9\d\d ms",
-                             r"^run ahead contract: 2 of 10 FAILED$"])):
+                             r"^run ahead contract: 2 of 11 FAILED$"]),
+            ("old-settle", [r"^FAIL cancel while capturing: the unit settles first: mid-routine at the stop 1, waits "
+                            r"for an interrupt at the cancel 0, 0 of its writes dropped",
+                            r"^run ahead contract: 1 of 11 FAILED$"])):
         CHECKS.append(check("run ahead contract CONTROL (%s, must fail)" % arg, [RA_TEST, arg], expect_fail=True,
                             fail_marks=marks))
 if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
@@ -310,21 +313,43 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
              [r"^FAIL lane 2 case 1 step 0\.5000 ms: UNCLASSIFIED 40 ", LANES_SUM % 4])):
         CHECKS.append(check("run ahead lanes CONTROL (%s, must fail)" % what, [PY, "run_ahead_lanes.py", "--quick"] + args,
                             env={"RUN_AHEAD_LANES_BREAK": brk}, expect_fail=True, fail_marks=marks))
-    # the firmware and board state at semantic checkpoints (run_ahead_state.py), and the same continuation after them:
-    # without a cancel every checkpoint must agree but for the listed timing differences; its control changes one RAM
-    # byte.  With a cancel mid-utterance there is an OPEN finding (English: phonemes of the cancelled text at the head
-    # of the next utterance); this tracker must keep showing it until it is fixed -- then flip it to a passing check
+    # the firmware and board state at semantic checkpoints (run_ahead_state.py), and the same continuation after them,
+    # without and with a cancel mid-utterance: every checkpoint must agree but for the named, justified differences
+    # (per-checkpoint timing, the stack below SP, the firmware's seconds counters; after a cancel, what the unit read
+    # ahead of the listener).  Its controls: one RAM byte changed; the cancel's leak put back (RA_BRK_SETTLE: the
+    # respoken utterance led by cancelled text, write 12 of 175/181, as it was)
     for lang in ([], ["--es"]):
-        CHECKS.append(check("run ahead state = lockstep at checkpoints, no cancel, %s" % ("Spanish" if lang else "English"),
+        what = "Spanish" if lang else "English"
+        CHECKS.append(check("run ahead state = lockstep at checkpoints, no cancel, %s" % what,
                             [PY, "run_ahead_state.py", "--no-cancel"] + lang))
+        CHECKS.append(check("run ahead state = lockstep at checkpoints, a cancel then respeech, %s" % what,
+                            [PY, "run_ahead_state.py"] + lang))
     CHECKS.append(check("run ahead state CONTROL (a RAM byte changed, must fail)",
                         [PY, "run_ahead_state.py", "--no-cancel"], env={"RUN_AHEAD_STATE_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAIL setting .*FINDING: RAM 1 cells beyond timing's: FFF00 00/5A$",
                                     r"^run ahead state \(English\): 1 FAILED$"]))
-    CHECKS.append(check("run ahead state OPEN FINDING tracker (cancel, then respeech: must still show)",
-                        [PY, "run_ahead_state.py"], expect_fail=True,
-                        fail_marks=[r"^FAIL respoken .*writes DIFFER at \d+ of \d+/\d+$",
+    CHECKS.append(check("run ahead state CONTROL (the cancel's leak put back, must fail)",
+                        [PY, "run_ahead_state.py"], env={"RUN_AHEAD_STATE_BREAK": "settle"}, expect_fail=True,
+                        fail_marks=[r"^FAIL respoken .*writes DIFFER at 12 of 175/181",
                                     r"^run ahead state \(English\): \d+ FAILED$"]))
+    # a cancel, then at once a new say (run_ahead_cancel.py): the new utterance begins with its own phonemes, over
+    # sweeps of the cancel time (with and without history, and in the driver's 30 ms blocks); the lockstep's own rarer
+    # line-boundary race is reported, not gated.  Its control puts the leak back
+    for lang in ([], ["--es"]):
+        CHECKS.append(check("run ahead cancel: no cancelled text at the next head, %s" % ("Spanish" if lang else "English"),
+                            [PY, "run_ahead_cancel.py"] + lang))
+    CHECKS.append(check("run ahead cancel CONTROL (the leak put back, must fail)", [PY, "run_ahead_cancel.py", "--quick"],
+                        env={"RUN_AHEAD_CANCEL_BREAK": "settle"}, expect_fail=True,
+                        fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
+                                    r"^run ahead cancel \(English\): 1 FAILED$"]))
+    # ... and through the real driver (run_ahead_driver.py): Tab held in Windows' Run dialog, NVDA's cancel and speak
+    # every 30 and 50 ms; its control never cancels the unit
+    if os.path.isdir(os.path.join(os.path.dirname(HERE), "dist", "blazie-build")):
+        CHECKS.append(check("run ahead through the driver: Tab in the Run dialog", [PY, "run_ahead_driver.py"]))
+        CHECKS.append(check("run ahead through the driver CONTROL (the unit never cancelled, must fail)",
+                            [PY, "run_ahead_driver.py"], env={"RUN_AHEAD_DRIVER_BREAK": "nocancel"}, expect_fail=True,
+                            fail_marks=[r"^FAIL Tab every 30 ms: .* [1-9]\d* led by anything but their own label",
+                                        r"^run ahead through the driver, Run dialog \(run ahead\): 2 FAILED$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

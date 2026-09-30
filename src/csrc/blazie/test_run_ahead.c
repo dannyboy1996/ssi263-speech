@@ -7,6 +7,7 @@
  *   test_run_ahead.exe old-limit         RA_BRK_LIMIT: the capture limit ends as a success (must fail)
  *   test_run_ahead.exe old-alloc         RA_BRK_ALLOC: failed allocations ignored (must fail)
  *   test_run_ahead.exe old-reading       RA_BRK_READING: every answer over 5 ms moved up (must fail)
+ *   test_run_ahead.exe old-settle        RA_BRK_SETTLE: a cancel meets the unit where the capture stopped it (must fail)
  *
  * The chip: a phoneme load drops A/R for its duration (spoken 50 ms, pause 30 ms); a spoken phoneme sounds on (0.5)
  * after its duration until the next load, as the SSI-263 holds it; a pause is silence.  The board: a unit that loads
@@ -109,6 +110,7 @@ static void run(void *ctx, unsigned long long n)
 }
 
 static unsigned long long cycles(void *ctx) { return ((board *)ctx)->cyc; }
+static int idle_cb(void *ctx) { return !((board *)ctx)->waiting; }   /* case 11: awake while it works to a load */
 static void set_ar(void *ctx, int v) { board *b = (board *)ctx; b->ar = v; arm(b); }
 static int more(void *ctx) { board *b = (board *)ctx; return b->owe_always || b->next < b->n; }
 
@@ -144,6 +146,7 @@ static void setup(board *b, const step *steps, int n)
     iface.more = more;
     iface.apply = apply_w;
     iface.opened = NULL;
+    iface.idle = NULL;
     iface.clock_hz = CLK;
     ra_init(&b->r, &iface);
     b->r.brk = brk;
@@ -184,9 +187,10 @@ int main(int argc, char **argv)
     int st, i;
     if (argc > 1)
         brk = !strcmp(argv[1], "old-completion") ? RA_BRK_COMPLETION : !strcmp(argv[1], "old-limit") ? RA_BRK_LIMIT
-            : !strcmp(argv[1], "old-alloc") ? RA_BRK_ALLOC : !strcmp(argv[1], "old-reading") ? RA_BRK_READING : -1;
+            : !strcmp(argv[1], "old-alloc") ? RA_BRK_ALLOC : !strcmp(argv[1], "old-reading") ? RA_BRK_READING
+            : !strcmp(argv[1], "old-settle") ? RA_BRK_SETTLE : -1;
     if (brk < 0 || !b) {
-        fprintf(stderr, "usage: test_run_ahead [old-completion|old-limit|old-alloc|old-reading]\n");
+        fprintf(stderr, "usage: test_run_ahead [old-completion|old-limit|old-alloc|old-reading|old-settle]\n");
         return 2;
     }
 
@@ -364,6 +368,32 @@ int main(int argc, char **argv)
         }
         report(worst < 0.5 && b->n_loads == 3 && ra_state(&b->r, &b->chip) == RA_COMPLETE, "lane 1: paced schedule",
                "worst %.2f samples off over %.0f loads (%.0f)", worst, b->n_loads, 3);
+        ra_free(&b->r);
+    }
+    {   /* 11. a cancel while the capture runs (ra_settle): the capture stops the unit just after an acknowledgement,
+           which wakes it -- mid-routine (here: 2 ms of work before each load).  Before the cancel reaches it, the unit
+           runs on, nothing more acknowledged, until it waits for an interrupt; what it writes meanwhile is the
+           dropped script's, never applied.  Its control (old-settle) cancels it where the capture left it */
+        static step s[40];
+        double played;
+        int applied, nw, busy_before;
+        for (i = 0; i < 40; i++) {
+            s[i].lat_ms = 2.0;
+            s[i].code = 5 + (i & 7);
+        }
+        setup(b, s, 40);
+        b->r.b.idle = idle_cb;
+        ra_play(&b->r, &b->chip, RATE, 0.12, buf, &played);         /* the capture is ahead of the chip */
+        busy_before = !idle_cb(b);
+        applied = b->applied;
+        nw = b->r.nw;
+        ra_settle(&b->r);
+        ra_abort(&b->r);
+        report(busy_before && b->r.settled == 1 && idle_cb(b) && b->r.dropped >= 1 && b->applied == applied
+               && b->r.nw == nw && ra_state(&b->r, &b->chip) == RA_CANCELLED,
+               "cancel while capturing: the unit settles first",
+               "mid-routine at the stop %.0f, waits for an interrupt at the cancel %.0f, %.0f of its writes dropped "
+               "(none applied)", busy_before, idle_cb(b), b->r.dropped);
         ra_free(&b->r);
     }
     if (failures)

@@ -86,6 +86,10 @@ void ra_write_reg(run_ahead *r, int reg, int val)
     if (!r->capturing)
         return;                                            /* the host routes writes here only while capturing, or
                                                               after a failure (end = RA_END_ALLOC): lost, not hidden */
+    if (r->settling) {
+        r->dropped++;                                      /* ra_settle: the script's future, being dropped */
+        return;
+    }
     if (r->nw == r->capw) {
         int cap = r->capw ? r->capw * 2 : 1024;
         ra_write *w = (ra_write *)RA_REALLOC(r->w, (size_t)cap * sizeof *w);
@@ -334,6 +338,27 @@ void ra_abort(run_ahead *r)
     if (r->capturing)
         r->end = RA_END_ABORT;
     finish(r, RA_CANCELLED);
+}
+
+void ra_settle(run_ahead *r)
+{
+    unsigned long long start, cap = (unsigned long long)(RA_SETTLE_S * r->b.clock_hz);
+    r->dropped = 0;
+    if (!r->active || !r->capturing) {
+        r->settled = -1;                                   /* no capture running: it ended (quiet, limit or error) */
+        return;
+    }
+    r->settled = 0;
+    if (!r->b.idle || r->brk == RA_BRK_SETTLE)
+        return;
+    r->settling = 1;
+    r->pending = 0;                                        /* nothing more acknowledged */
+    r->b.set_ar(r->b.ctx, 0);
+    start = r->b.cycles(r->b.ctx);
+    while (!r->b.idle(r->b.ctx) && r->b.cycles(r->b.ctx) - start < cap)
+        r->b.run(r->b.ctx, RA_SLICE);
+    r->settled = r->b.idle(r->b.ctx) ? 1 : 0;
+    r->settling = 0;
 }
 
 void ra_pace(run_ahead *r, const double *t, int n)

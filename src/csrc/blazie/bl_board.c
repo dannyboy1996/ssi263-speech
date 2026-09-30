@@ -20,6 +20,16 @@
 #include "bl_serial.h"
 #include "flash29.h"
 
+#ifdef BH_TRACE                              /* a scratch build's trace (never in a release build) */
+FILE *bh_trace_fp;
+unsigned bh_watch_lo[8], bh_watch_hi[8];
+int bh_n_watch;
+int bh_trace_on;
+#define TR(...) do { if (bh_trace_fp && bh_trace_on) fprintf(bh_trace_fp, __VA_ARGS__); } while (0)
+#else
+#define TR(...) do { } while (0)
+#endif
+
 #define ROM_SIZE 0x40000
 #define FILE_ROM_OFFSET 0x3000
 #define SLICE_DEFAULT 10000
@@ -100,6 +110,15 @@ static void mem_write(void *ctx, uint32_t A, uint8_t V)
         flash29_write(&u->ff, A - FLASH_BASE, V);
         return;
     }
+#ifdef BH_TRACE
+    {
+        int i;
+        for (i = 0; i < bh_n_watch; i++)
+            if (A >= bh_watch_lo[i] && A <= bh_watch_hi[i])
+                TR("MW %llu pc=%04X %05X %02X->%02X\n", (unsigned long long)z180_cycles(u->cpu), u->instr_pc,
+                   (unsigned)A, u->ram[A], V);
+    }
+#endif
     u->ram[A] = V;
 }
 
@@ -153,6 +172,7 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
         int reg = p - 0xC0;
         unsigned long long cyc = z180_cycles(u->cpu);
         u->ssi[reg] = V;
+        TR("IO %llu pc=%04X r%d=%02X\n", cyc, u->instr_pc, reg, V);
         if (reg == 3)
             u->ssi_ctl = V >> 7;
         event(u, 'W', (unsigned char)reg, V);
@@ -178,10 +198,13 @@ static int asci_rx(void *ctx, int channel)
         if (channel == 0 && u->urgent >= 0) {
             b = u->urgent;
             u->urgent = -1;
+            TR("RX %llu urgent %02X\n", (unsigned long long)z180_cycles(u->cpu), b);
             return b;
         }
         if (channel != 0 || u->lhead == u->ltail || u->host_xoff)
             return -1;
+        TR("RX %llu %02X left=%u\n", (unsigned long long)z180_cycles(u->cpu), u->lfifo[u->ltail & (FIFO - 1)],
+           u->lhead - u->ltail - 1);
         return u->lfifo[u->ltail++ & (FIFO - 1)];
     }
     return -1;                               /* before live mode nothing is queued (bns: no --serial in live runs) */
@@ -207,6 +230,7 @@ static void asci_tx(void *ctx, int channel, uint8_t data)
         return;
     }
     event(u, 'T', data, 0);
+    TR("TX %llu %02X\n", (unsigned long long)z180_cycles(u->cpu), data);
     if (data == 0x13)
         u->host_xoff = 1;
     else if (data == 0x11)
@@ -395,6 +419,7 @@ void bl_run(bl_unit *u, unsigned long long cycles)
 
 void bl_set_ar(bl_unit *u, int requesting)
 {
+    TR("AR %llu %d\n", (unsigned long long)z180_cycles(u->cpu), requesting ? 1 : 0);
     u->ssi_ar = requesting ? 1 : 0;
     ar_line(u);
 }
@@ -402,18 +427,21 @@ void bl_set_ar(bl_unit *u, int requesting)
 void bl_queue(bl_unit *u, const unsigned char *bytes, int n)
 {
     int i;
+    TR("Q %llu n=%d\n", (unsigned long long)z180_cycles(u->cpu), n);
     for (i = 0; i < n; i++)
         u->lfifo[u->lhead++ & (FIFO - 1)] = bytes[i];
 }
 
 void bl_urgent(bl_unit *u, int byte)
 {
+    TR("URG %llu %02X (pending %d)\n", (unsigned long long)z180_cycles(u->cpu), byte & 0xFF, u->urgent);
     u->urgent = byte & 0xFF;
 }
 
 int bl_drop(bl_unit *u)
 {
     int n6 = 0;
+    TR("DROP %llu n=%u\n", (unsigned long long)z180_cycles(u->cpu), u->lhead - u->ltail);
     while (u->ltail != u->lhead) {
         if (u->lfifo[u->ltail & (FIFO - 1)] == 0x06)
             n6++;

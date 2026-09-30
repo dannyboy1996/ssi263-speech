@@ -71,9 +71,13 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    write has played and the final load has ended; a limit hands over to the lockstep's own judgement; an allocation
    failure is -1.  Input given meanwhile is held (bh_say).  The capture's other effects -- the unit's serial bytes,
    ^F echoes, XON/XOFF, its RAM -- happen at the capture's frontier, ahead of the listener: a cancel cannot take them
-   back (nvda/tools/run_ahead_state.py compares them).  Timing is emulated Z180 time, not a chip-bus measurement.
+   back (nvda/tools/run_ahead_state.py compares them).  bh_cancel over a running capture first lets the unit, parked
+   mid-routine at the frontier, run on to a wait for an interrupt (run_ahead.h ra_settle), and holds its A/R not
+   requesting over the first ^X slice: before that, cancelled text could lead the next utterance
+   (nvda/tools/run_ahead_cancel.py).  Timing is emulated Z180 time, not a chip-bus measurement.
    The pipe host has no such mode.  Read-only: "run_ahead_state" (RA_*), "run_ahead_end" (RA_END_*),
-   "run_ahead_played" / "run_ahead_captured" (writes), "held" (inputs waiting), "port_a0".  Tests only:
+   "run_ahead_played" / "run_ahead_captured" (writes), "run_ahead_settled" / "run_ahead_dropped" (the last cancel's
+   ra_settle), "held" (inputs waiting), "port_a0".  Tests only:
    "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead segments'
    openings, reg 9 + how, in the write log). */
 BL_API int bh_get_int(const bl_host *h, const char *name);
