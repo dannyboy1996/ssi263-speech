@@ -223,7 +223,7 @@ CHECKS.append(check("open channel: new speech not queued behind it", [PY, "tail_
 CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail_latency.py"],
                     env={"TAIL_LATENCY_BREAK": "1"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel ", r"^ok +B whine off",
-                                r"^tail latency: [12] FAILED$"]))
+                                r"^tail latency: \d FAILED$"]))   # 0.6.0 whole can delay D and E too, under load
 # Tomi (0.7 test build): with keep open, a follow-up utterance paused longer -- the idle audio still queued (up to
 # IDLE_AHEAD_S and a block) played before it; now dropped once the last speech has played (the player's onDone)
 CHECKS.append(check("open channel CONTROL (idle audio left queued, must fail)", [PY, "tail_latency.py"],
