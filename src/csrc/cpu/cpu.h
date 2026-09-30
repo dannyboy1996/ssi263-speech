@@ -42,6 +42,13 @@ typedef struct cpu_bus {
        the on-chip serial port has caught up; before the instruction.  The board's per-instruction work (scheduled
        keys, A/R readiness) happens here, so what it raises is sampled at the NEXT step's acceptance.  NULL: none. */
     void (*boundary)(void *ctx, uint32_t pc);
+    /* x86 only: the host's software-interrupt seam (what Unicorn's UC_HOOK_INTR was; CONTRACT.md 4).  Called at E,
+       from inside the instruction, for an INT n, INT 3, INTO taken (kind I86_INT_SOFTWARE) or a divide error
+       (I86_INT_EXCEPTION), before anything is pushed; CS:IP are already past the instruction.  Nonzero: the host
+       has serviced it -- nothing is pushed, the instruction ends there, and the registers are what the host left
+       (it may call *_regs_set here); 0: the core vectors through the table as the CPU does.  Hardware interrupts
+       and the single-step trap are never offered.  NULL: none. */
+    int (*intercept)(void *ctx, int vector, int kind);
 } cpu_bus;
 
 /* ---- Z180 (Zilog Z80180 / Hitachi HD64180 family) ---------------------------------------------------------------- */
@@ -93,6 +100,38 @@ uint64_t i8085_cycles(const i8085 *c);
 uint64_t i8085_steps(const i8085 *c);
 uint32_t i8085_pc(const i8085 *c);                 /* the saved instruction-start PC; no side effects (no RIM) */
 void i8085_regs_get(const i8085 *c, i8085_regs *out);
+
+/* ---- x86 real mode (Intel 8086/8088: the Accent-mini's PC, running Aicom's SPKEMS.DVC) ---------------------------- */
+typedef struct i86 i86;
+
+enum { I86_INTR, I86_NMI, I86_TEST };              /* INTR a level (vector from irq_ack byte 0); NMI an edge; TEST */
+enum { I86_INT_SOFTWARE, I86_INT_EXCEPTION };      /* cpu_bus.intercept's kind */
+
+typedef struct {
+    uint16_t ax, cx, dx, bx, sp, bp, si, di;
+    uint16_t es, cs, ss, ds, ip;
+    uint16_t flags;                                /* as PUSHF stores them: the 8086's bits 12-15 read 1 */
+    uint8_t halted;
+} i86_regs;
+
+i86 *i86_create(const cpu_bus *bus, double clock_hz);
+void i86_destroy(i86 *c);
+void i86_reset(i86 *c);                            /* CS:IP = FFFF:0000, flags cleared (IF off) */
+int i86_step(i86 *c);
+uint64_t i86_run(i86 *c, uint64_t budget);
+void i86_set_irq(i86 *c, int line, int asserted);
+uint64_t i86_cycles(const i86 *c);
+uint64_t i86_steps(const i86 *c);
+uint32_t i86_pc(const i86 *c);                     /* the saved instruction start, linear (CS * 16 + IP, 20 bits) */
+void i86_regs_get(const i86 *c, i86_regs *out);
+/* x86 only: a host that stands in for DOS and the BIOS (the Accent-mini's) writes registers between steps and from
+   bus->intercept -- far calls into the driver, a service's results, the carry flag, a saved machine.  `halted` is
+   ignored; setting TF does not arm the single-step trap (only POPF and IRET do, as MAME). */
+void i86_regs_set(i86 *c, const i86_regs *in);
+/* How many opcodes met so far mean something else on the 80186 and later (0Fh, 60h-6Fh, C0h, C1h, C8h, C9h, F1h:
+   the 8086 runs them as POP CS, Jcc, RET and LOCK aliases); the last one's linear address and byte.  A program that
+   needs a later CPU shows here. */
+uint64_t i86_aliased(const i86 *c, uint32_t *last_addr, uint8_t *last_op);
 
 #ifdef __cplusplus
 }
