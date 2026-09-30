@@ -90,6 +90,10 @@ static uint8_t io_read(void *ctx, uint16_t Port)
     int p = Port & 0xFF;
     if (p >= 0x90 && p <= 0x94)
         return u->ssi_ar ? 0x80 : 0x00;
+    if (p == 0xC1)                           /* the 8255's port B: bit 7 = the SSI-263's A/R request, the rest high.
+                                                The options menu's up arrow polls it; answered FFh the unit waited
+                                                forever (Tomi) */
+        return (unsigned char)((u->ssi_ar ? 0x80 : 0x00) | 0x7F);
     if (p == 0xE0)                           /* status: battery good, switched on; bit 0 low while a key waits */
         return (unsigned char)(0xFE | (u->key_ready ? 0 : 1));
     if (p == 0xD0) {

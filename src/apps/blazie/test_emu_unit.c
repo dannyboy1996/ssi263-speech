@@ -114,6 +114,29 @@ int main(int argc, char **argv)
         remove(path);
         free(buf);
     }
+    if (g_kind == EMU_TYPE_N_SPEAK && !st) {  /* the options menu (F9), up arrow -- it polls the 8255's port B for the
+                                                 chip's A/R; answered FFh it hung -- then escape must be answered */
+        char err[256];
+        emu_unit *u = emu_create(g_kind, fw, NULL, RATE, 0, err, sizeof err);
+        static const struct { double t; int down, up; } keys[] = {
+            {3.0, 0xBD, 0x3D}, {6.0, 0xBD, 0x3D}, {12.0, 0xC6, 0x46}, {15.0, 0xDA, 0x5A}, {18.0, 0x89, 0x09}};
+        int n = 21 * RATE, i, k, block = RATE / 50;
+        short *buf = (short *)calloc((size_t)n, sizeof(short));
+        double after;
+        for (i = 0; i < n; i += block) {
+            for (k = 0; k < 5; k++)
+                if (i == (int)(keys[k].t * RATE)) {
+                    emu_key(u, keys[k].down);
+                    emu_key(u, keys[k].up);
+                }
+            emu_render(u, buf + i, block);
+        }
+        after = rms(buf + 18 * RATE, 3 * RATE);
+        snprintf(d, sizeof d, "rms %.4f after escape (silent if the up arrow hung the unit)", after);
+        check("options menu up arrow", after > 0.01, d);
+        free(buf);
+        emu_destroy(u);
+    }
     if (g_kind == EMU_BRAILLE_LITE) {   /* the status menu's % (dots 146) reads the battery gauge; then the unit must
                                            still answer (without the gauge it waited forever) */
         char err[256];

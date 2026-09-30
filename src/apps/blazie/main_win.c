@@ -431,6 +431,12 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         break;
+    case WM_TIMER:                          /* the unit's memory saved every minute: nothing is lost if the */
+        save_unit();                        /* program is ended without closing its window */
+        return 0;
+    case WM_QUERYENDSESSION:
+        save_unit();                        /* Windows logging off or shutting down */
+        return TRUE;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
@@ -486,6 +492,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_wnd = CreateWindowA("BlazieEmulator", "Blazie emulator", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                           480, 240, NULL, make_menu(), inst, NULL);
     ShowWindow(g_wnd, show);
+    SetTimer(g_wnd, 1, 60000, NULL);
     GetPrivateProfileStringA("sound", "idle", "hiss", v, sizeof v, g_ini);
     g_whine = !strcmp(v, "whine") ? 2 : !strcmp(v, "off") ? 0 : 1;
     CheckMenuRadioItem(GetMenu(g_wnd), ID_HISS, ID_QUIET, g_whine == 1 ? ID_HISS : g_whine == 2 ? ID_WHINE : ID_QUIET,
