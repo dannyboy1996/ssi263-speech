@@ -10,6 +10,7 @@
 #include "../ssi263.h"
 #include "bl_serial.h"
 #include "bl_idle.h"
+#include "bl_board.h"
 
 #if defined(_WIN32)
 #define BL_API __declspec(dllexport)
@@ -38,9 +39,13 @@ BL_API int bh_writes(const bl_host *h, const bh_write **writes);
 BL_API void bh_clear_writes(bl_host *h);
 BL_API void bh_destroy(bl_host *h);
 
-BL_API void bh_send(bl_host *h, const unsigned char *data, int n);   /* bytes for the unit, counting ^F */
-BL_API void bh_say(bl_host *h, const unsigned char *data, int n);    /* the lines and flush, as say() builds them */
+/* bytes for the unit, counting ^F; and a say: the lines and flush, as say() builds them.  While a run-ahead utterance
+   plays (below) both are held and delivered in order when it ends.  1, or 0 when out of memory (nothing taken). */
+BL_API int bh_send(bl_host *h, const unsigned char *data, int n);
+BL_API int bh_say(bl_host *h, const unsigned char *data, int n);
 BL_API int bh_owed(const bl_host *h);
+/* 1 while the unit is still speaking what it was given, 0 when done; -1 when a run-ahead utterance failed (out of
+   memory: its script is incomplete; bh_cancel) */
 BL_API int bh_busy(const bl_host *h, double quiet, double patience);
 BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut);   /* quiet, cut < 0: the defaults */
 BL_API double bh_skip(bl_host *h, double seconds);
@@ -58,11 +63,28 @@ BL_API int bh_get_whine(const bl_host *h);
    it).  0 if out of memory. */
 BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
 
-/* the host's state, as blazie.py keeps it (tests and the Python wrapper read and some set these).  Also "run_ahead"
-   (int, 0 = off, the default): each bh_say's utterance is captured with the unit run ahead of the chip and played
-   from the script (run_ahead.h); the pipe host has no such mode. */
+/* the host's state, as blazie.py keeps it (tests and the Python wrapper read and some set these).
+   "run_ahead" (int, 0 = off, the default; EXPERIMENTAL, opt-in): from the next bh_say, each utterance is captured
+   with the unit run ahead of the chip -- a bounded streaming capture, up to RA_AHEAD segments ahead -- and played from
+   the script (run_ahead.h).  Its end is inferred from bh_owed's ^F echo accounting and a quiet interval: a policy,
+   not a proof.  bh_busy follows run_ahead.h's completion: busy until the capture has ended by that policy, every
+   write has played and the final load has ended; a limit hands over to the lockstep's own judgement; an allocation
+   failure is -1.  Input given meanwhile is held (bh_say).  The capture's other effects -- the unit's serial bytes,
+   ^F echoes, XON/XOFF, its RAM -- happen at the capture's frontier, ahead of the listener: a cancel cannot take them
+   back (nvda/tools/run_ahead_state.py compares them).  Timing is emulated Z180 time, not a chip-bus measurement.
+   The pipe host has no such mode.  Read-only: "run_ahead_state" (RA_*), "run_ahead_end" (RA_END_*),
+   "run_ahead_played" / "run_ahead_captured" (writes), "held" (inputs waiting), "port_a0".  Tests only:
+   "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead segments'
+   openings, reg 9 + how, in the write log). */
 BL_API int bh_get_int(const bl_host *h, const char *name);
 BL_API void bh_set_int(bl_host *h, const char *name, int v);
+/* tests: the current (or last) run-ahead script, as run_ahead.h's ra_write array; its length */
+BL_API int bh_script(const bl_host *h, const void **writes);
+/* tests, lane 1: the next run-ahead utterance's writes at these chip times (copied); 0 when out of memory */
+BL_API int bh_pace(bl_host *h, const double *t, int n);
+/* tests: the unit's state (bl_board.h's bl_probe, bl_memory) for comparing two units at a checkpoint */
+BL_API void bh_probe(const bl_host *h, bl_probe *p);
+BL_API int bh_memory(const bl_host *h, int which, const unsigned char **bytes);
 BL_API double bh_get_double(const bl_host *h, const char *name);
 BL_API void bh_set_double(bl_host *h, const char *name, double v);
 BL_API int bh_tx(const bl_host *h, const unsigned char **bytes);   /* every byte the unit sent back */

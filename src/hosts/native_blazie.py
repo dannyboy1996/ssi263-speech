@@ -34,6 +34,27 @@ class _Write(ctypes.Structure):
     _fields_ = [("t", _D), ("reg", _I), ("val", _I)]
 
 
+class RaWrite(ctypes.Structure):
+    """run_ahead.h's ra_write: a captured write, its CPU cycle and its segment (acknowledgements before it)"""
+    _fields_ = [("cyc", ctypes.c_ulonglong), ("seg", _I), ("reg", ctypes.c_ubyte), ("val", ctypes.c_ubyte)]
+
+
+class Probe(ctypes.Structure):
+    """bl_board.h's bl_probe: the board as the firmware sees it"""
+    _fields_ = [("cycles", ctypes.c_ulonglong)] + [(n, _I) for n in (
+        "pc", "sp", "iff1", "iff2", "im", "halted", "sleeping", "ssi0", "ssi1", "ssi2", "ssi3", "ssi4", "ssi_ar",
+        "ssi_mode", "int1", "key_latched", "int2", "n_live_keys", "queued", "urgent", "host_xoff", "port_a0",
+        "port_e0", "asci_cntla", "asci_cntlb", "asci_stat", "asci_asext", "asci_astc")]
+
+
+class RunAheadError(RuntimeError):
+    """A run-ahead utterance failed (out of memory: its script is incomplete), or input was refused."""
+
+
+# run_ahead.h's RA_* states, by number
+RA_STATES = ("idle", "capturing", "replaying", "trailing", "final load", "complete", "limit", "error", "cancelled")
+
+
 def _load(path):
     path = os.path.abspath(path)
     if path in _libs:
@@ -48,6 +69,14 @@ def _load(path):
     lib.bh_destroy.argtypes = [_P]
     for fn in (lib.bh_send, lib.bh_say):
         fn.argtypes = [_P, ctypes.c_char_p, _I]
+        fn.restype = _I
+    lib.bh_script.argtypes = [_P, ctypes.POINTER(ctypes.POINTER(RaWrite))]
+    lib.bh_script.restype = _I
+    lib.bh_pace.argtypes = [_P, ctypes.POINTER(_D), _I]
+    lib.bh_pace.restype = _I
+    lib.bh_probe.argtypes = [_P, ctypes.POINTER(Probe)]
+    lib.bh_memory.argtypes = [_P, _I, ctypes.POINTER(ctypes.POINTER(ctypes.c_ubyte))]
+    lib.bh_memory.restype = _I
     lib.bh_owed.argtypes = [_P]
     lib.bh_owed.restype = _I
     lib.bh_busy.argtypes = [_P, _D, _D]
@@ -171,9 +200,42 @@ class NativeBlazie:
     say_time = _float_attr("say_time")
     cancel_cut = _float_attr("cancel_cut")
     cancel_quiet = _float_attr("cancel_quiet")
-    # the unit run ahead of the chip (src/csrc/blazie/run_ahead.h): 0 = today's lockstep (the default), 1 = on.  The
-    # Python pipe host has no such mode.
+    # the unit run ahead of the chip (src/csrc/blazie/run_ahead.h; EXPERIMENTAL, opt-in): 0 = today's lockstep (the
+    # default), 1 = on from the next say.  The Python pipe host has no such mode.  run_ahead_break: the tests' controls.
     run_ahead = _int_attr("run_ahead")
+    run_ahead_break = _int_attr("run_ahead_break")
+    log_ar = _int_attr("log_ar")
+
+    @property
+    def run_ahead_state(self):
+        return RA_STATES[self._lib.bh_get_int(self._h, b"run_ahead_state")]
+
+    def geti(self, name):
+        """a host integer by name (bl_host.h: run_ahead_end, run_ahead_played, held, port_a0 ...)"""
+        return self._lib.bh_get_int(self._h, name.encode())
+
+    def script(self):
+        """the current (or last) run-ahead script: [(cycle, segment, reg, val)]"""
+        p = ctypes.POINTER(RaWrite)()
+        n = self._lib.bh_script(self._h, ctypes.byref(p))
+        return [(p[i].cyc, p[i].seg, p[i].reg, p[i].val) for i in range(n)]
+
+    def pace(self, times):
+        """lane 1: the next run-ahead utterance's writes at these chip times"""
+        arr = (_D * max(1, len(times)))(*times)
+        if not self._lib.bh_pace(self._h, arr, len(times)):
+            raise RunAheadError("bh_pace: out of memory")
+
+    def probe(self):
+        p = Probe()
+        self._lib.bh_probe(self._h, ctypes.byref(p))
+        return {name: getattr(p, name) for name, _ in Probe._fields_}
+
+    def memory(self, which):
+        """0: the RAM (1 MB address space), 1: the file flash, as bytes"""
+        p = ctypes.POINTER(ctypes.c_ubyte)()
+        n = self._lib.bh_memory(self._h, which, ctypes.byref(p))
+        return ctypes.string_at(p, n)
 
     @property
     def preparing(self):
@@ -221,15 +283,19 @@ class NativeBlazie:
             data = data.encode("latin-1", "replace")
         if data:
             self._record("send", data.decode("latin-1"))
-            self._lib.bh_send(self._h, data, len(data))
+            ok = self._lib.bh_send(self._h, data, len(data))
             self._drain()
+            if not ok:
+                raise RunAheadError("bh_send: out of memory holding input for the run-ahead utterance")
 
     def say(self, text):
         lines = [text] if isinstance(text, str) else list(text)
         data = b"".join(ln.encode(self.encoding, "replace") + b"\r\x06" for ln in lines) + b"\r\x06"
         self._record("say", data.decode("latin-1"))
-        self._lib.bh_say(self._h, data, len(data))
+        ok = self._lib.bh_say(self._h, data, len(data))
         self._drain()
+        if not ok:
+            raise RunAheadError("bh_say: out of memory holding input for the run-ahead utterance")
 
     def owed(self):
         self._record("owed")
@@ -237,7 +303,10 @@ class NativeBlazie:
 
     def busy(self, quiet=0.1, patience=3.0):
         self._record("busy", quiet, patience)
-        return bool(self._lib.bh_busy(self._h, quiet, patience))
+        v = self._lib.bh_busy(self._h, quiet, patience)
+        if v < 0:
+            raise RunAheadError("the run-ahead utterance failed: out of memory, its script is incomplete")
+        return bool(v)
 
     def cancel(self, limit=3.0, quiet=None, cut=None):
         self._record("cancel", limit, quiet, cut)

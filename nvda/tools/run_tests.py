@@ -237,21 +237,94 @@ CHECKS.append(check("open channel CONTROL (plain wait on the last onDone, must f
                     env={"TAIL_LATENCY_BREAK": "plainwait"}, expect_fail=True,
                     fail_marks=[r"^ok +A whine on", r"^FAIL D next speech while the last onDone is due",
                                 r"^FAIL E cancel inside that wait", r"^tail latency: 2 FAILED$"]))
-# ... and the opt-in "run ahead" mode (src/csrc/blazie/run_ahead.h) against today's lockstep through bl.dll: every
-# register value identical over sessions with cancels and a rate change, and say() to first sound in chip time (at most
-# 100 ms run ahead, 300 ms in lockstep); its controls: one value flipped must be caught, and the mode left off must fail
-# the head limit
+# ... and the opt-in, EXPERIMENTAL "run ahead" mode (src/csrc/blazie/run_ahead.h; Astra, Reply 107).  Its contract on a
+# synthetic board (test_run_ahead.exe: completion, limits, allocation failures, the 5 ms classification), each control
+# putting one 0.7-draft behaviour back; then against today's lockstep through bl.dll (run_ahead_equiv.py): values
+# whole-phrase identical (cancel-prefix matches counted apart), every say observed done, no audio or speech after done,
+# the replay = the capture, head latency; each guard with its control
+RA_TEST = os.path.join(LIB, "test_run_ahead.exe")
+if os.path.isfile(RA_TEST):
+    CHECKS.append(check("run ahead contract (synthetic board)", [RA_TEST]))
+    for arg, marks in (
+            ("old-completion", [r"^FAIL last load, no cleanup: final load seen 0, ended while the chip still sounded 1, "
+                                r"0 samples played$", r"^FAIL final load never ends: ended as state 5 ",
+                                r"^run ahead contract: 4 of 10 FAILED$"]),
+            ("old-limit", [r"^FAIL owed, first load at 3\.1 s: ended as state 5 \(limit = 6\)",
+                           r"^run ahead contract: 1 of 10 FAILED$"]),
+            ("old-alloc", [r"^FAIL allocation fails \(acknowledgements\): ended as state 5 .* after 300 of 300 loads$",
+                           r"^FAIL allocation fails \(writes\): ended as state 6 .* after 1024 of 1050 writes$",
+                           r"^run ahead contract: 2 of 10 FAILED$"]),
+            ("old-reading", [r"^FAIL 5 ms threshold .*first wrong: load 5 answered 0\.0\d\d ms after the request$",
+                             r"^FAIL slow service \(50 ms answers in speech\): worst answer off by 49\.9\d\d ms",
+                             r"^run ahead contract: 2 of 10 FAILED$"])):
+        CHECKS.append(check("run ahead contract CONTROL (%s, must fail)" % arg, [RA_TEST, arg], expect_fail=True,
+                            fail_marks=marks))
 if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
-    CHECKS.append(check("run ahead = lockstep, English (values; head latency)", [PY, "run_ahead_equiv.py"]))
-    CHECKS.append(check("run ahead = lockstep, Spanish (values; head latency)", [PY, "run_ahead_equiv.py", "--es"]))
-    CHECKS.append(check("run ahead CONTROL (a value flipped, must fail)", [PY, "run_ahead_equiv.py", "--quick"],
-                        env={"RUN_AHEAD_EQUIV_FLIP": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAIL case 1 block 1: write values DIFFER at write \d+ of",
-                                    r"^run ahead vs lockstep \(English\): 1 FAILED$"]))
-    CHECKS.append(check("run ahead CONTROL (left off, the head must fail)", [PY, "run_ahead_equiv.py", "--quick"],
-                        env={"RUN_AHEAD_EQUIV_OFF": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAIL 1\.3 Select synthesizer dialog +head 123\.0 -> 123\.0 ms",
-                                    r"^run ahead vs lockstep \(English\): 3 FAILED$"]))
+    CHECKS.append(check("run ahead = lockstep, English (values; done; after done; head latency)",
+                        [PY, "run_ahead_equiv.py"]))
+    CHECKS.append(check("run ahead = lockstep, Spanish (values; done; after done; head latency)",
+                        [PY, "run_ahead_equiv.py", "--es"]))
+    RA_SUM = r"^run ahead vs lockstep \(English\): \d+ utterances, .*, %d FAILED$"
+    for what, env, args, marks in (
+            ("a value flipped", {"RUN_AHEAD_EQUIV_FLIP": "1"}, ["--quick"],
+             [r"^FAIL case 1 block 1: write values DIFFER at write \d+$",
+              r"^FAIL 1\.1 Hello\. +REPLAY DIFFERS FROM CAPTURE", RA_SUM % 2]),
+            ("left off, the head", {"RUN_AHEAD_EQUIV_OFF": "1"}, ["--quick"],
+             [r"^FAIL 1\.3 Select synthesizer dialog +head 123\.0 -> 123\.0 ms", RA_SUM % 3]),
+            ("busy never false", {"RUN_AHEAD_EQUIV_NEVER": "1", "RUN_AHEAD_EQUIV_SAY_LIMIT": "3"}, ["--cases=1"],
+             [r"^FAIL 1\.1 Hello\. +NEVER DONE \(run ahead, 3 s\)$", RA_SUM % 3]),
+            ("audio silenced", {"RUN_AHEAD_EQUIV_MUTE": "1"}, ["--cases=1"],
+             [r"^FAIL 1\.1 Hello\. +NO FIRST AUDIO \(run ahead\)$", RA_SUM % 3]),
+            ("last spoken load dropped", {"RUN_AHEAD_EQUIV_DROP_SPOKEN": "1"}, ["--cases=1"],
+             [r"^FAIL case 1 block 1: a SPOKEN LOAD \(2B\) in the \d+-write suffix that only the lockstep has$",
+              RA_SUM % 2]),
+            ("0.7 draft end rule", {"RUN_AHEAD_EQUIV_OLD_SUFFIX": "1"}, ["--selftest"],
+             [r"^FAIL the end rule: a missing final spoken load ACCEPTED \(Astra's case\)",
+              r"^run ahead vs lockstep \(end rule\): 1 FAILED$"]),
+            ("0.7 draft completion", {"RUN_AHEAD_EQUIV_BREAK": "completion"}, ["--cases=1"],
+             [r"^FAIL 1\.1 Hello\. +AUDIO AFTER DONE \(run ahead\): \d+ samples", RA_SUM % 2]),
+            ("a spoken load flipped where a setting came mid-line", {"RUN_AHEAD_EQUIV_FLIP": "send_mid"},
+             ["--cases=9"], [r"^FAIL case 9 block 1: write values DIFFER at write \d+$", RA_SUM % 2])):
+        CHECKS.append(check("run ahead CONTROL (%s, must fail)" % what, [PY, "run_ahead_equiv.py"] + args, env=env,
+                            expect_fail=True, fail_marks=marks))
+    # at 44.1 kHz: a block's rounding sliver once ran a lockstep slice in the middle of the script, and the unit
+    # stalled (found by lane 2); its control puts that back
+    CHECKS.append(check("run ahead = lockstep, English at 44.1 kHz", [PY, "run_ahead_equiv.py", "--rate=44100"]))
+    CHECKS.append(check("run ahead CONTROL (the 0.7 draft's sliver slice at 44.1 kHz, must fail)",
+                        [PY, "run_ahead_equiv.py", "--rate=44100", "--cases=1"],
+                        env={"RUN_AHEAD_EQUIV_BREAK": "sliver", "RUN_AHEAD_EQUIV_SAY_LIMIT": "5"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.3 Select synthesizer dialog +NEVER DONE \(run ahead, 5 s\)", RA_SUM % 2]))
+    # the two lanes (run_ahead_lanes.py): lane 1, the lockstep's own schedule replayed from the capture -- times,
+    # values, request boundaries and audio identical; lane 2, the deliberate retiming classified and bounded against
+    # a finer and finer lockstep.  Their controls: the schedule shifted a sample, a boundary moved, answers misjudged
+    for lang in ([], ["--es"]):
+        CHECKS.append(check("run ahead lanes 1 and 2, %s" % ("Spanish" if lang else "English"),
+                            [PY, "run_ahead_lanes.py"] + lang))
+    LANES_SUM = r"^run ahead lanes \(English\): %d FAILED$"
+    for what, brk, args, marks in (
+            ("lane 1, schedule a sample late", "pace", ["--lane=1"],
+             [r"^FAIL lane 1 case 1: TIME differs at write \d+: .*; AUDIO differs from sample \d+", LANES_SUM % 2]),
+            ("lane 1, a boundary moved", "segment", ["--lane=1"],
+             [r"^FAIL lane 1 case 1: SEGMENT boundary at write \d+ in the capture only$", LANES_SUM % 2]),
+            ("lane 2, answers misjudged", "class", ["--lane=2"],
+             [r"^FAIL lane 2 case 1 step 0\.5000 ms: UNCLASSIFIED 40 ", LANES_SUM % 4])):
+        CHECKS.append(check("run ahead lanes CONTROL (%s, must fail)" % what, [PY, "run_ahead_lanes.py", "--quick"] + args,
+                            env={"RUN_AHEAD_LANES_BREAK": brk}, expect_fail=True, fail_marks=marks))
+    # the firmware and board state at semantic checkpoints (run_ahead_state.py), and the same continuation after them:
+    # without a cancel every checkpoint must agree but for the listed timing differences; its control changes one RAM
+    # byte.  With a cancel mid-utterance there is an OPEN finding (English: phonemes of the cancelled text at the head
+    # of the next utterance); this tracker must keep showing it until it is fixed -- then flip it to a passing check
+    for lang in ([], ["--es"]):
+        CHECKS.append(check("run ahead state = lockstep at checkpoints, no cancel, %s" % ("Spanish" if lang else "English"),
+                            [PY, "run_ahead_state.py", "--no-cancel"] + lang))
+    CHECKS.append(check("run ahead state CONTROL (a RAM byte changed, must fail)",
+                        [PY, "run_ahead_state.py", "--no-cancel"], env={"RUN_AHEAD_STATE_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL setting .*FINDING: RAM 1 cells beyond timing's: FFF00 00/5A$",
+                                    r"^run ahead state \(English\): 1 FAILED$"]))
+    CHECKS.append(check("run ahead state OPEN FINDING tracker (cancel, then respeech: must still show)",
+                        [PY, "run_ahead_state.py"], expect_fail=True,
+                        fail_marks=[r"^FAIL respoken .*writes DIFFER at \d+ of \d+/\d+$",
+                                    r"^run ahead state \(English\): \d+ FAILED$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

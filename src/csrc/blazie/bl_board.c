@@ -499,6 +499,48 @@ int bl_port_a0(const bl_unit *u)
     return u->port_a0;
 }
 
+void bl_probe_get(const bl_unit *u, bl_probe *p)
+{
+    z180_regs r;
+    z180_asci_regs a;
+    int i;
+    memset(p, 0, sizeof *p);
+    z180_regs_get(u->cpu, &r);
+    z180_asci_get(u->cpu, 0, &a);
+    p->cycles = z180_cycles(u->cpu);
+    p->pc = r.pc;
+    p->sp = r.sp;
+    p->iff1 = r.iff1;
+    p->iff2 = r.iff2;
+    p->im = r.im;
+    p->halted = r.halted;
+    p->sleeping = r.sleeping;
+    for (i = 0; i < 5; i++)
+        p->ssi[i] = u->ssi[i];
+    p->ssi_ar = u->ssi_ar;
+    p->ssi_mode = u->ssi_mode;
+    p->int1 = u->ssi_ar && u->ssi_mode;
+    p->key_latched = u->key_latched;
+    p->int2 = u->key_latched;
+    p->n_live_keys = u->n_live_keys;
+    p->queued = (int)(u->lhead - u->ltail);
+    p->urgent = u->urgent;
+    p->host_xoff = u->host_xoff;
+    p->port_a0 = u->port_a0;
+    p->port_e0 = u->port_e0;
+    p->asci_cntla = a.cntla;
+    p->asci_cntlb = a.cntlb;
+    p->asci_stat = a.stat;
+    p->asci_asext = a.asext;
+    p->asci_astc = a.astc;
+}
+
+int bl_memory(const bl_unit *u, int which, const unsigned char **bytes)
+{
+    *bytes = which ? u->fflash : u->ram;
+    return which ? 0x80000 : 0x100000;
+}
+
 int bl_events(const bl_unit *u, const bl_event **events)
 {
     *events = u->ev;

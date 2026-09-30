@@ -68,6 +68,23 @@ int  bl_serial_write(bl_unit *u, const unsigned char *bytes, int n);
 int  bl_serial_space(const bl_unit *u);
 int  bl_serial_read(bl_unit *u, unsigned char *out, int cap, bl_serial_status *status);
 
+/* The board's state as the firmware sees it, for comparing two units at a checkpoint (nvda/tools/run_ahead_state.py):
+   read without side effects.  Not a save state: the Z180's internal timers and interrupt flags are not exposed by
+   ../cpu/cpu.h, so they are not here either. */
+typedef struct {
+    unsigned long long cycles;                   /* CPU T-states since reset */
+    int pc, sp, iff1, iff2, im, halted, sleeping;
+    int ssi[5];                                  /* the SSI-263 registers as the firmware last wrote them */
+    int ssi_ar, ssi_mode, int1;                  /* A/R as the unit sees it; its mode; /INT1 asserted */
+    int key_latched, int2, n_live_keys;          /* a braille chord waiting to be read; /INT2 */
+    int queued, urgent, host_xoff;               /* serial input not yet taken; a ^X in flight; the unit's XOFF */
+    int port_a0, port_e0;
+    int asci_cntla, asci_cntlb, asci_stat, asci_asext, asci_astc;
+} bl_probe;
+void bl_probe_get(const bl_unit *u, bl_probe *p);
+/* which 0: the 1 MB address space's RAM (00000-3FFFF unused: the ROM), which 1: the 512 KB file flash; the size */
+int bl_memory(const bl_unit *u, int which, const unsigned char **bytes);
+
 /* the events since the last bl_clear_events, in order */
 int  bl_events(const bl_unit *u, const bl_event **events);
 void bl_clear_events(bl_unit *u);

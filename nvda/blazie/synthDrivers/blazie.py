@@ -90,6 +90,9 @@ STATE_ES = os.path.join(_ENGINE_DIR, "bl2spa_fresh.state")
 # voice id: (display name, language, firmware, snapshot, text encoding)
 VOICES = {"blazie": ("Braille Lite 2000 (June 2003)", "en", FIRMWARE, STATE, "latin-1"),
           "blazie_es": ("Braille Lite 2000 (espa\u00f1ol)", "es", FIRMWARE_ES, STATE_ES, "cp850")}
+# the voices whose firmware run ahead's interaction contract has been tested on (Astra, Reply 107): the mechanism is
+# board-independent, its use is not -- another release or unit gets the lockstep until its own tests exist
+RUN_AHEAD_TESTED = ("blazie", "blazie_es")
 UNIT_VOLUME = 6         # the unit's factory volume; NVDA's slider is applied digitally
 MAKEUP = 2.0            # +6 dB so volume 6 sits at a normal level
 # A roll-off after the chip (hosts/blazie.py) that matches the unit's line out: first order at 5 kHz matched
@@ -251,9 +254,14 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("keepOpen", "&Keep the channel open after speaking (the hiss or whine until the unit "
                              "clicks off)", defaultVal=True),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
-        # the unit run ahead of the chip (src/csrc/blazie/run_ahead.h), off by default until Astra and Tomi have heard
-        # it: the same register values, answers at the unit's own speed, no reading pauses, "done" when the last
-        # spoken phoneme ends.  With "short pauses" on only (it shortens them further), and the in-process unit only.
+        # EXPERIMENTAL, off by default: the unit run ahead of the chip (src/csrc/blazie/run_ahead.h; Astra, Reply 107)
+        # -- a bounded streaming capture (up to 16 segments ahead) replayed at the unit's own answer times, the
+        # reading pauses cut; "done" once a pause after the last spoken phoneme has ended.  Its end is inferred from
+        # the ^F echo accounting and a quiet interval (a policy).  The same register values on the tested sessions
+        # (nvda/tools/run_ahead_equiv.py, run_ahead_lanes.py, run_ahead_state.py), but OPEN: a cancel mid-utterance
+        # can leave a phoneme of the cancelled text at the head of the next one (English, 4 of 25 cancel times in
+        # run_ahead_state's sweep).  With "short pauses" on only, the in-process unit only, and only the voices whose
+        # firmware those tests cover (RUN_AHEAD_TESTED).
         BooleanDriverSetting("runAhead", "&Run the unit ahead (experimental: with short pauses)", defaultVal=False),
     )
     # LangChangeCommand: NVDA's automatic language switching (and MultiLang passing a language on) sends each
@@ -537,6 +545,7 @@ class SynthDriver(SynthDriver):
         unit.whine = None if self._whine == "off" else self._whine
         unit.encoding = encoding
         unit.lang = lang
+        unit.voice = voice
         unit.sent_settings = (DEFAULT_RATE, DEFAULT_PITCH, DEFAULT_TONE)   # the unit boots with these
         return unit
 
@@ -740,7 +749,8 @@ class SynthDriver(SynthDriver):
         self._cur_pitch = settings[1]
         self._lead = True                # nothing audible fed yet in this utterance
         if hasattr(type(unit), "run_ahead"):                 # the in-process unit (the pipe host has no such mode)
-            unit.run_ahead = 1 if (self._run_ahead and self._short) else 0
+            unit.run_ahead = 1 if (self._run_ahead and self._short
+                                   and getattr(unit, "voice", None) in RUN_AHEAD_TESTED) else 0
         try:
             self._speakItems(items, unit, gain)
         finally:

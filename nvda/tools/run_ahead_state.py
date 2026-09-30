@@ -1,0 +1,253 @@
+"""Run ahead against the lockstep, as FIRMWARE AND BOARD STATE at semantic checkpoints, then under the same continuation
+(Astra, Reply 107).  Through bl.dll with the driver's boot.
+
+A matching register prefix does not establish future equivalence, and the two machines' clocks cannot match cycle
+for cycle: run ahead runs the unit ahead of the chip and then holds its CPU while the script plays.  So the units are
+compared where they mean the same thing -- the checkpoints -- and given the same continuation afterwards:
+
+  boot         the driver's boot, before any say (both lockstep: a sanity check)
+  said         a two-line say, done, then 0.5 s with no input
+  setting      a rate setting sent, then 0.5 s
+  faster       a say at the new rate, done, 0.5 s
+  cancelled    a three-line say cancelled 0.5 s in (the unit run ahead has read further when ^X reaches it)
+  respoken     a say at once after the cancel, done, 0.5 s
+  clicked off  12 s with no input (the firmware clicks the channel off ~10 s after speech: port A0 bit 1, R3 = 00)
+  after        a last say, done, 0.5 s
+
+At each: the RAM (40000h-FFFFFh) and the file flash; the serial bytes the unit sent since boot (^F echoes, XON/XOFF);
+queued serial input, a ^X in flight, the unit's XOFF; the braille-key latch; the channel power (port A0 bit 1) and
+port E0; the SSI-263 registers as the unit wrote them and as the chip holds them; A/R as the unit sees it and /INT1
+(the pending speech interrupt), /INT2, IFF1/2, IM, HALT/SLP; the ASCI's registers; the host's ^F accounting (sent,
+echoed, stale, owed) and input held.  Then every step's write values.
+
+INTENTIONAL differences, listed, not gated: the CPU's cycle count (run ahead's unit ran ahead, then waited), and the
+RAM cells that also differ between two LOCKSTEP runs whose only difference is timing (step 0.5 ms against 0.25 ms,
+and 0.137 s more idle before each checkpoint): the firmware's clock and timers, its stack below the stack pointer.
+Anything else that differs is a FINDING and fails, unless classified here:
+  cancelled    the unit run ahead read and echoed more of the cancelled text before ^X reached it: its serial output
+               and ^F accounting may differ at that checkpoint only (a side effect a cancel cannot take back), and its
+               write values match only up to the cut (a cancel-prefix match)
+
+RESULTS (2026-09-30).  Without the cancel (--no-cancel), English and Spanish: every checkpoint agrees -- RAM beyond
+timing's only in the stack page below SP, the XON/XOFF bytes interleaved with the ^F echoes otherwise (the same
+sequence of each), everything else identical, and every write value.  With the cancel, OPEN FINDINGS: English, the
+respoken utterance begins with phonemes left from the cancelled text (writes differ; its text buffer shifted by one);
+Spanish, the continuation's writes agree but stale bytes in the unit's receive buffer and one more XON/XOFF pair
+differ.  A sweep of the cancel time (0.2-1.4 s, 25 points, after this session's first three steps) leaked in 4 of 25
+run ahead, 0 of 25 lockstep; 0 of 25 without those steps.  The unit, cut by ^X at the capture's frontier, not the
+listener's: holding its A/R line over the cancel did not change the count (tried, reverted).
+
+    python run_ahead_state.py [--es] [--no-cancel]    RUN_AHEAD_STATE_BREAK=1: one RAM byte changed (must fail)
+The internal timers and interrupt flags of the Z180 itself are not exposed (src/csrc/cpu/cpu.h): not compared.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+sys.path[:0] = [REPO, os.path.join(REPO, "src")]
+from ssi263.native import SSI263C                 # noqa: E402
+from hosts.native_blazie import NativeBlazie       # noqa: E402
+
+ENG = os.path.join(REPO, "nvda", "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
+DLL = os.path.join(REPO, "nvda", "dist", "blazie-lib", "x64" if sys.maxsize > 2 ** 32 else "x86", "bl.dll")
+SPANISH = "--es" in sys.argv
+BREAK = os.environ.get("RUN_AHEAD_STATE_BREAK") == "1"
+RATE = 22050
+BLOCK = 0.03
+RAM_LO = 0x40000
+
+EN = [("say", ["Hello, this is the first line.", "And a second line follows it."], "said"),
+      ("send", b"\x0514E", "setting"),
+      ("say", ["The rate is faster now."], "faster"),
+      ("cancel", ["One line to be cut short, early on.", "Another line it never reaches.", "And a third one."],
+       "cancelled"),
+      ("say", ["Respoken at once."], "respoken"),
+      ("idle", 12.0, "clicked off"),
+      ("say", ["After the click off."], "after")]
+ES = [("say", ["Hola, esta es la primera línea.", "Y la segunda la sigue."], "said"),
+      ("send", b"\x0514E", "setting"),
+      ("say", ["Ahora la velocidad es mayor."], "faster"),
+      ("cancel", ["Una línea que se corta pronto.", "Otra que nunca llega.", "Y una tercera."], "cancelled"),
+      ("say", ["Dicho otra vez."], "respoken"),
+      ("idle", 12.0, "clicked off"),
+      ("say", ["Después del clic."], "after")]
+STEPS = ES if SPANISH else EN
+if "--no-cancel" in sys.argv:                  # the continuation without the cancel (its open finding: see above)
+    STEPS = [st for st in STEPS if st[2] not in ("cancelled", "respoken")]
+# the lockstep variants that differ from the reference only in timing: its step, and more idle before a checkpoint
+TIMING = [(0.00025, 0.0), (0.000125, 0.0), (0.0005, 0.137), (0.0005, 0.061), (0.00025, 0.2)]
+# the stack's page (SP = D3FE at every checkpoint; its physical page inferred from where timing alone differs, and
+# checked): the dead cells below the pointer hold whatever the last interrupts left there
+STACK = (0x41300, 0x413FE)
+FLOW = (0x11, 0x13)                         # XON, XOFF
+HOST_INTS = ("sent_f", "echo_f", "stale_f", "held")
+PROBE_SKIP = ("cycles", "pc", "sp")        # reported, not compared (the clock; where its idle loop happens to be)
+
+
+def session(ahead, step=0.0005, extra_idle=0.0):
+    if SPANISH:
+        fw, st, enc = os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state"), "cp850"
+    else:
+        fw, st, enc = os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"), "latin-1"
+    chip = SSI263C(params={"closure_noise_lead_ms": 10.0}, out_rate=RATE)
+    log = []
+    u = NativeBlazie(DLL, fw, st, chip=chip, out_rate=RATE, menu=("punct_none", "numbers_toggle"), key_start=3000000,
+                     key_gap=1500000, board_lowpass_hz=5000.0, on_write=lambda t, r, v: log.append((t, r, v)))
+    u.encoding = enc
+    u.send(b"\x18")
+    u.send(b"\r\x06")
+    u.run(0.3, step)
+    u.send(b"\x056V")
+    u.run(0.05, step)
+    u.turbo_between_lines = True
+    u.run_ahead = 1 if ahead else 0
+
+    def idle(seconds):
+        t = 0.0
+        while t < seconds - 1e-9:
+            u.run(min(BLOCK, seconds - t), step)
+            t += min(BLOCK, seconds - t)
+        u._drain()
+
+    def point(name, n0):
+        # the checkpoint proper: the unit asleep in its idle loop (SLP, its stack back at D3FE), not inside an
+        # interrupt; up to 50 ms more, 1 ms at a time
+        for _ in range(50):
+            p = u.probe()
+            if p["sleeping"] and p["sp"] == 0xD3FE:
+                break
+            u.run(0.001, step)
+        u._drain()
+        p = u.probe()
+        return dict(name=name, probe=p, ram=u.memory(0)[RAM_LO:], flash=u.memory(1), tx=bytes(u.tx),
+                    host={k: u.geti(k) for k in HOST_INTS}, owed=u.owed(), chip=[chip.regs[i] for i in range(5)],
+                    request=bool(chip.request), writes=[(r, v) for _, r, v in log[n0:]], state=u.run_ahead_state)
+    points = [point("boot", 0)]
+    for kind, arg, name in STEPS:
+        u._drain()
+        n0 = len(log)
+        if kind == "send":
+            u.send(arg)
+            idle(0.02 + 0.5 + extra_idle)
+        elif kind == "idle":
+            idle(arg + extra_idle)
+        elif kind == "say":
+            u.say(arg)
+            for _ in range(int(30 / BLOCK)):
+                u.run(BLOCK, step)
+                u._drain()
+                if not u.busy():
+                    break
+            else:
+                raise RuntimeError("%s: never done" % name)
+            idle(0.5 + extra_idle)
+        else:
+            u.say(arg)
+            idle(0.5)
+            u.cancel()
+            u._drain()
+            if extra_idle:
+                idle(extra_idle)
+        points.append(point(name, n0))
+    u.close()
+    return points
+
+
+def diff_bytes(a, b, base):
+    out, n = [], min(len(a), len(b))
+    for k in range(0, n, 4096):
+        if a[k:k + 4096] != b[k:k + 4096]:
+            out.extend(base + k + i for i in range(min(4096, n - k)) if a[k + i] != b[k + i])
+    return out
+
+
+def main():
+    ref = session(False)
+    ahd = session(True)
+    if BREAK:                          # the control: one RAM byte, away from anything timing touches
+        p = ahd[2]
+        k = len(p["ram"]) - 0x100
+        p["ram"] = p["ram"][:k] + bytes([p["ram"][k] ^ 0x5A]) + p["ram"][k + 1:]
+    # what timing alone moves: two lockstep runs that differ only in their timing
+    timing = [session(False, step=s, extra_idle=x) for s, x in TIMING]
+    mask_ram, mask_flash, mask_probe = set(), set(), set()
+    for var in timing:
+        for a, b in zip(ref, var):
+            mask_ram.update(diff_bytes(a["ram"], b["ram"], RAM_LO))
+            mask_flash.update(diff_bytes(a["flash"], b["flash"], 0))
+            mask_probe.update(k for k in a["probe"] if a["probe"][k] != b["probe"][k])
+    print("emulated time (Z180 cycles, the chip model): not a measurement of a real unit")
+    print("timing alone (%d lockstep variants: steps 0.125-0.5 ms, 0.06-0.2 s more idle): %d RAM cells%s, %d flash "
+          "bytes, probe %s"
+          % (len(TIMING), len(mask_ram), (" (%05X-%05X)" % (min(mask_ram), max(mask_ram))) if mask_ram else "", len(mask_flash),
+             ", ".join(sorted(mask_probe)) or "none"))
+    under = [x for x in mask_ram if 0x41300 <= x < 0x41400]
+    if not under or any(x >= STACK[1] for x in under) or any(p["probe"]["sp"] != 0xD3FE for p in ref + ahd):
+        print("FAIL the stack inference: SP %s, timing-alone cells under 41400 %s" % (
+            sorted(set("%04X" % p["probe"]["sp"] for p in ref + ahd)), ["%05X" % x for x in under]))
+        return 1
+    print("stack: SP D3FE at every checkpoint; the timing-alone cells under 41400 all lie in %05X-%05X, below it: its "
+          "page taken as %05X-%05X (the common area at +34000h: inferred, not read from the MMU)"
+          % (min(under), max(under), STACK[0], STACK[1] - 1))
+    failures = 0
+    for a, b in zip(ref, ahd):
+        name = a["name"]
+        found, classified = [], []
+        ram = diff_bytes(a["ram"], b["ram"], RAM_LO)
+        stack = [x for x in ram if x not in mask_ram and STACK[0] <= x < STACK[1]]
+        extra = [x for x in ram if x not in mask_ram and x not in stack]
+        if stack:
+            classified.append("%d stack cells below SP" % len(stack))
+        if extra:
+            found.append("RAM %d cells beyond timing's: %s" % (len(extra), " ".join(
+                "%05X %02X/%02X" % (x, a["ram"][x - RAM_LO], b["ram"][x - RAM_LO]) for x in extra[:8])))
+        fl = [x for x in diff_bytes(a["flash"], b["flash"], 0) if x not in mask_flash]
+        if fl:
+            found.append("file flash %d bytes" % len(fl))
+        for k in a["probe"]:
+            if k in PROBE_SKIP or a["probe"][k] == b["probe"][k]:
+                continue
+            (classified if k in mask_probe else found).append("%s %s/%s" % (k, a["probe"][k], b["probe"][k]))
+        side = []
+        data_a, data_b = bytes(x for x in a["tx"] if x not in FLOW), bytes(x for x in b["tx"] if x not in FLOW)
+        flow_a, flow_b = bytes(x for x in a["tx"] if x in FLOW), bytes(x for x in b["tx"] if x in FLOW)
+        if data_a != data_b:
+            side.append("serial DATA bytes %s/%s" % (data_a.hex(), data_b.hex()))
+        if flow_a != flow_b:
+            side.append("XON/XOFF sequence %s/%s" % (flow_a.hex(), flow_b.hex()))
+        elif a["tx"] != b["tx"]:
+            classified.append("XON/XOFF interleaved with ^F otherwise (%d bytes)" % len(a["tx"]))
+        for k in HOST_INTS:
+            if a["host"][k] != b["host"][k]:
+                side.append("%s %d/%d" % (k, a["host"][k], b["host"][k]))
+        if a["owed"] != b["owed"]:
+            side.append("owed %d/%d" % (a["owed"], b["owed"]))
+        (classified if name == "cancelled" else found).extend(side)
+        if a["chip"] != b["chip"] or a["request"] != b["request"]:
+            found.append("chip registers %s/%s, request %d/%d" % (a["chip"], b["chip"], a["request"], b["request"]))
+        wa, wb = a["writes"], b["writes"]
+        if name == "cancelled":
+            n = min(len(wa), len(wb))
+            k = next((i for i in range(n) if wa[i] != wb[i]), None)
+            if k is not None:
+                classified.append("writes: a CANCEL-PREFIX match over %d of %d/%d" % (k, len(wa), len(wb)))
+            else:
+                classified.append("writes: a CANCEL-PREFIX match over all %d of %d/%d" % (n, len(wa), len(wb)))
+        elif wa != wb:
+            k = next((i for i in range(min(len(wa), len(wb))) if wa[i] != wb[i]), min(len(wa), len(wb)))
+            found.append("writes DIFFER at %d of %d/%d" % (k, len(wa), len(wb)))
+        failures += bool(found)
+        cyc = "CPU %.3f/%.3f s" % (a["probe"]["cycles"] / 6144000.0, b["probe"]["cycles"] / 6144000.0)
+        what = ("%d RAM cells within timing's" % len(ram)) if ram else "RAM identical"
+        print("%-4s %-11s %s; %s; A0 %02X/%02X; run ahead %s%s%s" % (
+            "FAIL" if found else "ok", name, cyc, what, a["probe"]["port_a0"], b["probe"]["port_a0"], b["state"],
+            (" | CLASSIFIED: " + "; ".join(classified)) if classified else "",
+            (" | FINDING: " + "; ".join(found)) if found else ""))
+    lang = "Spanish" if SPANISH else "English"
+    print("run ahead state (%s): %s" % (lang, "all checkpoints ok" if not failures else "%d FAILED" % failures))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
