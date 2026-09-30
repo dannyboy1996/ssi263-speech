@@ -123,7 +123,7 @@ def reference(lib, data):
 # ---- the program ------------------------------------------------------------------------------------------------
 def build_desktop():
     """test_android_native with the desktop compiler, the flags of build_linux.sh / build_board.py."""
-    z180 = repo_paths.external("Z180EMU")
+    z180 = repo_paths.Z180_CORE
     if WINDOWS:
         bindir = repo_paths.bin_dir("W64DEVKIT")
         cc = os.path.join(bindir, "gcc.exe")

@@ -73,7 +73,7 @@ def build_mame(gcc, env):
 
 
 def main():
-    z180 = repo_paths.external("Z180EMU")
+    z180 = repo_paths.Z180_CORE
     gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
     env = dict(os.environ, PATH=os.path.dirname(gcc) + os.pathsep + os.environ["PATH"])
     os.makedirs(OUT, exist_ok=True)

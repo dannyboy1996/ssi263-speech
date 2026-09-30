@@ -1,0 +1,74 @@
+diff --git a/z180/z180.c b/z180/z180.c
+index 1553150..508d52f 100644
+--- a/z180/z180.c
++++ b/z180/z180.c
+@@ -2215,6 +2215,12 @@ void z180_set_asci_irq(device_t *device, int channel, int state) {
+ 		cpustate->int_pending[Z180_INT_ASCI1] = state;
+ }
+ 
++/* The ASCI0/ASCI1 interrupt-pending flags ([0], [1]): writing one is exactly z180_set_asci_irq, without
++   the call (bns.c re-asserts the level after every instruction). */
++UINT8 *z180_asci_irq_pending(device_t *device) {
++	return &get_safe_token(device)->int_pending[Z180_INT_ASCI0];
++}
++
+ void z180_set_dreq0(device_t *device, int state) {
+ 	struct z180_state *cpustate = get_safe_token(device);
+ 	if (state)
+@@ -3208,6 +3214,22 @@ void cpu_string_export_z180(device_t *device, int device_state_entry, char *stri
+ 	}
+ }
+ 
++/* test harness hook: act as if a CALL addr ran at the current PC (leaving HALT first),
++   with BC and HL preloaded; the routine returns to where the CPU was */
++void cpu_inject_call_z180(device_t *device, UINT16 addr, UINT16 bc, UINT16 hl) {
++	struct z180_state *cpustate = get_safe_token(device);
++	LEAVE_HALT(cpustate);
++	PUSH(cpustate, PC);
++	cpustate->_PC = addr;
++	cpustate->_BC = bc;
++	cpustate->HL.w.l = hl;
++}
++
++/* cycles still to run in the current cpu_execute_z180 slice (for exact cycle stamps) */
++int cpu_icount_z180(device_t *device) {
++	return get_safe_token(device)->icount;
++}
++
+ offs_t cpu_get_state_z180(device_t *device, int device_state_entry) {
+ 
+ 	struct z180_state *cpustate = get_safe_token(device);
+diff --git a/z180/z180.h b/z180/z180.h
+index aec76cf..9dd18ec 100644
+--- a/z180/z180.h
++++ b/z180/z180.h
+@@ -206,10 +206,13 @@ struct z180_device *cpu_create_z180(char *tag, UINT32 type, UINT32 clock,
+ 	parport_read_callback_t parport_read_cb, parport_write_callback_t parport_write_cb /* only on Z182 */);
+ void cpu_reset_z180(device_t *device);
+ void cpu_execute_z180(device_t *device, int icount);
++int cpu_icount_z180(device_t *device);
++void cpu_inject_call_z180(device_t *device, UINT16 addr, UINT16 bc, UINT16 hl);
+ int cpu_translate_z180(device_t *device, enum address_spacenum space, int intention, offs_t *address);
+ 
+ void z180_set_irq_line(device_t *device, int irqline, int state);
+ void z180_set_asci_irq(device_t *device, int channel, int state);
++UINT8 *z180_asci_irq_pending(device_t *device);
+ void z180_set_dreq0(device_t *device, int state);
+ void z180_set_dreq1(device_t *device, int state);
+ int z180_get_tend0(device_t *device);
+diff --git a/z180/z180ops.h b/z180/z180ops.h
+index 009eb17..ea07a3b 100644
+--- a/z180/z180ops.h
++++ b/z180/z180ops.h
+@@ -949,7 +949,11 @@ INLINE UINT8 SET(UINT8 bit, UINT8 value)
+ /***************************************************************
+  * OTDMR
+  ***************************************************************/
++/* PC-- like ENTER_HALT: LEAVE_HALT does PC++ when an interrupt wakes the CPU,
++   and without this the instruction after SLP was skipped (BL2ENG's RAM hook
++   D655 = SLP; RET then fell into the speech buffer at D658). */
+ #define SLP {                                                   \
+ 	cpustate->icount = 0;                                           \
++	cpustate->_PC--;                                                \
+ 	cpustate->HALT = 2;                                                 \
+ }

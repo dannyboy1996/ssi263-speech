@@ -33,7 +33,7 @@ local_path() {
     [ -f "$ROOT/paths.local" ] || return 0
     sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ROOT/paths.local" | tail -1 | tr '\\' '/' | tr -d '\r'
 }
-Z180="${Z180EMU:-${SSI263_Z180EMU:-$(local_path Z180EMU)}}"
+Z180="${Z180EMU:-$ROOT/third_party/z180emu}"
 Z180="${Z180:-$ROOT/third_party/z180emu}"
 FW="${SSI263_FIRMWARE:-$(local_path SSI263_FIRMWARE)}"
 FW="${FW:-$ROOT/firmware/blazie}"

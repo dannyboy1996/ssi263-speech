@@ -4,7 +4,7 @@
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
 
-w64devkit gcc, x64 (paths.local W64DEVKIT), z180emu from paths.local Z180EMU.  The firmware is NOT copied: a release
+w64devkit gcc, x64 (paths.local W64DEVKIT), z180emu from third_party/z180emu.  The firmware is NOT copied: a release
 puts firmware\\ beside the program; run from the source tree, the program finds firmware/blazie/ itself.
 
     python src/apps/blazie/build_app.py
@@ -26,7 +26,7 @@ APP = ["-O2", "-std=c99", "-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-for
 
 
 def main():
-    z180 = repo_paths.external("Z180EMU")
+    z180 = repo_paths.Z180_CORE
     bindir = repo_paths.bin_dir("W64DEVKIT", path_fallback=True)
     gcc = os.path.join(bindir, "gcc.exe")
     env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])

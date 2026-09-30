@@ -53,8 +53,9 @@
 
 - **Unicorn 2.1.4** (GPLv2) runs the Speak-Out and Accent-mini firmware; its source is pinned
   in `src/csrc/` with a configure fix and the Windows-on-ARM patch.
-- **z180emu** (GPLv2, a C port of MAME's Z180) runs the Braille Lite firmware; its source
-  ships in the Blazie add-on.
+- **z180emu** (GPLv2, a C port of MAME's Z180) runs the Braille Lite firmware; its core is
+  vendored in `third_party/z180emu` with this project's three patches (`PATCHES.md` there), and
+  its source ships in the Blazie add-on.
 - **MAME's i8085** was the reference for the 8085's interrupt details; the CPU test
   programs TST8080 and 8080PRE checked the core.
 - **MAME's i8085** (BSD-3-Clause; Juergen Buchmueller, Roberto Fresca, Grull Osgo), at

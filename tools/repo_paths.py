@@ -86,6 +86,10 @@ def lookup(key):
     return os.environ.get("SSI263_" + key) or _read_local().get(key) or None
 
 
+# the Z180 core the library compiles: vendored with this project's patches (third_party/z180emu/PATCHES.md)
+Z180_CORE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "third_party", "z180emu")
+
+
 def external(key):
     """The configured path for key; stops with a clear message if it isn't set or doesn't exist."""
     p = lookup(key)
