@@ -113,7 +113,9 @@ class SsiTtsService : TextToSpeechService() {
             if (!finished) SsiEngine.cancel()
             val now = android.os.SystemClock.elapsedRealtime()
             val late = if (stopRequested) " ${now - stopAt} ms after the stop (the unit's cancel ${now - loopEnd} ms)" else ""
-            Log.i(TAG, "${voice.name}: ${total / 2} samples at $rate Hz, stopped=${!finished}$late")
+            // the request's rate and pitch (percent, 100 = normal): what TalkBack asks for, e.g. for a capital letter
+            Log.i(TAG, "${voice.name}: ${total / 2} samples at $rate Hz, stopped=${!finished}$late, " +
+                  "request rate ${request.speechRate} pitch ${request.pitch}")
             // A stop is an interruption, not a failure: screen readers treat an error as a failed utterance.
             callback.done()
         }
