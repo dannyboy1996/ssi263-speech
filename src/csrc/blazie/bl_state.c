@@ -26,7 +26,9 @@ typedef struct {
 } run;
 
 /* English, the June 2003 image: three power-ons, as make_states.sh and then one more bns run made the shipped
-   bl2_2003_warm.state.
+   bl2_2003_warm.state.  ONCE's September 2000 English takes the same keys at the same points: its phoneme stream
+   through these runs is June 2003's but for one sentence spoken at power-on (a wording change), and the third run's
+   is the same, write-protected answer included.
    1. Hard reset: the i-chord (4Ah = dots 2 4 + space) held at power-on; then y (3Dh) five times -- "delete all data
       in file area?", "are you sure?", the flash and its "are you sure?", the folder system.
    2. o-chord (55h), f (0Bh), c (09h): "file to create?"; a (01h); e-chord (51h): RAM file "a", open.

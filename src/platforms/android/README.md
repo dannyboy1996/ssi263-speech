@@ -13,7 +13,7 @@ also borrows TGSpeechBox's.
 
 The APK carries no firmware -- this app is the one place it cannot ship -- so each user imports their own, as
 outspoken and Panthera take their engine data. Setup's "Import firmware…" (or `am start -n
-com.ssi263speech.tts/.SettingsActivity --es import <path|content: URI> [--es language en|es]`, which skips the confirm
+com.ssi263speech.tts/.SettingsActivity --es import <path|content: URI>`, which skips the confirm
 dialog; `--ez removefirmware true` removes it) takes the list below. A path under `/sdcard` is refused by scoped
 storage (EACCES); from adb, hand over the file's MediaStore URI with a grant:
 
@@ -28,16 +28,30 @@ It takes:
   (`blt2000.exe`), also inside a zip.
 
 Files are known by content, never by name (`src/csrc/blazie/bl_firmware.c`): the ROM image (`F3 C3 xx xx FF
-"COPYRIGHT"`) anywhere in a file, written as a `.BNS`, and run past `bl_create`'s firmware sites, which refuse other
-Blazie units (Type 'n Speak). The June 2003 English and ONCE's Spanish releases are known by the sha256 of their
-image; another release the voice can run is asked about (English or Spanish) and must speak before it is kept.
+"COPYRIGHT"`) anywhere in a file, and only the releases on the list, by the sha256 of their image (Tomi,
+2026-09-30) -- each one booted through its state recipe and heard before it was listed:
+
+| Release | Found on | Image sha256 |
+|---|---|---|
+| English, June 5, 2003 revision | "FS june2003": `blt2000.exe` and its `BL2ENG.BNS` | `ff8f30ec…` |
+| English, ONCE's September 20, 2000 revision | ONCE's "braillehablado" disk: `blite2000/BL2ENG.BNS` | `c840112f…` |
+| Spanish, ONCE's September 20, 2000 revision | ONCE's "braillehablado" disk: `blite2000/BL2SPA.BNS` | `eedd606e…` |
+
+Any other image is refused in words: a Braille Lite 2000 release not on the list (another country's may lay its
+memory out differently, and its recipe is not known), and another Blazie unit's firmware (Braille 'n Speak, Type 'n
+Speak, Braille Lite 18 and 40), which `bl_create`'s firmware sites also refuse. A unit's state (786432 bytes, whatever
+its name) is never imported, alone or in a zip: the app always makes its own. Picked alone, it is refused with "This
+is a state file, not firmware. Please import only firmware files, or zips containing them, with this tool." (Tomi's
+words); in a zip beside firmware (the add-on), it is left out and said so. Refusals are shown in a dialog, kept on
+the Setup page and announced to TalkBack.
 
 The unit's battery-backed state (it holds what the firmware wrote, so it cannot ship either) is made on the phone
 from the firmware (`bl_state.c`): the bns.c runs that made the shipped states, replayed -- byte-identical to them,
-checked by sha256 on the phone. English takes a few seconds, Spanish about a minute (1150 million Z180 instructions;
-71 s for both on the A024). An add-on import takes its states as they are, when their hashes are the known ones.
-Then the unit speaks once (`ssa_probe`) and only then do the files replace what was there, in device-protected
-storage. Until then the service reports its languages as missing data and CheckVoiceData fails.
+checked on the phone against the list's hash for that release. English takes a few seconds, Spanish about a minute
+(1150 million Z180 instructions; 71 s for both on the A024); the progress bar moves every 10 million instructions and
+TalkBack hears every fifth of the way, no closer than 5 s apart. Then the unit speaks once (`ssa_probe`) and only then
+do the files replace what was there, in device-protected storage. Until then the service reports its languages as
+missing data and CheckVoiceData fails.
 
 ## Build
 
@@ -51,8 +65,9 @@ or the `Z180EMU` key in `paths.local`, or `third_party/z180emu`). It writes the 
 -- the licences and, for z180emu's GPL, the complete source. None of that is committed. A developer build may carry
 the firmware, by asking: `SSI263_ANDROID_BUNDLE_FIRMWARE=1` (with `SSI263_FIRMWARE`, default `firmware/blazie`, the
 Spanish unit there or in `spanish/`); never distribute one. `check_apk_no_firmware.py` looks inside an APK (and the
-source archive in it) for a ROM image by content and firmware or state files by name; `--control <BL2ENG.BNS> <apk>`
-adds the firmware under a bland name and must fail.
+source archive in it) for a ROM image and a unit's state by content and firmware or state files by name;
+`--control <BL2ENG.BNS> <apk>` adds the firmware under a bland name and must fail, as must `--control
+<bl2_2003_warm.state> <apk>`.
 
 Release signing reads `signing.properties` beside `settings.gradle.kts` (gitignored), as outspoken's and
 TGSpeechBox's builds: `STORE_FILE`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. Without it a release stays unsigned.
@@ -69,16 +84,21 @@ The app is GPL-2.0-or-later as a whole, because of z180emu; the project's own co
     python src/platforms/android/test/test_device_service.py [--rate 2.0] [--aloud]    # the installed app's service
     python src/platforms/android/test/test_import_native.py               # the import's native part, and the states
     SSI263_IMPORT_TEST_BREAK=1 python src/platforms/android/test/test_import_native.py     # control: must FAIL
+    SSI263_IMPORT_TEST_BREAK=hash python src/platforms/android/test/test_import_native.py  # control: must FAIL
     cd src/platforms/android && ./gradlew testDebugUnitTest               # the import's layouts and words, on the JVM
     ./gradlew testDebugUnitTest -Pssi263ImportBreak=1                     # control: the layout cases must FAIL
+    ./gradlew testDebugUnitTest -Pssi263ImportBreak=state                 # control: the state cases must FAIL
 
 `test_import_native.py` makes every fixture at test time from the files in the firmware folder (`--firmware`, default
-`$SSI263_FIRMWARE`, else `firmware/blazie`, with `spanish/` and `tns/`): the known releases written as they came, an
-update program and the 1998 layout, an unknown release, TNSENG.TNS refused, states and noise not firmware; the states
-made from the firmware alone must be the shipped ones byte for byte and speak every case of the Android test as they
-do. Its control holds the wrong chord at the English warm reset. The JVM tests (`app/src/test`) play the native side
-with a fake and check the zip layouts (top, one folder down, the add-on, an update program inside a zip), the
-refusals' words and the choices between releases.
+`$SSI263_FIRMWARE`, else `firmware/blazie`, with `spanish/`, `tns/` and `once2000/` -- ONCE's September 2000
+`BL2ENG.BNS`, its cases skipped when absent): the listed releases written as they came, the list and its labels, an
+update program and the 1998 layout, two unknown releases refused, TNSENG.TNS refused, states and noise not firmware;
+the states made from the firmware alone must be the listed ones (the shipped ones byte for byte), speak every case of
+the Android test as they do, and report their progress every 10 million instructions, steadily. Its controls hold the
+wrong chord at the English warm reset, and drop the list (the unknown releases are then taken). The JVM tests
+(`app/src/test`) play the native side with a fake and check the zip layouts (top, one folder down, the add-on, an
+update program inside a zip), the refusals' words (unknown releases, other units, states alone, in a zip and beside
+firmware) and the choices between releases.
 
 The reference in both is the desktop library the NVDA add-on and Linux ship (`bl.dll` + `ssi263.dll` from
 `build_board.py` / `build_native.py`, or `build/linux/libssi263speech.so`), driven the way `sd_ssi263.c` maps SSIP.
@@ -122,6 +142,6 @@ Android applies the request's volume to its own audio track, so the engine's vol
 | `licenses/Kotlin-LICENSE.txt`, `Kotlin-NOTICE.txt` | The Kotlin runtime's licence (the project's MIT licence and z180emu's GPL are added by `build_android.sh`) |
 | `test/test_android_native.c` | The host-side test program: the app's C on the same chip, board, host and voice, each case's PCM hashed |
 | `test/test_android_native.py` | Builds and runs it on the desktop (and over adb), and compares with `bl_voice` driven as `sd_ssi263` drives it |
-| `test/test_import_native.py` | The import's native part and the states made on the device, against the shipped ones |
-| `test/check_apk_no_firmware.py` | An APK carries no firmware, by content and by name; its control |
+| `test/test_import_native.py` | The import's native part: the list of releases, the refusals, and the states made on the device, against the listed ones, with their progress |
+| `test/check_apk_no_firmware.py` | An APK carries no firmware or state, by content and by name; its controls |
 | `test/test_device_service.py` | The installed app's TTS service on the phone, its file's PCM against the same reference |

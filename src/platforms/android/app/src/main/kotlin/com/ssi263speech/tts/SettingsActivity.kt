@@ -47,6 +47,8 @@ class SettingsActivity : Activity() {
     private var importBar: ProgressBar? = null
     private var importMessage: TextView? = null
     private var importAnnounced = -1
+    private var importAnnouncedAt = 0L
+    private var importLogged = 0
     private val ticker = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,12 +101,12 @@ class SettingsActivity : Activity() {
 
         // An import already running -- this screen was rebuilt underneath it -- shows its progress again.
         // Otherwise, the adb route, as outspoken's: `am start ... --es import /path/to/file` (or a content: URI)
-        // imports without the confirm dialog, typing the command being the consent; `--es language en|es` answers
-        // the question an unknown release asks.  `--ez removefirmware true` removes what was imported.
+        // imports without the confirm dialog, typing the command being the consent.  `--ez removefirmware true`
+        // removes what was imported.
         SsiImport.job?.let { attachImport(it) } ?: intent?.getStringExtra("import")?.let { arg ->
             val source = if (arg.startsWith("content:") || arg.startsWith("file:"))
                 SsiImport.source(this, Uri.parse(arg)) else SsiImport.source(File(arg))
-            importFrom(source, confirm = false, language = intent.getStringExtra("language"))
+            importFrom(source, confirm = false)
         }
         if (intent?.getBooleanExtra("removefirmware", false) == true) removeFirmware(confirm = false)
     }
@@ -119,7 +121,7 @@ class SettingsActivity : Activity() {
         if (requestCode != REQUEST_FIRMWARE) return
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) { importStatus.text = "No file chosen."; return }
-        importFrom(SsiImport.source(this, uri), confirm = true, language = null)
+        importFrom(SsiImport.source(this, uri), confirm = true)
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -245,7 +247,7 @@ class SettingsActivity : Activity() {
     }
 
     /** Read what the source holds, say what will happen, and -- with `confirm`, once OK is pressed -- do it. */
-    private fun importFrom(source: SsiImport.Source, confirm: Boolean, language: String?) {
+    private fun importFrom(source: SsiImport.Source, confirm: Boolean) {
         if (SsiImport.job != null) { toast("An import is already running."); return }
         importStatus.text = "Checking ${source.name}…"
         val checking = AlertDialog.Builder(this).setTitle("Checking the file")
@@ -262,49 +264,37 @@ class SettingsActivity : Activity() {
                     "Not enough room: the firmware and the unit's state need about 3 MB, and this device has " +
                     "${free shr 10} KB free." else null
                 if (refusal != null) {
-                    importStatus.text = "Not imported."
+                    // Said in the status line (it stays on the page), in a dialog, and aloud: a screen reader reads
+                    // the dialog's title, so the reason is announced as well, as the import's other outcomes are.
+                    importStatus.text = "Not imported: $refusal"
                     Log.i("SsiImport", "refused ${source.name}: $refusal")
                     AlertDialog.Builder(this).setTitle("Cannot import ${source.name}").setMessage(refusal)
                         .setPositiveButton("Close", null).show()
+                    try { importStatus.announceForAccessibility(refusal) } catch (e: Throwable) {}
                     return@runOnUiThread
                 }
-                when {
-                    !plan.needsLanguage -> confirmImport(source, plan, SsiNative.ENGLISH, confirm)
-                    language == "en" || language == "es" ->
-                        confirmImport(source, plan, if (language == "es") SsiNative.SPANISH else SsiNative.ENGLISH, confirm)
-                    else -> AlertDialog.Builder(this).setTitle("Which unit is this firmware for?")
-                        .setItems(arrayOf("English", "Spanish")) { _, which ->
-                            confirmImport(source, plan, if (which == 1) SsiNative.SPANISH else SsiNative.ENGLISH, true)
-                        }
-                        .setNegativeButton("Cancel") { _, _ -> importStatus.text = "Not imported." }.show()
-                }
+                confirmImport(plan, confirm)
             }
         }, "ssi263-inspect").start()
     }
 
-    private fun confirmImport(source: SsiImport.Source, plan: FirmwareImport.Plan, choice: Int, confirm: Boolean) {
+    private fun confirmImport(plan: FirmwareImport.Plan, confirm: Boolean) {
         val lines = plan.found.map { f ->
-            val language = if (f.language == FirmwareImport.OTHER) choice else f.language
-            val name = FirmwareImport.languageName(language)
-            (if (f.language == FirmwareImport.OTHER)
-                "Will import ${f.from} as the $name unit. It is not a release this app knows, so it is checked by " +
-                "making it speak before it replaces anything."
-            else "Will import ${f.label} (from ${f.from}).") +
-            (if (f.state == null) " The unit is then prepared on this phone, " +
-                (if (language == SsiNative.SPANISH) "which takes about a minute." else "which takes a few seconds.")
-             else "") +
-            (if (SsiData.has(this, language)) " The $name firmware already here will be replaced." else "")
+            val name = FirmwareImport.languageName(f.language)
+            "Will import ${f.label} (from ${f.from}). The unit is then prepared on this phone, " +
+                (if (f.language == SsiNative.SPANISH) "which takes about a minute." else "which takes a few seconds.") +
+                (if (SsiData.has(this, f.language)) " The $name firmware already here will be replaced." else "")
         }
         val message = (lines + plan.notes).joinToString("\n\n")
-        if (!confirm) { startImport(plan, choice); return }
+        if (!confirm) { startImport(plan); return }
         AlertDialog.Builder(this).setTitle("Import the firmware?").setMessage(message)
-            .setPositiveButton("OK") { _, _ -> startImport(plan, choice) }
+            .setPositiveButton("OK") { _, _ -> startImport(plan) }
             .setNegativeButton("Cancel") { _, _ -> importStatus.text = "Not imported." }
             .show()
     }
 
-    private fun startImport(plan: FirmwareImport.Plan, choice: Int) {
-        val job = SsiImport.Job(plan, choice)
+    private fun startImport(plan: FirmwareImport.Plan) {
+        val job = SsiImport.Job(plan)
         SsiImport.job = job
         attachImport(job)
         job.start(this)
@@ -325,6 +315,8 @@ class SettingsActivity : Activity() {
             .setNegativeButton("Cancel") { _, _ -> job.cancel(); importStatus.text = "Cancelling…" }
             .create().also { it.show() }
         importAnnounced = -1
+        importLogged = 0
+        importAnnouncedAt = android.os.SystemClock.elapsedRealtime()   // the dialog is being read out now
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         job.listener = { j -> runOnUiThread { showImportProgress(j) } }
         tick(job)
@@ -342,11 +334,20 @@ class SettingsActivity : Activity() {
         val permille = (job.progress() * 1000).toInt().coerceIn(0, 1000)
         importBar?.progress = permille
         importMessage?.text = "${job.step.ifEmpty { "Importing the firmware" }}… ${permille / 10}%"
-        // A screen reader hears the dialog once; the percentage moving is silent unless said. Every fifth will do.
+        // The bar's course in the log, a line per tenth (adb logcat -s SsiImport): how a device test sees it move.
+        if (permille / 100 > importLogged) {
+            importLogged = permille / 100
+            Log.i("SsiImport", "progress ${permille / 10}%: ${job.step}")
+        }
+        // A screen reader hears the dialog once; the percentage moving is silent unless said.  Every fifth, and no
+        // closer than 5 seconds apart: Spanish's minute is said four times, English's few seconds once at most.
         val fifth = permille / 200
-        if (fifth != importAnnounced && fifth in 1..4) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (fifth > importAnnounced && fifth in 1..4 && now - importAnnouncedAt >= 5000) {
             importAnnounced = fifth
+            importAnnouncedAt = now
             try { importMessage?.announceForAccessibility("${fifth * 20} percent") } catch (e: Throwable) {}
+            Log.i("SsiImport", "announced ${fifth * 20} percent")
         }
     }
 

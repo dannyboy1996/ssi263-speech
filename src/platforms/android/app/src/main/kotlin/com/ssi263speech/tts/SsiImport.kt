@@ -15,10 +15,10 @@ object SsiImport {
     object NativeIdentify : FirmwareImport.Identify {
         override fun firmware(data: ByteArray, out: File): Pair<Int, String> {
             val r = SsiNative.nativeImportFirmware(data, out.absolutePath)
-            return r to (if (r < 0) SsiNative.nativeImportError() else "")
+            return r to SsiNative.nativeImportError()       // the release's label, or the reason
         }
 
-        override fun state(data: ByteArray): Int = SsiNative.nativeStateLanguage(data)
+        override fun known(): List<String> = SsiNative.nativeKnownFirmware().toList()
     }
 
     class Source(val name: String, val size: Long, val open: () -> InputStream)
@@ -71,19 +71,18 @@ object SsiImport {
     class Cancelled : IOException("cancelled")
 
     /** An import in flight, held outside the screen so a screen rebuilt underneath it finds it again. */
-    class Job(val plan: FirmwareImport.Plan, val choice: Int) {
+    class Job(val plan: FirmwareImport.Plan) {
         @Volatile var step = ""              // what is happening, in words
         @Volatile var cancelled = false
         @Volatile var result: Result<List<String>>? = null
         @Volatile var listener: ((Job) -> Unit)? = null
 
-        /** 0..1 across the whole import (the states are nearly all of it). */
+        /** 0..1 across the whole import (the states are nearly all of it; blv_make_state reports every 10 million
+         * instructions, so Spanish's bar moves 115 times). */
         fun progress(): Double = (made + SsiNative.nativeStateProgress() * making) / total
         @Volatile private var made = 0.0
         @Volatile private var making = 0.0
-        private val total: Double = plan.found.sumOf { weight(language(it)).toDouble() }.coerceAtLeast(1.0)
-
-        fun language(f: FirmwareImport.Found) = if (f.language == FirmwareImport.OTHER) choice else f.language
+        private val total: Double = plan.found.sumOf { weight(it.language).toDouble() }.coerceAtLeast(1.0)
 
         /** English's state is 150 million instructions, Spanish's 1150 million. */
         private fun weight(language: Int) = if (language == FirmwareImport.SPANISH) 1150 else 150
@@ -98,7 +97,8 @@ object SsiImport {
             SsiNative.nativeStateCancel()
         }
 
-        /** Each unit made ready in the staging folder, then all of them moved into place together. */
+        /** Each unit made ready in the staging folder -- its state always made here, from its firmware, never taken
+         * from the source -- then all of them moved into place together. */
         private fun commit(ctx: Context): List<String> {
             val staging = SsiData.staging(ctx)
             val ready = File(staging, "ready")
@@ -107,41 +107,33 @@ object SsiImport {
             val labels = ArrayList<String>()
             try {
                 for (f in plan.found) {
-                    val language = language(f)
-                    val files = FirmwareImport.FILES[language]
+                    val name = FirmwareImport.languageName(f.language)
+                    val files = FirmwareImport.FILES[f.language]
                     val bns = File(ready, files[0])
                     val state = File(ready, files[1])
                     if (!f.firmware.renameTo(bns)) f.firmware.copyTo(bns, overwrite = true)
-                    val w = weight(language).toDouble()
-                    if (f.state != null) {
-                        if (!f.state.renameTo(state)) f.state.copyTo(state, overwrite = true)
-                    } else {
-                        step = "Making the ${FirmwareImport.languageName(language)} unit's state"
-                        listener?.invoke(this)
-                        making = w
-                        val ok = SsiNative.nativeMakeState(bns.absolutePath, language, state.absolutePath) == 1
-                        making = 0.0
-                        if (cancelled) throw Cancelled()
-                        if (!ok) throw IOException("The ${FirmwareImport.languageName(language)} unit's state " +
-                            "could not be made: ${SsiNative.nativeImportError()}")
-                        // A release the voice ships for makes the state it ships with, byte for byte.
-                        if (f.language != FirmwareImport.OTHER && SsiNative.nativeStateLanguage(state.readBytes()) != language)
-                            throw IOException("The ${FirmwareImport.languageName(language)} unit's state made on this " +
-                                "phone is not the one the voice was tested with, so it was not imported.")
-                    }
-                    made += w
-                    step = "Checking that the ${FirmwareImport.languageName(language)} unit speaks"
+                    val w = weight(f.language).toDouble()
+                    step = "Preparing the $name unit"
                     listener?.invoke(this)
-                    val samples = SsiNative.nativeProbe(ready.absolutePath, language,
-                        probeText(language).toByteArray(Charsets.UTF_8))
-                    if (samples < 0) throw IOException("The ${FirmwareImport.languageName(language)} unit would not " +
-                        "start: ${SsiNative.nativeImportError()}")
-                    if (samples == 0L) throw IOException("The ${FirmwareImport.languageName(language)} unit started " +
-                        "but stayed silent, so this firmware was not imported.")
-                    File(ready, files[0] + SsiData.LABEL).writeText(
-                        if (f.language == FirmwareImport.OTHER) "${f.label}, as ${FirmwareImport.languageName(language)}"
-                        else f.label)
-                    labels.add(File(ready, files[0] + SsiData.LABEL).readText())
+                    making = w
+                    val ok = SsiNative.nativeMakeState(bns.absolutePath, f.language, state.absolutePath) == 1
+                    made += w                       // before `making` drops, so the bar never steps back
+                    making = 0.0
+                    if (cancelled) throw Cancelled()
+                    if (!ok) throw IOException("The $name unit could not be prepared: ${SsiNative.nativeImportError()}")
+                    // Each release on the list makes the state it was tested with, byte for byte.
+                    if (!SsiNative.nativeStateCheck(bns.absolutePath, state.absolutePath))
+                        throw IOException("The $name unit prepared on this phone is not the one the voice was " +
+                            "tested with, so it was not imported.")
+                    step = "Checking that the $name unit speaks"
+                    listener?.invoke(this)
+                    val samples = SsiNative.nativeProbe(ready.absolutePath, f.language,
+                        probeText(f.language).toByteArray(Charsets.UTF_8))
+                    if (samples < 0) throw IOException("The $name unit would not start: ${SsiNative.nativeImportError()}")
+                    if (samples == 0L) throw IOException("The $name unit started but stayed silent, so this " +
+                        "firmware was not imported.")
+                    File(ready, files[0] + SsiData.LABEL).writeText(f.label)
+                    labels.add(f.label)
                     if (cancelled) throw Cancelled()
                 }
                 step = "Moving the firmware into place"
