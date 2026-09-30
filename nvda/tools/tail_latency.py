@@ -11,12 +11,20 @@ The real driver under stand-in NVDA.  The player is modelled as a real device: i
 in real time, each fed block after the previous one (never before it was fed).  The tail's clock is the real one
 (it is the thing measured).
 
-  A  whine on, keep open: speak, wait until "done" + 0.4 s, speak again (no cancel): heard within LIMIT_MS
+  A  whine on, keep open: speak, wait until "done" + 0.4 s, speak again (no cancel): heard within LIMIT_MS, and
+     within SAME_MS of B (the idle audio still queued is dropped once the last speech has played: Tomi heard the
+     141 ms it took before, against 18 ms without the tail)
   B  whine off (the reference): the same
   C  whine on, cancel then speak: heard within LIMIT_MS
 
-    python tail_latency.py        TAIL_LATENCY_BREAK=1: the tail's pre-0.7 pacing put back -- A must fail
+The device model plays at the driver's rate and calls onDone when it reaches the point fed (a real player's), so the
+driver's "the last speech has played" is the device's, not the feed's.
+
+    python tail_latency.py        TAIL_LATENCY_BREAK=1: the tail's pre-0.7 pacing put back -- A must fail its limit
+                                  TAIL_LATENCY_BREAK=queued: the idle audio left queued -- A must fail against B
 """
+import queue
+import threading
 import os
 import sys
 import time
@@ -26,9 +34,12 @@ exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_nvda_dr
           encoding="utf-8").read().split("time.sleep(2.0)")[0])
 time.sleep(2.0)
 
-RATE = 44100.0
-LIMIT_MS = 250.0          # the fed idle lead (<= IDLE_AHEAD_S + a block) plus render time on a loaded machine
+RATE = float(d._out_rate)     # the device plays at the driver's rate (22050 by default)
+LIMIT_MS = 250.0          # render time on a loaded machine, with room
+SAME_MS = 40.0            # A against B: the idle lead (IDLE_AHEAD_S + a block, ~90-150 ms) must not be heard
 BREAK = os.environ.get("TAIL_LATENCY_BREAK") == "1"
+if os.environ.get("TAIL_LATENCY_BREAK") in ("queued", "1"):     # "1": 0.6.0 whole (it also left the queue)
+    drv_mod.TAIL_KEEP_QUEUED = True
 if BREAK:
     # 0.6.0's pacing: the tail's own audio against the time since the tail started, the speech still playing ignored
     drv_mod.SynthDriver._tail_ahead = lambda self, fed, start: fed - (drv_mod._now() - start)
@@ -47,7 +58,38 @@ def feed(data, onDone=None):
             ps, pn, _ = timeline[-1]
             start = max(now, ps + pn / RATE)
         timeline.append((start, n, len(d._player.chunks)))
-    _feed(data, onDone)
+    if onDone is None:
+        _feed(data, None)
+        return
+    _feed(data, lambda: None)             # the stand-in's "done" marker, where the done falls in the audio
+    end = max((ps + pn / RATE for ps, pn, _ in timeline), default=now)
+    callbacks.put((end, onDone))          # heard there, and in feed order, as a device calls them
+
+
+def _call_in_order():
+    while True:
+        end, cb = callbacks.get()
+        wait = end - time.perf_counter()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            cb()
+        except Exception:
+            pass
+        finally:
+            callbacks.task_done()
+
+
+def idle():
+    # a real player's idle() returns when what was fed has played, its callbacks called
+    ends = [ps + pn / RATE for ps, pn, _ in timeline if pn]
+    if ends and max(ends) > time.perf_counter():
+        time.sleep(max(ends) - time.perf_counter())
+    callbacks.join()
+
+
+callbacks = queue.Queue()
+threading.Thread(target=_call_in_order, daemon=True).start()
 
 
 def stop():
@@ -62,6 +104,7 @@ def stop():
 
 d._player.feed = feed
 d._player.stop = stop
+d._player.idle = idle
 
 
 def heard_after(t_speak, k0):
@@ -86,7 +129,7 @@ def case(whine, cancel):
     mark = len(notified)
     n_ev = len(d._player.events)
     d.speak(["Settings dialog, press tab for more."])
-    wait_idle()
+    must_complete()
     # "done" comes when the speech has PLAYED (NVDA calls onDone, or idle() returns, then): wait for the modelled
     # device to reach the speech's end -- the tail's "done" marker, or without a tail everything fed
     marks = [s for kind, s in d._player.events[n_ev:] if kind == "done"]
@@ -106,24 +149,41 @@ def case(whine, cancel):
     mark = len(notified)
     d.speak(["OK button"])
     dt = heard_after(t, k0)
-    wait_idle()
+    must_complete()
     d.cancel()
     time.sleep(0.3)
     return None if dt is None else dt * 1e3
 
 
+def must_complete():
+    """Each utterance's own completion, or the test fails: a wait that runs out would let the channel click off
+    and the idle audio this test measures be gone, so a timeout must never pass (it did, under run_tests' load)."""
+    if not wait_idle():
+        print("FAIL an utterance's completion was not identified: %s" % last_wait_error[0])
+        print("tail latency: COMPLETION NOT IDENTIFIED")
+        sys.stdout.flush()
+        os._exit(2)
+
+
 failures = 0
 d.speak(["Warm up."])
 mark = len(notified)
-wait_idle()
-for name, whine, cancel in (("A whine on, keep open, no cancel", "whine", False),
-                            ("B whine off, no cancel (reference)", "off", False),
-                            ("C whine on, keep open, cancel first", "whine", True)):
-    ms = case(whine, cancel)
+must_complete()
+results = {}
+for key, name, whine, cancel in (("A", "A whine on, keep open, no cancel", "whine", False),
+                                 ("B", "B whine off, no cancel (reference)", "off", False),
+                                 ("C", "C whine on, keep open, cancel first", "whine", True)):
+    results[key] = (name, case(whine, cancel))
+for key in ("A", "B", "C"):
+    name, ms = results[key]
     ok = ms is not None and ms <= LIMIT_MS
+    note = "limit %.0f ms" % LIMIT_MS
+    if key == "A" and ok and results["B"][1] is not None:
+        ok = ms <= results["B"][1] + SAME_MS
+        note += "; B + %.0f ms = %.0f" % (SAME_MS, results["B"][1] + SAME_MS)
     failures += not ok
-    print("%-4s %-40s heard %s after speak() (limit %.0f ms)" % ("ok" if ok else "FAIL", name,
-          "never" if ms is None else "%.0f ms" % ms, LIMIT_MS))
+    print("%-4s %-40s heard %s after speak() (%s)" % ("ok" if ok else "FAIL", name,
+          "never" if ms is None else "%.0f ms" % ms, note))
 print("tail latency: %s" % ("all passed" if not failures else "%d FAILED" % failures))
 d.terminate()
 sys.exit(1 if failures else 0)

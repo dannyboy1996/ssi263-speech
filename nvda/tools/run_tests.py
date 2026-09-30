@@ -224,6 +224,12 @@ CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail
                     env={"TAIL_LATENCY_BREAK": "1"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel ", r"^ok +B whine off",
                                 r"^tail latency: 1 FAILED$"]))
+# Tomi (0.7 test build): with keep open, a follow-up utterance paused longer -- the idle audio still queued (up to
+# IDLE_AHEAD_S and a block) played before it; now dropped once the last speech has played (the player's onDone)
+CHECKS.append(check("open channel CONTROL (idle audio left queued, must fail)", [PY, "tail_latency.py"],
+                    env={"TAIL_LATENCY_BREAK": "queued"}, expect_fail=True,
+                    fail_marks=[r"^FAIL A whine on, keep open, no cancel .*B \+ 40 ms", r"^ok +B whine off",
+                                r"^tail latency: 1 FAILED$"]))
 # ... and the opt-in "run ahead" mode (src/csrc/blazie/run_ahead.h) against today's lockstep through bl.dll: every
 # register value identical over sessions with cancels and a rate change, and say() to first sound in chip time (at most
 # 100 ms run ahead, 300 ms in lockstep); its controls: one value flipped must be caught, and the mode left off must fail
@@ -364,7 +370,12 @@ CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA
 CHECKS.append(check("keep the channel open", [PY, "keep_open_test.py"]))
 CHECKS.append(check("keep the channel open CONTROL (off, must fail)", [PY, "keep_open_test.py"],
                     env={"KEEP_OPEN_BREAK": "1"}, expect_fail=True,
-                    fail_marks=[r"^FAIL A hiss, keep open:", r"^ok +F speech interrupting", r"^keep open: 1 FAILED$"]))
+                    fail_marks=[r"^FAIL A hiss, keep open:", r"^FAIL A2 the click", r"^ok +F speech interrupting",
+                                r"^keep open: 2 FAILED$"]))
+# ... the click at the click-off (Tomi, 0.7: with keep open only): left out, only A2 must fail
+CHECKS.append(check("keep the channel open CONTROL (no click, must fail)", [PY, "keep_open_test.py"],
+                    env={"KEEP_OPEN_BREAK": "noclick"}, expect_fail=True,
+                    fail_marks=[r"^ok +A hiss, keep open:", r"^FAIL A2 the click", r"^keep open: 1 FAILED$"]))
 # ... and with every fed sample silent, each audio check must reject it (Astra, Reply 95: missing sound passed)
 CHECKS.append(check("keep the channel open CONTROL (mute, every audio check fails)", [PY, "keep_open_test.py"],
                     env={"KEEP_OPEN_BREAK": "mute"}))

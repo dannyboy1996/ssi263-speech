@@ -10,12 +10,14 @@ originals, live.  Nothing is recorded or concatenated.
 This add-on carries the Braille Lite's firmware, shared with permission; it is not ours.
 """
 
+import math
 import os
 import queue
 import re
 import sys
 import threading
 import time
+from array import array
 
 import nvwave
 from synthDriverHandler import SynthDriver, VoiceInfo, synthIndexReached, synthDoneSpeaking
@@ -32,6 +34,7 @@ _ENGINE_DIR = os.path.join(_HERE, "_ssi263_blazie")
 from ._ssi263_blazie.blazie_host import Blazie
 from ._ssi263_blazie import ssi263_numwords as numwords
 from ._ssi263_blazie import ssi263_rates as rates
+from ._ssi263_blazie import blazie_idle
 from ._ssi263_blazie.ssi263.native import SSI263C      # the chip in C
 try:
     from ._ssi263_blazie.native_blazie import NativeBlazie
@@ -44,6 +47,32 @@ BLOCK_S = 0.03
 # last phoneme on Tomi's unit, and the emulated firmware's own timer).  The idle audio is fed this far ahead of the
 # player, so new speech drops at most this much of it.
 IDLE_AHEAD_S = 0.12
+TAIL_KEEP_QUEUED = False           # True: new speech waits behind the idle audio already queued (0.7 draft; a test's control)
+# The click when the firmware clicks the open channel off (Tomi, 0.7: with keep open only): Tomi's unit's, measured
+# (blazie_idle.CLICK, the emulator's too).  Its audible part is the first ~0.1 s; the rest is a slow drift (the 0.49 s
+# decay), faded out by CLICK_S so that speech coming just then does not wait behind it.
+CLICK_S = 0.25
+NO_CLICK = False                   # True: no click (a test's control)
+CLICK_FADE_S = 0.15
+
+
+def _click(rate):
+    """The click-off, in chip units at `rate`: a step through two first-order high-passes, then faded out."""
+    a, t1, t2 = blazie_idle.CLICK
+    a *= blazie_idle.REF_RMS
+    w1, w2 = 1.0 / t1, 1.0 / t2
+    m1, m2 = a * w1 / (w1 - w2), a * w2 / (w1 - w2)
+    e1, e2 = math.exp(-1.0 / (t1 * rate)), math.exp(-1.0 / (t2 * rate))
+    n, nf = int(CLICK_S * rate), int(CLICK_FADE_S * rate)
+    out = array("d", bytes(8 * n))
+    for i in range(n):
+        v = m1 - m2
+        if i >= n - nf:
+            v *= 0.5 + 0.5 * math.cos(math.pi * (i - (n - nf)) / nf)
+        out[i] = v
+        m1 *= e1
+        m2 *= e2
+    return out
 _now = time.perf_counter           # the idle tail's clock (a test may speed it up)
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 # 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
@@ -566,12 +595,17 @@ class SynthDriver(SynthDriver):
                 self._play_end = 0.0
             elif self._tail_wanted():
                 # done once the speech has played (the tail's audio follows it), then the open channel
-                try:
-                    self._player.feed(b"", onDone=lambda: synthDoneSpeaking.notify(synth=self))
-                except Exception:
+                played = threading.Event()
+
+                def done(played=played):
+                    played.set()
                     synthDoneSpeaking.notify(synth=self)
                 try:
-                    self._idle_tail()
+                    self._player.feed(b"", onDone=done)
+                except Exception:
+                    done()
+                try:
+                    self._idle_tail(played)
                 except Exception:
                     log.error("Blazie: the idle tail failed", exc_info=True)
             else:
@@ -595,23 +629,26 @@ class SynthDriver(SynthDriver):
     def _tail_wanted(self):
         return self._keep_open and self._whine != "off" and self._queue.empty() and not self._cancelFlag.is_set()
 
-    def _idle_tail(self):
+    def _idle_tail(self, played=None):
         """The unit after speech, in real time: its channel stays open with the hiss or whine until the firmware
-        clicks it off (R3 = 00), or until new speech or a cancel.  New speech plays after the idle audio already
-        fed (at most IDLE_AHEAD_S): stopping the player there would also drop the end of the last utterance if it
-        has not played yet.  A cancel stops it (cancel() did, on NVDA's thread; again here, after the last feed).
-        The unit's own time runs meanwhile, as on the real unit: the next utterance finds it open or clicked off,
-        whichever the firmware decided."""
+        clicks it off (R3 = 00), or until new speech or a cancel.  New speech that comes without a cancel waits
+        until the last utterance has played -- `played`, set by the player's own onDone at its end -- and then the
+        idle audio still queued (up to IDLE_AHEAD_S and a block) is dropped, so the new speech does not wait behind
+        it (Tomi, 0.7: a longer pause with keep open; 141 ms against 18 without the tail, tools/tail_latency.py).
+        Stopping before `played` would drop the end of the last utterance and its done.  A cancel stops it
+        (cancel() did, on NVDA's thread; again here, after the last feed).  The unit's own time runs meanwhile, as
+        on the real unit: the next utterance finds it open or clicked off, whichever the firmware decided."""
         unit = self._unit
         if unit is None:
             return
         gain = MAKEUP * self._volume / 100.0
         rate = float(unit.chip.out_rate)
-        start, fed = _now(), 0.0
+        start, fed, clicked = _now(), 0.0, False
         self._wake.clear()
         while not self._stopped and self._queue.empty() and not self._cancelFlag.is_set():
             if unit.chip.regs[3] == 0:
-                break                    # clicked off: the firmware's own end of the open channel
+                clicked = True           # clicked off: the firmware's own end of the open channel
+                break
             ahead = self._tail_ahead(fed, start)
             if ahead > IDLE_AHEAD_S:
                 # the speech may still be playing: look again soon (the clock may be a test's, sped up)
@@ -626,7 +663,13 @@ class SynthDriver(SynthDriver):
             if self._cancelFlag.is_set():
                 self._player.stop()
             elif self._queue.empty():
+                if clicked and not NO_CLICK:
+                    self._feed(unit.chip.dsp.pcm16(_click(rate), gain), rate)
                 self._player.idle()      # clicked off (or the driver stopping)
+            elif fed and played is not None and not TAIL_KEEP_QUEUED and \
+                    played.wait(max(0.0, self._play_end - _now()) + 0.5) and not self._cancelFlag.is_set():
+                self._player.stop()      # new speech: only idle audio is left in the player
+                self._play_end = 0.0
         except Exception:
             pass
         if self._cancelFlag.is_set() or self._queue.empty():

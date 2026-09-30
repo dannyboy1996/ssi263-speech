@@ -55,6 +55,8 @@ def main():
     shutil.copy2(os.path.join(ENGINE, "hosts", "blazie.py"), os.path.join(eng, "blazie_host.py"))
     # 0.7: the unit in-process (bl.dll: board + Z180 + host lockstep, per bitness), the pipe host the fallback
     shutil.copy2(os.path.join(ENGINE, "hosts", "native_blazie.py"), eng)
+    # the unit's measured idle sounds (data only): the driver's click at the end of the open channel
+    shutil.copy2(os.path.join(ENGINE, "hosts", "blazie_idle.py"), eng)
     sys.path.insert(0, os.path.join(ENGINE, "csrc", "blazie"))
     import build_board                                  # noqa: E402
     build_board.main()

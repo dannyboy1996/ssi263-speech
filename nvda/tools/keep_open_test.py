@@ -6,6 +6,7 @@ driver keeps the emulated unit running in real time after "done" (listeners, 202
 stand-in NVDA; the tail's clock is sped up SPEED times.
 
   A  hiss, keep open: 8.5-11 s of audible hiss after "done", ending with the firmware's click-off (R3 = 00)
+  A2 ... and the unit's click there (Tomi, 0.7: the click-off, with keep open only; blazie_idle.CLICK)
   B  new speech 2 s into the tail: the tail stops (the idle audio before the new speech is ~2 s, not ~10)
   C  keep open OFF (the control): nothing after "done"
   D  hiss off, keep open on: nothing after "done"
@@ -15,6 +16,7 @@ stand-in NVDA; the tail's clock is sped up SPEED times.
 
     python keep_open_test.py            KEEP_OPEN_BREAK=1: case A runs with keep open off -- the test must fail
                                         KEEP_OPEN_BREAK=mute: every fed sample silent -- passes only if A, B and E/F each fail
+                                        KEEP_OPEN_BREAK=noclick: the click left out -- A2 must fail
 """
 import os
 import sys
@@ -29,6 +31,8 @@ SPEED = 20.0
 _t0 = time.perf_counter()
 drv_mod._now = lambda: _t0 + (time.perf_counter() - _t0) * SPEED
 BREAK = os.environ.get("KEEP_OPEN_BREAK") == "1"
+if os.environ.get("KEEP_OPEN_BREAK") == "noclick":
+    drv_mod.NO_CLICK = True
 if os.environ.get("KEEP_OPEN_BREAK") == "mute":     # the guards' control: silent audio must fail B, E and F
     _feed = d._player.feed
     d._player.feed = lambda data, onDone=None: _feed(bytes(len(data)), onDone)
@@ -103,6 +107,14 @@ tail_s = len(tail) / rate
 rms = float(np.sqrt(np.mean(tail[:int(5 * rate)] ** 2))) if len(tail) else 0.0
 check("A hiss, keep open", 8.5 <= tail_s <= 11.0 and d._unit.chip.regs[3] == 0 and rms > 1e-6,
       "%.2f s after done, R3 %02X at the end, rms %.2e over its first 5 s" % (tail_s, d._unit.chip.regs[3], rms))
+# A2: the click at the click-off -- its first sample is the measured step (CLICK x REF_RMS, at the driver's gain)
+want = abs(drv_mod.blazie_idle.CLICK[0] * drv_mod.blazie_idle.REF_RMS) * drv_mod.MAKEUP * d._volume / 100.0
+end = tail[-int((drv_mod.CLICK_S + 0.1) * rate):] if len(tail) else tail
+body = tail[:-int((drv_mod.CLICK_S + 0.1) * rate)] if len(tail) else tail
+low = float(end.min()) if len(end) else 0.0
+check("A2 the click at the click-off", low < -0.7 * want and (not len(body) or float(np.abs(body).max()) < 0.3 * want),
+      "lowest %.4f in the tail's last %.2f s (the click's step %.4f); the hiss before it peaks at %.4f"
+      % (low, drv_mod.CLICK_S + 0.1, -want, float(np.abs(body).max()) if len(body) else 0.0))
 
 # B: interrupted by new speech 2 s (tail time) in
 d1 = utter("Hello there.", "hiss", True, wait_tail=False)
@@ -188,7 +200,7 @@ else:
 
 print("keep open: %s" % ("PASS" if not bad else "%d FAILED" % bad))
 if os.environ.get("KEEP_OPEN_BREAK") == "mute":     # the guards' control: each audio check must have failed
-    need = ("A hiss, keep open", "B new speech stops the tail", "E/F first sound")
+    need = ("A hiss, keep open", "A2 the click at the click-off", "B new speech stops the tail", "E/F first sound")
     missed = [n for n in need if n not in failed]
     print("mute control: %s" % ("every audio check failed, as it must" if not missed else
                                 "NOT rejected: %s" % ", ".join(missed)))
