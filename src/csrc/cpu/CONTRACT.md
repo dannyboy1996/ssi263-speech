@@ -119,7 +119,8 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   - PSW bits 1, 3 and 5 are "X: Undefined" (the PUSH PSW listing): the cores may differ there, and MAME keeps its
     undocumented V and K flags in them.
 
-**8086 (MAME's i8086, the pinned revision; documented as it behaves, not yet decided against Intel's manual):**
+**8086 (MAME's i8086, the pinned revision; its clock counts decided against Intel's manual where marked, the rest
+documented as it behaves):**
 - **Reset**: CS:IP = FFFF:0000 (linear FFFF0h), DS = ES = SS = 0, FLAGS F002h (IF and TF off; the 8086's bits 12-15
   read 1); a pending NMI edge is dropped, a held INTR is sampled again.
 - **Order at A**: a pending NMI, else INTR when IF is set -- neither while the interrupt shadow is active (5). Both
@@ -129,9 +130,45 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   A halted core stops A there; otherwise the **single-step trap** comes next: armed by POPF or IRET with TF set, it
   is taken (INT 1) at the second boundary after, i.e. after one more instruction, never while the shadow is active
   (so MOV SS delays it by one instruction). An INTR and the trap can both be taken at one A (MAME's order).
-- **Acceptance charge**: 0 T-states -- MAME never charges an interrupt's entry (its table's EXCEPTION entry, 51, is
-  unused). INT n is 0 T, INT 3 2 T, INTO taken 2 T, IRET 44 T (32 + its POPF). Intel gives 51, 52, 53 and 24:
-  **open**, to be decided from the manual as the 8085's acceptance was.
+- **Clock counts, decided from Intel's manual** (after Astra, Reply 104: *The 8086 Family User's Manual*, Oct 1979,
+  9800722-03, Table 2-21, cited as printed page / PDF page; each is a named change of the extraction or of the
+  driver, with its own must-fail control) **(chip)** except where marked:
+  - **Interrupt entry, by kind.** An INTR acceptance 61 T (7 transfers, the two INTA cycles included; 2-56/PDF 79),
+    NMI 50 (2-60/PDF 83), the single-step trap 50 (2-66/PDF 89; the manual's AP-67, printed A-28/PDF 332, says 51
+    -- the table is followed), charged at B. INT n 51, INT 3 52, INTO 53 taken and 4 not (2-56/PDF 79), charged
+    with the instruction at F. IRET 24, its FLAGS restore included (2-56/PDF 79). The divide error (DIV, IDIV, AAM
+    0): the instruction's own charge (MAME's: DIV r8 80, AAM 0 none) plus an entry of 51 **(model)**: the manual
+    gives no figure; like INT n it runs no INTA cycles (printed 2-25/PDF 48), so INT n's 51. MAME charged 0 for
+    every entry, 2 for INT 3 and INTO, and 44 for IRET (32 + its POPF 12).
+  - **An intercepted interrupt costs the same** as one taken through the table: the instruction's own entry (INT n
+    51, INT 3 52, INTO 53, a divide error its instruction + 51). What the host does instead of the handler -- the
+    handler's instructions and its IRET, the DOS or BIOS service time -- is **not modelled**: an intercept adds no
+    time for it. A host that needs the service's duration must charge it itself.
+  - **REP string forms**: 9 + n per repetition, n = MOVS 17 (2-61/PDF 84), CMPS 22 (2-53/PDF 76), SCAS 15
+    (2-65/PDF 88), LODS 13 (2-60/PDF 83), STOS 10 (2-66/PDF 89); the REP prefix's own row (2, 2-63/PDF 86) is read
+    as included in the 9, not added. A segment override is its row's 2 (2-65/PDF 88). With CX = 0: 9. A REP before a
+    non-string instruction is a 2-T step of its own, the instruction the next step (MAME's; it charged 0). MAME
+    charged 2 (the REP as an override) + the plain instruction per pass; its REP rows were unused and three of their
+    counts differ (CMPS 21, SCAS 14, LODS 11).
+  - **Prefixes**: a segment override 2, LOCK 2 (2-60/PDF 83; MAME charged NOP's entry), each paid once per
+    instruction (see the REP clause below for passes).
+  - **Odd addresses**: 4 T more for every word transfer at an odd address, memory or port ("For the 8086, add four
+    clocks for each 16-bit word transfer with an odd address", every page of the table): an INT's three pushes at
+    an odd SP add 12, IRET's pops likewise. MAME modelled none. Instruction fetches are not transfers (the queue).
+  - NOP 3 (2-62/PDF 85; MAME 2); ESC 2 with a register, 8 + EA with memory (2-54/PDF 77; MAME 2 + EA).
+  - **Open, MAME's rows kept**: the stack and word-port rows are Intel's 8086 figure plus the 4 per word transfer
+    the table's footnote gives for the 8088 (PUSH r16 15, POP r16 12, PUSHF 14, POPF 12, IN/OUT AX 14 and 12;
+    Intel's 8086: 11, 8, 10, 8, 10 and 8, printed 2-55 to 2-63), so at an odd address they count that 4 twice;
+    the returns match neither CPU (RET 20, RET n 24, RETF 32, RETF n 31; Intel's 8086: 8, 12, 18, 17, printed
+    2-64/PDF 87); WAIT's slot is 3 (Intel 3 + 5n); MUL/DIV are one figure, not Intel's ranges. Which CPU the
+    Accent-mini's PC was (8086 or 8088) is not settled.
+- **Forward progress**: every step costs at least 2 T-states -- every path charges an entry of Intel's table, the
+  smallest being 2 -- an intercepted interrupt and a HALT or WAIT slot included, so `i86_run(budget)` always
+  returns. Before these counts an INT n (0 T), AAM 0 (0 T) and a REP before a non-string instruction (0 T) could
+  each make a 0-T step, and an INT whose vector pointed at itself kept `i86_run(cpu, 1)` looping for ever (Astra's
+  probe, Reply 104). Tested: `forward_progress` (her probe and its relatives, guarded so a regression fails rather
+  than hangs) and `step_cost_floor` (every first byte, alone and after REP or REPNE, with and without a seam that
+  services every interrupt).
 - **INT n / INT 3 / INTO / divide error and the host (`cpu_bus.intercept`)**: raised by the instruction, at E, and
   offered to `intercept(ctx, vector, kind)` first -- kind `I86_INT_SOFTWARE`, or `I86_INT_EXCEPTION` for a divide
   error -- with CS:IP already past the instruction (the 8086 pushes that address for a divide error too). Nonzero:
@@ -144,8 +181,9 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   step and opens a one-instruction shadow.
 - **REP string instructions**: one iteration per step. An interrupt is sampled between iterations; the pushed IP is
   the first prefix's, so the instruction resumes with all its prefixes (MAME; the real 8086 keeps only one). Each
-  iteration re-fetches and re-charges its prefixes (CS: REP MOVSB: 2 + 2 + 18 = 22 T per iteration; Intel 17 per
-  repetition plus 9).
+  pass re-fetches its prefixes; the first pass pays them and the 9, a pass continuing the instruction the previous
+  step left only its repetition (CS: REP MOVSB: 2 + 9 + 17 = 28 T, then 17 a pass). A pass after an interrupt's
+  handler is a first pass again (28): the 8086 re-decodes the interrupted instruction **(model)**.
 - **HLT** charges 2 T (CHANGED: MAME ends its slice instead); the slots are in 6.
 
 ## 5. EI
@@ -289,17 +327,21 @@ next step's A, not inside SIM's step), `sim_r75`, `rst_levels`; `intr_rst`, `int
 2; 18 T), `intr_nop` (nothing pushed, 4 T), `intr_jcc`, `intr_twice` (the byte index restarts), `intr_halt`;
 `sid_sod`.
 
-**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 18 must-fail
+**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 39 must-fail
 controls, each undoing one rule of the driver, a named change of the extraction or an upstream rule, are
 `i86_controls.py`): `zero_budget`, `reset` (FFFF:0000, F002h, a pending NMI dropped, a held INTR sampled again),
-`two_cores`; `intr_vector` (the three pushes, IF/TF cleared, one `irq_ack` byte 0, a 0-T acceptance, `i86_pc()`
+`two_cores`; `intr_vector` (the three pushes, IF/TF cleared, one `irq_ack` byte 0, a 61-T acceptance, `i86_pc()`
 at the pushes), `intr_masked`, `intr_level`, `sti_shadow`, `ss_shadow` (MOV SS and POP SS), `nmi_edge`;
-`int_iret` (0 T and 44 T, MAME's), `intercept` (IP past the INT, nothing pushed, the host's AX kept; a declined
+`int_iret` (51 T and 24 T, Intel's), `intercept` (IP past the INT, nothing pushed, the host's AX kept; a declined
 vector vectored), `intercept_kinds` (INTO, INT 3, the divide error with IP past the DIV), `hw_not_offered`; `halt`
 (2 T, 2-T slots, the pushed address after the HLT), `halt_masked`, `wait`; `prefix_atomic` (15 T, as Intel),
-`rep_iteration`; `trap`, `trap_ss`; `aliased`; `tstates` (MOV r16,imm 4, OUT/IN DX 8, CLI/STI 2, JMP short 15:
-MAME = Intel); `io` (a word port access is two bytes); `flags`. Against Unicorn on the Accent-mini's driver:
-`compare_i86_accent.py` (README.md).
+`rep_iteration` (28, 17, the resumed pass 28); `trap`, `trap_ss`; `aliased`; `tstates` (MOV r16,imm 4, OUT/IN DX
+8, CLI/STI 2, JMP short 15: MAME = Intel; NOP 3, LOCK 2, ESC 2 and 8 + EA: Intel's); `io` (a word port access is
+two bytes); `flags`; after Astra's Reply 104: `int_costs` (51, 52, 4 and 53, the same when intercepted),
+`accept_costs` (INTR 61, NMI 50, the trap 50), `divide_error` (DIV r8 80 + 51, AAM 0 51, the same when
+intercepted), `rep_counts` (9 + n for each string form, CX = 0, a REP before NOP), `odd_word` (+4 per word
+transfer: MOV, MOVSW, INT's pushes, IRET's pops, a word port), `forward_progress`, `step_cost_floor`. Against
+Unicorn on the Accent-mini's driver: `compare_i86_accent.py` (README.md).
 
 **The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
 first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
@@ -332,8 +374,12 @@ Acceptance per core:
   decided from Intel's documentation (4); the 8080/8085 exercisers; the interrupt, flag and timing tests; the
   captured Accent SA reference (8).
 - **MAME's 8086 (corrected path)**: the phase tests above; then the Accent-mini's driver against Unicorn, every chip
-  write's value identical and every time difference explained (none so far); the open timing questions of 4 decided
-  from Intel's manual; then a listen.
+  write's value AND time identical, the audio, registers, host log and INIT snapshots identical, memory after INIT
+  identical but for the listed FLAGS images (`compare_i86_accent.py` fails the run on any of them); the timing
+  questions of 4 decided from Intel's manual (done for the entries named there; the 8088-flavoured rows open);
+  then a listen. The host couples the CPU to chip time by **steps** (`cpu_ips` instructions per chip second), a
+  compatibility policy kept from Unicorn, not a clock: the T-states are counted beside it (`i86_cycles`) and do not
+  move a write.
 
 The behavioural specification comes from the manufacturers' manuals. Observations of today's cores are labelled
 **(legacy)** and are kept as regression facts, not as the definition of correct.

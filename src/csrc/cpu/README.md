@@ -133,15 +133,27 @@ greeting, six sentences spoken to their end, one cut by ^X): `nvda/tools/speakou
   time in slices, so a write's time can move only where the two count instructions differently and a slice ends in
   between. The known cases: (1) a REP string instruction with CX = n: Unicorn counts n + 1 (a last pass that finds
   CX = 0), MAME n. The driver's only REP is the REPE CMPSB of its EMS check, inside INIT's single unsliced call: no
-  effect. (2) LOCK is its own step on MAME (unused by the driver). None occurred. What the coupling hides: MAME
-  charges this driver 14-15 T-states per instruction, so 5 million instructions a second is a 74 MHz 8086; a
-  4.77 MHz PC would run about 320,000. Coupling by T-states instead is a decision for Tomi and Astra, not made here.
+  effect. (2) LOCK is its own step on MAME (unused by the driver). None occurred.
+- **The coupling is a compatibility policy, not a clock** (Astra, Reply 104). The host is a virtual PC running the
+  DOS driver, not a model of one particular physical PC; 5 million instructions a second is the setting Unicorn's
+  host has always used, kept so that changing the CPU does not also change the scheduler. The core counts T-states
+  beside it (`i86_cycles`, Intel's counts: CONTRACT.md 4) and steps (`i86_steps`), separately; the host reads only
+  the steps, so the clock corrections move no write. The workload's 14-15 T-states an instruction do not make the
+  policy a real 74 MHz 8086, and a 4.77 MHz PC's rate is not the policy either. Clock-based board timing is future
+  work, a decision for Tomi and Astra, not made here.
 - **complete_fuzz on the MAME core** (`COMPLETE_FUZZ_SYNTH=accent`, SIM_SPEED=10) reports 1-4 incomplete utterances
   per 150 steps where Unicorn reports none. Not the CPU: the driver's calls recorded from such a run and replayed on
   both CPUs give the live run's 29,518 writes exactly, on either; Unicorn slowed by 25% (a sleep after each run/say)
   fails the same way; with the fuzz's 0.5 s wait after "done" made 1.5 s, the MAME core passes every seed. The
   utterances finish, later than the check looks: `pc86.dll` is about 1.2 times slower than Unicorn's JIT on this
   driver, and the fuzz's margin is host-speed dependent. Not gated on the MAME core for that reason.
-- **Known limits (MAME's, kept):** an interrupt's entry costs 0 T (INT n 0 T, an INTR/NMI acceptance 0 T; Intel
-  gives 51 for INT n); IRET is 44 T (32 + its POPF; Intel 24); a REP MOVSB iteration 22 T (Intel 17 a repetition);
-  NOP 2 T (Intel 3). The undefined flags are MAME's.
+- **Clock counts from Intel's manual** (Astra, Reply 104; CONTRACT.md 4, each a named change with its control):
+  INT n 51, INT 3 52, INTO 53, IRET 24 (MAME 0, 2, 2, 44), the same when the host intercepts one (the omitted
+  handler's time is not modelled); INTR 61, NMI 50, the trap 50 (MAME 0); the divide error's entry 51 (a model);
+  REP string forms 9 + n a repetition (MAME 2 + the plain instruction a pass); NOP 3, LOCK 2, ESC per the table;
+  4 more per word transfer at an odd address. Every step now costs at least 2 T, so `i86_run` always returns:
+  Astra's probe (an INT 21h vectored at itself, 0 T a step on MAME's counts) looped `i86_run(cpu, 1)` for ever.
+  After the corrections the comparison is unchanged: every write identical in value and time, as the host counts
+  steps.
+- **Known limits (MAME's, kept):** the stack and word-port rows are Intel's 8086 figure plus the 8088's 4 a word
+  transfer, and the returns match neither CPU (CONTRACT.md 4, open). The undefined flags are MAME's.

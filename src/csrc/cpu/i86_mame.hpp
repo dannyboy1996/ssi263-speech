@@ -79,6 +79,8 @@ public:
         m_aliased = 0;
         m_alias_addr = 0;
         m_alias_op = 0;
+        m_rep_ran = m_rep_continue = m_rep_pending = false;
+        m_rep_at = 0;
         init_tables();            // the constructor's body (generated file)
     }
 
@@ -95,6 +97,42 @@ public:
     void execute_op(uint8_t op);          // the generated file: execute_run's own opcodes, then common_op
     void init_tables();                   // the generated file: the constructor's body
 
+    // ---- clock counts from Intel's manual (Astra, Reply 104; CONTRACT.md 4).  The 8086 Family User's Manual,
+    // Oct 1979, Table 2-21, as printed page / PDF page.  Upstream charges none of these.
+    enum {
+        I86_INTR_T = 61,                  // INTR acceptance, 7 transfers with the two INTA cycles (2-56/PDF 79)
+        I86_NMI_T = 50,                   // NMI (2-60/PDF 83)
+        I86_TRAP_T = 50,                  // SINGLE STEP (2-66/PDF 89; AP-67, printed A-28/PDF 332, says 51)
+        I86_ODD_WORD_T = 4                // "For the 8086, add four clocks for each 16-bit word transfer with an
+    };                                    //  odd address" (every page of the table)
+
+    // A word transfer at an odd address: 4 more T-states (the 8086's bus does it as two cycles).  Every memory and
+    // port word access goes through read_word/write_word/read_port_word/write_port_word below; instruction fetches
+    // do not (the prefetch queue).  Upstream: none.
+    void odd_word(uint32_t addr) { if (addr & 1) m_icount -= I86_ODD_WORD_T; }
+
+    // A REP string instruction is one pass per step (i86_mame.cpp).  Intel charges 9 once and a count per repetition
+    // (MOVS 9 + 17/rep, ...): the first pass pays the 9 (with any segment override before it, 2), a pass that
+    // continues the same instruction pays only its repetition -- its prefixes, re-fetched by the step, were paid on
+    // the first.  A pass after an interrupt is a first pass again (the 8086 re-decodes the instruction; a model).
+    bool m_rep_ran;                       // this step ran a REP pass
+    bool m_rep_continue;                  // ... continuing the one the previous step left (IP back on its prefix)
+    bool m_rep_pending;                   // the previous step left a REP to run again from m_rep_at
+    uint32_t m_rep_at;
+    void rep_first(uint8_t base)
+    {
+        m_rep_ran = true;
+        if (m_rep_continue)
+            m_icount = 0;                 // this step's re-fetched prefixes: paid on the first pass
+        else
+            m_icount -= m_timing[base];
+    }
+    void rep_count(uint8_t one, uint8_t count)
+    {
+        m_icount += m_timing[one];        // the pass charged the plain instruction's entry (i_movsb and the like) ...
+        m_icount -= m_timing[count];      // ... a repetition costs the table's count instead
+    }
+
     // ---- the framework's calls, answered ----
     template <typename... T> void logerror(T &&...) const {}
     void debugger_exception_hook(int) const {}
@@ -110,14 +148,14 @@ public:
 
     // ---- memory and I/O (i86.cpp's accessors, restated on the cpu_bus) ----
     uint8_t read_byte(uint32_t addr) { return m_bus->read(m_bus->ctx, addr & 0xfffff); }
-    uint16_t read_word(uint32_t addr) { return (uint16_t)(read_byte(addr) | (read_byte(addr + 1) << 8)); }
+    uint16_t read_word(uint32_t addr) { odd_word(addr); return (uint16_t)(read_byte(addr) | (read_byte(addr + 1) << 8)); }
     void write_byte(uint32_t addr, uint8_t data) { m_bus->write(m_bus->ctx, addr & 0xfffff, data); }
-    void write_word(uint32_t addr, uint16_t data) { write_byte(addr, (uint8_t)data); write_byte(addr + 1, (uint8_t)(data >> 8)); }
+    void write_word(uint32_t addr, uint16_t data) { odd_word(addr); write_byte(addr, (uint8_t)data); write_byte(addr + 1, (uint8_t)(data >> 8)); }
     uint8_t read_port_byte(uint16_t port) { return m_bus->in(m_bus->ctx, port); }
-    uint16_t read_port_word(uint16_t port) { return (uint16_t)(read_port_byte(port) | (read_port_byte((uint16_t)(port + 1)) << 8)); }
+    uint16_t read_port_word(uint16_t port) { odd_word(port); return (uint16_t)(read_port_byte(port) | (read_port_byte((uint16_t)(port + 1)) << 8)); }
     void write_port_byte(uint16_t port, uint8_t data) { m_bus->out(m_bus->ctx, port, data); }
     void write_port_byte_al(uint16_t port) { write_port_byte(port, m_regs.b[AL]); }
-    void write_port_word(uint16_t port, uint16_t data) { write_port_byte(port, (uint8_t)data); write_port_byte((uint16_t)(port + 1), (uint8_t)(data >> 8)); }
+    void write_port_word(uint16_t port, uint16_t data) { odd_word(port); write_port_byte(port, (uint8_t)data); write_port_byte((uint16_t)(port + 1), (uint8_t)(data >> 8)); }
     uint32_t update_pc() { return m_pc = (m_sregs[CS] << 4) + m_ip; }
     uint8_t fetch()
     {

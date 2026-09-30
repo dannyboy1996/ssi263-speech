@@ -65,6 +65,9 @@ class Stop(Exception):
 class Accent:
     def __init__(self, dvc_path, chip=None, out_rate=44100, cpu_ips=5_000_000, log=None, core=None):
         self.chip = chip or SSI263(out_rate=out_rate)
+        # instructions per second of chip time: a COMPATIBILITY POLICY (the scheduler this host has always used on
+        # Unicorn), not a CPU clock -- on MAME's 8086 the host counts its steps the same way, and the T-states the
+        # core counts beside them move nothing (src/csrc/cpu/README.md, Astra's Reply 104)
         self.cpu_ips = cpu_ips
         self.log = log if log is not None else []
         # the CPU: Unicorn (the default), or -- opt-in, SSI263_ACCENT_CORE=mame -- MAME's 8086 (pc86.py), which

@@ -12,6 +12,9 @@ in i86_mame.hpp: the cpu_bus callbacks) and execute_run -- replaced by our own s
 CONTRACT.md; execute_run's own opcodes (POP CS, the shifts by CL, ESC) are kept, as execute_op().  The 80186 and 80286
 (i186.cpp, i286.cpp) are not taken: the Accent-mini's driver needs only the 8086 (README.md).  The class it compiles
 against is i86_mame.hpp.
+
+The clock counts the substitutions correct come from Intel's manual (Astra, Reply 104; CONTRACT.md 4): each is its
+own named substitution, so i86_controls.py can put one back alone and see exactly its tests fail.
 """
 import hashlib
 import os
@@ -71,6 +74,73 @@ SUBS = [
      "\t\t\t\tCLK(WAIT);   // CHANGED: a WAIT that waits is a slot of WAIT's T-states per step; upstream ends the slice\n"
      "\t\t\t\tm_ip--;\n\t\t\t}",
      "WAIT's slot", 1),
+] + [
+    # ---- clock counts from Intel's manual (Astra, Reply 104): The 8086 Family User's Manual, Oct 1979 (9800722-03),
+    # Table 2-21, cited as printed page / PDF page.  Each is its own substitution, so a control can undo one alone.
+    ("\t51,32,          /* exception, IRET */",
+     "\t51,24,          /* exception, IRET */   // CHANGED: IRET 24 (Table 2-21, printed 2-56/PDF 79), its POPF "
+     "included (see 'IRET charges no POPF'); upstream 32 + POPF 12 = 44.  EXCEPTION 51 (unused "
+     "upstream) is the divide error's entry: a model, see 'the divide error's entry'",
+     "IRET 24", 1),
+    ("\t\t\ti_popf();\n\t\t\tCLK(IRET);",
+     "\t\t\ti_popf();\n"
+     "\t\t\tm_icount += m_timing[POPF];   // CHANGED: IRET's 24 includes restoring FLAGS; upstream also charges POPF's 12\n"
+     "\t\t\tCLK(IRET);",
+     "IRET charges no POPF", 1),
+    ("\t\t2, 0, 4, 2, /* INTs */",
+     "\t\t52,51, 4,53, /* INTs */   // CHANGED: INT 3 52, INT n 51, INTO 4 not taken / 53 taken (Table 2-21, printed "
+     "2-56/PDF 79); upstream 2, 0, 4, 2.  An intercepted one costs the same (CONTRACT.md 4)",
+     "the software interrupts' T-states", 1),
+    ("\t\t2,24, 2, 2, 3,11,   /* misc */",
+     "\t\t2,24, 2, 3, 3,11,   /* misc */   // CHANGED: NOP 3 (Table 2-21, printed 2-62/PDF 85); upstream 2",
+     "NOP 3", 1),
+    ("\t\t\tm_no_interrupt = 1;\n\t\t\tCLK(NOP);",
+     "\t\t\tm_no_interrupt = 1;\n"
+     "\t\t\tCLK(OVERRIDE);   // CHANGED: LOCK is a 2-T prefix (Table 2-21, printed 2-60/PDF 83), the segment "
+     "override's 2; upstream charged NOP's entry",
+     "LOCK 2", 1),
+    ("\t\t\t\t\tm_esc_data_handler(0);\n\t\t\t\tCLK(NOP);",
+     "\t\t\t\t\tm_esc_data_handler(0);\n"
+     "\t\t\t\tm_icount -= (m_modrm < 0xc0) ? 8 : 2;   // CHANGED: ESC 8 + EA with a memory operand, 2 with a "
+     "register (Table 2-21, printed 2-54/PDF 77); upstream charged NOP's entry (+ EA)",
+     "ESC's T-states", 1),
+    # the REP string forms: Intel's 9 + n per repetition (MOVS 17, printed 2-61/PDF 84; CMPS 22, 2-53/PDF 76; SCAS
+    # 15, 2-65/PDF 88; LODS 13, 2-60/PDF 83; STOS 10, 2-66/PDF 89).  Upstream's table has these rows but never uses
+    # them (it charges the REP as an override, 2, and each pass as the plain instruction); three of its counts differ
+    ("\t22, 9,21,       /* CMPS 8-bit */\n\t22, 9,21,       /* CMPS 16-bit */",
+     "\t22, 9,22,       /* CMPS 8-bit */\n\t22, 9,22,       /* CMPS 16-bit */   // CHANGED: REP CMPS 9 + 22/rep "
+     "(printed 2-53/PDF 76); upstream 21",
+     "REP CMPS 22 a repetition", 1),
+    ("\t15, 9,14,       /* SCAS 8-bit */\n\t15, 9,14,       /* SCAS 16-bit */",
+     "\t15, 9,15,       /* SCAS 8-bit */\n\t15, 9,15,       /* SCAS 16-bit */   // CHANGED: REP SCAS 9 + 15/rep "
+     "(printed 2-65/PDF 88); upstream 14",
+     "REP SCAS 15 a repetition", 1),
+    ("\t12, 9,11,       /* LODS 8-bit */\n\t12, 9,11,       /* LODS 16-bit */",
+     "\t12, 9,13,       /* LODS 8-bit */\n\t12, 9,13,       /* LODS 16-bit */   // CHANGED: REP LODS 9 + 13/rep "
+     "(printed 2-60/PDF 83); upstream 11",
+     "REP LODS 13 a repetition", 1),
+    ("\t\t\t\t\t// Decrement IP so the normal instruction will be executed next\n\t\t\t\t\tm_ip--;\n",
+     "\t\t\t\t\t// Decrement IP so the normal instruction will be executed next\n\t\t\t\t\tm_ip--;\n"
+     "\t\t\t\t\tCLK(OVERRIDE);   // CHANGED: the REP prefix's own 2 T (Table 2-21, REP, printed 2-63/PDF 86): "
+     "upstream charged none, a 0-T step\n",
+     "a REP before a non-string instruction 2 T", 2),
+    # the divide error (DIV, IDIV, AAM 0): its entry, charged when the instruction raises it, before the host's seam
+    ("\tif (drv_intercept(int_num, trap))\n\t\treturn;\n",
+     "\tif (m_in_instruction && trap)   // CHANGED: a divide error's entry, 51 -- a MODEL: Intel gives no figure. "
+     "Like INT n\n"
+     "\t\tCLK(EXCEPTION);                 // it runs no INTA cycles (printed 2-25/PDF 48), and INT n's entry is 51 "
+     "(2-56/PDF 79). Upstream: 0\n"
+     "\tif (drv_intercept(int_num, trap))\n\t\treturn;\n",
+     "the divide error's entry", 1),
+] + [
+    # each REP pass: the 9 on the first pass only, then the repetition count in place of the plain instruction's
+    ("CLK(OVERRIDE); if (c) do { i_%s(); c--; }" % op,
+     "rep_first(REP_%s_BASE); /* CHANGED */ if (c) do { i_%s(); rep_count(%s, REP_%s_COUNT); c--; }"
+     % (row, op, row, row),
+     "REP %s: 9 + n a repetition (CHANGED)" % op, 2)
+    for op, row in (("movsb", "MOVS8"), ("movsw", "MOVS16"), ("cmpsb", "CMPS8"), ("cmpsw", "CMPS16"),
+                    ("stosb", "STOS8"), ("stosw", "STOS16"), ("lodsb", "LODS8"), ("lodsw", "LODS16"),
+                    ("scasb", "SCAS8"), ("scasw", "SCAS16"))
 ]
 
 
