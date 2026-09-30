@@ -2,7 +2,9 @@
  *
  * Each test is a few instructions in a flat 1 MB, driven through cpu.h only, and checks one clause.  Clocks are
  * MAME's (the V20 column of its CLKS tables); where the contract chose (a step per REP iteration, a 2-clock HALT
- * slot, HALT kept by IE = 0) the test names it.  The machine: reset's FFFF0h holds a far JMP to 0000:0400h, the code;
+ * slot, HALT released at a step's A) the test names it.  The interrupt deferrals and HALT's release are NEC's (the
+ * 1990 V-Series Data Book's uPD70208 section, printed p.34; Instruction Manual U11301EJ5V0UMJ1 pp.80, 98, 118), after
+ * Astra's Reply 103.  The machine: reset's FFFF0h holds a far JMP to 0000:0400h, the code;
  * the stack at 0000:8000h; INT answers vector 0Ch (0000:0600h), NMI is vector 2 (0000:0680h), the divide error
  * vector 0 (0000:06C0h).  The handlers count their entries at 9000h (INT), 9001h (NMI), 9002h (divide) and IRET.
  *   zero_budget      v40_run(0) returns 0 and changes nothing (2)
@@ -13,9 +15,13 @@
  *                    IP pushed (IP = the next instruction, v40_pc() the same during the pushes), IE cleared, 12
  *                    clocks (MAME's PUSHF), the request consumed (4, 7)
  *   int_masked       with IE = 0 a held INT is not taken
- *   ei_no_shadow     (MAME) an INT held through STI is taken at the next step, before the instruction after STI (5)
- *   sreg_shadow      after POP SS and after MOV SS,AW one more instruction runs before a pending INT (MAME's
- *                    m_no_interrupt); after a NOP none does
+ *   ei_shadow        an INT held through STI is taken after the ONE instruction after it (NEC's EI)
+ *   ei_nmi           an NMI raised at STI is not delayed: taken before the instruction after it
+ *   ei_halt          STI; HLT with an INT held: the HLT runs, the INT is taken at the first slot
+ *   sreg_shadow      after POP SS and after MOV SS,AW one more instruction runs before a pending INT or NMI
+ *   sreg_from_shadow after MOV AW,DS0 (a move FROM a segment register) likewise, INT and NMI; after a NOP none does
+ *   pop_sreg_shadow  after POP DS0 and POP DS1 likewise, INT and NMI
+ *   poll_shadow      after a completed POLL likewise, INT and NMI; after a NOP none does
  *   prefix_atomic    a segment prefix and its instruction are one step: an INT raised at its boundary is taken after
  *                    the whole instruction, which read through the override (12)
  *   rep_steps        REP STOSB of 5: five steps, one iteration each, v40_pc() on the REP each time; the prefix's 2
@@ -27,7 +33,9 @@
  *   rep_seg_steps    without an interrupt the override holds through every iteration's step (12)
  *   halt_int         an INT raised at a HALT slot's boundary is accepted at the next step; a slot is 2 clocks,
  *                    v40_pc() on the HLT during slots, the pushed IP and v40_pc() at A are after it (6, 7)
- *   halt_masked      with IE = 0 a HALT stays halted through INT (the 8086's rule; MAME wakes it), and NMI wakes it
+ *   halt_masked_wake with IE = 0 an INT releases HALT at the next step's A without an acknowledge: the instruction
+ *                    after the HLT runs; the INT stays pending and is taken after a later STI and one instruction
+ *   halt_nmi         with IE = 0 an NMI ends HALT and is taken before the instruction after the HLT
  *   nmi              NMI is an edge: taken with IE = 0, no irq_ack, vector 2; a held line once; a new edge again (4)
  *   nmi_priority     NMI and INT at one boundary: NMI first, INT after the NMI handler's IRET (4)
  *   undefined        opcode 63h: counted with its address, 10 clocks, nothing else; FPO (D8h) is not counted
@@ -277,8 +285,8 @@ static void t_reset(void)
     sti = step_at(m, CODE + 5, 0);
     isr = step_at(m, ISR_INT, 0);
     sprintf(d + strlen(d), "; NMI handler entered %d time(s) (want 0); INT: %d acknowledge(s), handler at step %ld, "
-            "STI at %ld (want 1, STI + 1)", nmi_taken, int_acks, isr, sti);
-    report("reset", v40_steps(m->cpu) == 12 && nmi_taken == 0 && int_acks == 1 && sti > 0 && isr == sti + 1, d);
+            "STI at %ld (want 1, STI + 2: EI's delay)", nmi_taken, int_acks, isr, sti);
+    report("reset", v40_steps(m->cpu) == 12 && nmi_taken == 0 && int_acks == 1 && sti > 0 && isr == sti + 2, d);
     free_machine(m);
 }
 
@@ -378,25 +386,64 @@ static void t_int_masked(void)
     free_machine(m);
 }
 
-static void t_ei_no_shadow(void)
+/* EI (NEC's V40 data book, 1990, printed p.34; Instruction Manual U11301EJ5V0UMJ1 p.80): the maskable interrupt is
+   enabled once the one instruction after EI has run.  CLI; NOP; STI (0405); NOP A (0406); NOP B (0407); JMP $. */
+static void t_ei_shadow(void)
 {
     machine *m = new_machine();
-    char d[160];
+    char d[200];
     long sti, isr;
-    EMIT(m, 0xFA, 0x90, 0xFB, 0x90, 0x90, 0xEB, 0xFE);        /* CLI; NOP; STI; NOP; NOP; JMP $ */
-    at(m, 3, V40_INT, 1);
+    EMIT(m, 0xFA, 0x90, 0xFB, 0x90, 0x90, 0xEB, 0xFE);
+    at(m, 3, V40_INT, 1);                                      /* held from the CLI on: pending at the STI */
     steps(m, 12);
     sti = step_at(m, CODE + 5, 0);
     isr = step_at(m, ISR_INT, 0);
-    sprintf(d, "STI at step %ld, handler at %ld (want STI + 1: MAME's EI has no shadow); pushed IP %04X (want 0406)",
-            sti, isr, stacked(m, 0));
-    report("ei_no_shadow", sti > 0 && isr == sti + 1 && stacked(m, 0) == CODE + 6, d);
+    sprintf(d, "STI at step %ld, handler at %ld (want STI + 2: NOP A first); pushed IP %04X (want 0407: NOP B); acks "
+            "%d (want 1)", sti, isr, stacked(m, 0), m->acks);
+    report("ei_shadow", sti > 0 && isr == sti + 2 && stacked(m, 0) == CODE + 7 && m->acks == 1, d);
     free_machine(m);
 }
 
-/* XOR AW,AW (0403); STI (0405); `op` from 0406 (a leading PUSH AW is its own step); then NOP A, NOP B.  The INT is
-   raised at the boundary of op's (last) instruction; SS stays 0 and SP 8000h, so the pushed IP is at 7FFAh. */
-static uint16_t shadow_case(const uint8_t *op, int len)
+/* EI's delay is the maskable interrupt's only (data book p.34: "EI instruction (maskable interrupts only)"): an NMI
+   raised at the STI's boundary is taken at the next step, before NOP A. */
+static void t_ei_nmi(void)
+{
+    machine *m = new_machine();
+    char d[200];
+    long sti, nmi;
+    EMIT(m, 0xFA, 0x90, 0xFB, 0x90, 0x90, 0xEB, 0xFE);        /* as ei_shadow */
+    at(m, 5, V40_NMI, 1);                                      /* the STI's step */
+    steps(m, 12);
+    sti = step_at(m, CODE + 5, 0);
+    nmi = step_at(m, ISR_NMI, 0);
+    sprintf(d, "STI at step %ld, NMI handler at %ld (want STI + 1); pushed IP %04X (want 0406: NOP A not yet run); "
+            "handler entries %d (want 1)", sti, nmi, stacked(m, 0), m->mem[0x9001]);
+    report("ei_nmi", sti == 5 && nmi == sti + 1 && stacked(m, 0) == CODE + 6 && m->mem[0x9001] == 1, d);
+    free_machine(m);
+}
+
+/* STI; HLT with an INT held: the HLT is EI's one instruction, so the INT is taken at the first slot's A with the
+   address after the HLT pushed -- the delay lasts exactly one instruction.  CLI; STI (0404); HLT (0405); NOP; JMP $. */
+static void t_ei_halt(void)
+{
+    machine *m = new_machine();
+    char d[200];
+    long hlt, isr;
+    EMIT(m, 0xFA, 0xFB, 0xF4, 0x90, 0xEB, 0xFE);
+    at(m, 3, V40_INT, 1);
+    steps(m, 10);
+    hlt = step_at(m, CODE + 5, 0);
+    isr = step_at(m, ISR_INT, 0);
+    sprintf(d, "HLT at step %ld, handler at %ld (want HLT + 1); pushed IP %04X (want 0406, after the HLT)", hlt, isr,
+            stacked(m, 0));
+    report("ei_halt", hlt == 5 && isr == hlt + 1 && stacked(m, 0) == CODE + 6 && m->mem[0x9000] == 1, d);
+    free_machine(m);
+}
+
+/* XOR AW,AW (0403); STI (0405); `op` from 0406 (a leading PUSH AW is its own step); then NOP A, NOP B.  `line` is
+   raised at the boundary of op's (last) instruction; SS stays 0 and SP 8000h, so the pushed IP is at 7FFAh.  Returns
+   the pushed IP, or 0 if the handler did not run exactly once. */
+static uint16_t shadow_case(const uint8_t *op, int len, int line)
 {
     machine *m = new_machine();
     uint16_t ip;
@@ -406,24 +453,60 @@ static uint16_t shadow_case(const uint8_t *op, int len)
     EMIT(m, 0x90, 0x90, 0xEB, 0xFE);
     steps(m, 4 + (op[0] == 0x50));                             /* JMP FAR, MOV SP, XOR, STI (, PUSH) */
     s = (long)v40_steps(m->cpu) + 1;
-    at(m, s, V40_INT, 1);
+    at(m, s, line, 1);
     steps(m, 10);
-    ip = m->mem[0x9000] == 1 ? stacked(m, 0) : 0;
+    ip = m->mem[line == V40_NMI ? 0x9001 : 0x9000] == 1 ? stacked(m, 0) : 0;
     free_machine(m);
     return ip;
 }
 
+/* one deferral rule on INT and on NMI: after `op` the instruction after it (NOP A) runs first, so NOP B's address is
+   pushed (`want`); after a NOP, none does (0407) */
+static void shadow_test(const char *name, const char *what, const uint8_t *op, int len, uint16_t want)
+{
+    static const uint8_t nop[] = {0x90};
+    char d[240];
+    uint16_t i = shadow_case(op, len, V40_INT), n = shadow_case(op, len, V40_NMI);
+    uint16_t bi = shadow_case(nop, 1, V40_INT), bn = shadow_case(nop, 1, V40_NMI);
+    sprintf(d, "pushed IP after %s: INT %04X, NMI %04X (want %04X, %04X: NOP B); after a NOP: INT %04X, NMI %04X "
+            "(want 0407: NOP A)", what, i, n, want, want, bi, bn);
+    report(name, i == want && n == want && bi == 0x407 && bn == 0x407, d);
+}
+
+/* Moves to and from segment registers, POP sreg and POLL defer NMI and INT through the next instruction (data book
+   p.34; instruction manual p.98 MOV "dst = sreg or src = sreg", p.118 POP "dst = sreg") */
 static void t_sreg_shadow(void)
 {
-    static const uint8_t pop_ss[] = {0x50, 0x17}, mov_ss[] = {0x8E, 0xD0}, nop[] = {0x90};
-    char d[200];
-    uint16_t a, b, c;
-    a = shadow_case(pop_ss, 2);
-    b = shadow_case(mov_ss, 2);
-    c = shadow_case(nop, 1);
-    sprintf(d, "pushed IP after POP SS %04X (want 0409: NOP B), after MOV SS,AW %04X (want 0409), after NOP %04X "
-            "(want 0407: NOP A)", a, b, c);
-    report("sreg_shadow", a == 0x409 && b == 0x409 && c == 0x407, d);
+    static const uint8_t pop_ss[] = {0x50, 0x17}, mov_ss[] = {0x8E, 0xD0};
+    char d[240];
+    uint16_t a = shadow_case(pop_ss, 2, V40_INT), b = shadow_case(mov_ss, 2, V40_INT);
+    uint16_t an = shadow_case(pop_ss, 2, V40_NMI), bn = shadow_case(mov_ss, 2, V40_NMI);
+    sprintf(d, "pushed IP after POP SS: INT %04X, NMI %04X; after MOV SS,AW: INT %04X, NMI %04X (want 0409: NOP B)",
+            a, an, b, bn);
+    report("sreg_shadow", a == 0x409 && b == 0x409 && an == 0x409 && bn == 0x409, d);
+}
+
+static void t_sreg_from_shadow(void)
+{
+    static const uint8_t mov_aw_ds0[] = {0x8C, 0xD8};                          /* MOV AW,DS0 (0406) */
+    shadow_test("sreg_from_shadow", "MOV AW,DS0", mov_aw_ds0, 2, 0x409);
+}
+
+static void t_pop_sreg_shadow(void)
+{
+    static const uint8_t pop_ds0[] = {0x50, 0x1F}, pop_ds1[] = {0x50, 0x07};  /* PUSH AW; POP DS0 / POP DS1 */
+    char d[240];
+    uint16_t a = shadow_case(pop_ds0, 2, V40_INT), an = shadow_case(pop_ds0, 2, V40_NMI);
+    uint16_t b = shadow_case(pop_ds1, 2, V40_INT), bn = shadow_case(pop_ds1, 2, V40_NMI);
+    sprintf(d, "pushed IP after POP DS0: INT %04X, NMI %04X; after POP DS1: INT %04X, NMI %04X (want 0409: NOP B)",
+            a, an, b, bn);
+    report("pop_sreg_shadow", a == 0x409 && an == 0x409 && b == 0x409 && bn == 0x409, d);
+}
+
+static void t_poll_shadow(void)
+{
+    static const uint8_t poll[] = {0x9B};          /* POLL (0406): completes at once (cpu.h has no POLL line) */
+    shadow_test("poll_shadow", "a completed POLL", poll, 1, 0x408);
 }
 
 static void t_prefix_atomic(void)
@@ -586,24 +669,54 @@ static void t_halt_int(void)
     free_machine(m);
 }
 
-static void t_halt_masked(void)
+/* NEC's V40 data book (1990, printed p.34): "In the case of the INT input being masked, execution will begin with the
+   instruction immediately following the HALT instruction without an intervening interrupt acknowledge bus cycle.
+   When maskable interrupts are again enabled, the interrupt will be serviced."  Release and acceptance are separate,
+   both at a step's A.  CLI; HLT (0404); NOP (0405); NOP; STI (0407); NOP A (0408); NOP B (0409); JMP $.  The INT is
+   raised at a slot's boundary (step 6) and held. */
+static void t_halt_masked_wake(void)
+{
+    machine *m = new_machine();
+    char d[320];
+    v40_regs r5, r6;
+    long resume, sti, isr;
+    EMIT(m, 0xFA, 0xF4, 0x90, 0x90, 0xFB, 0x90, 0x90, 0xEB, 0xFE);
+    at(m, 6, V40_INT, 1);
+    steps(m, 5);                                               /* JMP FAR, MOV SP, CLI, HLT, a slot */
+    v40_regs_get(m->cpu, &r5);
+    steps(m, 1);                                               /* the slot at whose boundary the INT rises */
+    v40_regs_get(m->cpu, &r6);
+    steps(m, 20);
+    resume = step_at(m, CODE + 5, 0);
+    sti = step_at(m, CODE + 7, 0);
+    isr = step_at(m, ISR_INT, 0);
+    sprintf(d, "halted before %d, at the raise's step %d (want 1, 1); resumed at 0405 at step %ld (want 7, the next), "
+            "run %d time(s) (want 1); STI at %ld, handler at %ld (want STI + 2), pushed IP %04X (want 0409); acks %d "
+            "(want 1: none at the release)", r5.halted, r6.halted, resume, count_pc(m, CODE + 5), sti, isr,
+            stacked(m, 0), m->acks);
+    report("halt_masked_wake", r5.halted && r6.halted && resume == 7 && count_pc(m, CODE + 5) == 1 && sti > resume
+                               && isr == sti + 2 && stacked(m, 0) == CODE + 9 && m->acks == 1
+                               && m->mem[0x9000] == 1, d);
+    free_machine(m);
+}
+
+/* With IE = 0, an NMI ends HALT and is processed before the instruction after the HLT (data book p.34). */
+static void t_halt_nmi(void)
 {
     machine *m = new_machine();
     char d[200];
     v40_regs r;
     long n;
     EMIT(m, 0xFA, 0xF4, 0x90, 0xEB, 0xFE);                    /* CLI; HLT; NOP; JMP $ */
-    at(m, 6, V40_INT, 1);
-    steps(m, 30);
+    steps(m, 8);
     v40_regs_get(m->cpu, &r);
     n = (long)v40_steps(m->cpu) + 1;
     at(m, n, V40_NMI, 1);
     steps(m, 4);
-    sprintf(d, "after INT with IE = 0: halted %d, acks %d (want 1, 0); then NMI: handler at step %ld (want %ld), "
-            "pushed IP %04X (want 0405), handler run %d time(s) (want 1)", r.halted, m->acks, step_at(m, ISR_NMI, 0), n + 1,
-            stacked(m, 0), m->mem[0x9001]);
-    report("halt_masked", r.halted && m->acks == 0 && step_at(m, ISR_NMI, 0) == n + 1 && stacked(m, 0) == CODE + 5
-                          && m->mem[0x9001] == 1, d);
+    sprintf(d, "halted %d (want 1); NMI: handler at step %ld (want %ld), pushed IP %04X (want 0405), handler run %d "
+            "time(s) (want 1)", r.halted, step_at(m, ISR_NMI, 0), n + 1, stacked(m, 0), m->mem[0x9001]);
+    report("halt_nmi", r.halted && step_at(m, ISR_NMI, 0) == n + 1 && stacked(m, 0) == CODE + 5
+                       && m->mem[0x9001] == 1, d);
     free_machine(m);
 }
 
@@ -740,15 +853,21 @@ int main(void)
     t_two_cores();
     t_int_accept();
     t_int_masked();
-    t_ei_no_shadow();
+    t_ei_shadow();
+    t_ei_nmi();
+    t_ei_halt();
     t_sreg_shadow();
+    t_sreg_from_shadow();
+    t_pop_sreg_shadow();
+    t_poll_shadow();
     t_prefix_atomic();
     t_rep_steps();
     t_rep_irq();
     t_rep_seg_irq();
     t_rep_seg_steps();
     t_halt_int();
-    t_halt_masked();
+    t_halt_masked_wake();
+    t_halt_nmi();
     t_nmi();
     t_nmi_priority();
     t_undefined();

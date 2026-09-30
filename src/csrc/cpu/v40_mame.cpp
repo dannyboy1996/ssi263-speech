@@ -8,12 +8,15 @@
 // 584).  The on-chip ICU, TCU, SCU and DMA are the board's (cpu.h).
 //
 // The driver is ours.  It follows MAME's execute_run one step at a time, in the contract's phases:
-//   A  execute_run's dispatch: with an interrupt pending and no MOV/POP-segment or LOCK shadow (m_no_interrupt), NMI
-//      always, INT when IE is set -> external_int (MAME's nec_interrupt: PUSHF, IE and BRK cleared, the vector number
-//      from bus.irq_ack for INT, CS and IP pushed, the vector loaded).  An acceptance ends HALT.  v40_pc() is the
+//   A  execute_run's dispatch, with NEC's deferrals (drv_accept): with an interrupt pending and no shadow
+//      (m_no_interrupt: after a move to or from a segment register, POP sreg, a completed POLL or LOCK), NMI always,
+//      INT when IE is set and EI's delay (drv_ei_shadow) is not running -> external_int (MAME's nec_interrupt: PUSHF,
+//      IE and BRK cleared, the vector number from bus.irq_ack for INT, CS and IP pushed, the vector loaded).  An
+//      acceptance ends HALT; a halted core with an INT pending and IE = 0 is released without one.  v40_pc() is the
 //      interrupted address: where execution resumes, the IP that is pushed.
-//   B  its clocks: MAME charges 12, its PUSHF's (V20 count) -- nec_interrupt charges nothing of its own.
-//   C  the shadow runs down (execute_run: m_no_interrupt--).
+//   B  its clocks: MAME charges 12, its PUSHF's (V20 count) -- nec_interrupt charges nothing of its own.  That is NOT
+//      the V40's interrupt response time, which no source here gives (CONTRACT.md 12).
+//   C  the shadows run down (execute_run: m_no_interrupt--; EI's drv_ei_shadow likewise).
 //   D  steps++, the step's start (MAME's m_prev_ip), bus->boundary.
 //   E  one instruction -- a prefix and its instruction are one step, as in MAME, which runs the prefixed handler from
 //      the prefix's -- or one iteration of a REP string instruction, or a HALT slot of 2 clocks (model).
@@ -32,17 +35,19 @@
 //     slice's end).  One REP iteration per step (above).
 //   - A continued REP is not charged the prefix's 2 clocks again: MAME charges them at each re-entry, which with one
 //     iteration per step would be every iteration.  A REP of n iterations costs what MAME charges in one slice.
-//   - HALT: a slot is 2 clocks with no fetch (MAME ends its slice); HALT ends at an acceptance, so an INT while IE = 0
-//     leaves the CPU halted, as on the 8086 (MAME wakes it whatever IE says).
+//   - HALT: a slot is 2 clocks with no fetch (MAME ends its slice).  HALT is released at a step's A, never mid-step
+//     at the line (MAME releases it at the line, so the instruction after the HLT ran before the interrupt): by an
+//     acceptance, or, for an INT while IE = 0, without one -- the instruction after the HLT runs next and the INT
+//     waits for IE (NEC's V40 data book, 1990, printed p.34).  The release costs no clocks (model: no figure).
+//   - NEC's deferrals MAME lacks (after Astra, Reply 103): EI delays INT, not NMI, through the next instruction; a
+//     move FROM a segment register, POP DS0/DS1 and a completed POLL defer NMI and INT like MAME's MOV/POP SS.
 //   - The 8080 emulation mode (BRKEM) is not built: entering it sets v40_regs.fault and the core then does 2-clock
 //     slots, nothing else.  No firmware here uses it.
 //   - logerror's undefined and unimplemented opcodes are counted (v40_regs.undefined); MAME only logs them.  They
 //     execute as MAME executes them (0x63, 0x66, 0x67, 0xF1: 10 clocks, nothing else; SETALC sets AL; ...).
 //   - Reset keeps the lines: a held INT is asserted again (MAME's reset forgets it), a held NMI is no new edge.
-// Kept from MAME, and stated because another core differs: EI (STI) has no shadow -- an INT pending at EI's step is
-// taken at the next step's A, before the instruction after EI (Intel's 8086 runs that instruction first; NEC's V40
-// manual is still to be checked); the INT request is consumed by its acceptance (external_int clears the line), so a
-// board asserts it again for a further request.
+// Kept from MAME, and stated because another core differs: the INT request is consumed by its acceptance
+// (external_int clears the line), so a board asserts it again for a further request.
 // Known limits: MAME's clock counts (its own "99% accurate"), its prefetch model, no bus-cycle placement of accesses
 // (CONTRACT.md 7).
 #include "v40_mame_machine.cpp"
@@ -68,6 +73,7 @@ nec_common_device::nec_common_device(const cpu_bus *bus)
     memset(m_v33_transtable, 0, sizeof m_v33_transtable);
     drv_undefined = drv_undefined_at = 0;
     drv_fault = false;
+    drv_ei_shadow = 0;
     nec_popa_tmp = 0;
     m_pending_irq = m_nmi_state = m_irq_state = 0;
     m_poll_state = 1;
@@ -94,16 +100,25 @@ void nec_common_device::drv_logerror(const char *fmt, ...)
         }
 }
 
+// Phase A.  NEC (V40 data book, 1990, printed p.34): NMI and an enabled INT are taken at an instruction boundary,
+// except after a move to or from a segment register, POP sreg, POLL or LOCK (m_no_interrupt: NMI and INT; a prefix
+// and its instruction are one step anyway), and after EI (drv_ei_shadow: INT only).  A halted CPU: NMI or an enabled INT is accepted before the instruction after
+// the HLT; an INT with IE = 0 releases HALT WITHOUT an acknowledge -- execution resumes after the HLT and the request
+// stays pending until interrupts are enabled.  Release and acceptance are separate operations, both here at A.
 int nec_common_device::drv_accept()
 {
-    if (!m_pending_irq || m_no_interrupt)
-        return 0;
-    if (!(m_pending_irq & NMI_IRQ) && !m_IF)
-        return 0;
-    m_icount = 0;
-    external_int();
-    m_halted = 0;                            // an acceptance ends HALT
-    return -m_icount;
+    if (m_pending_irq && !m_no_interrupt) {
+        bool nmi = (m_pending_irq & NMI_IRQ) != 0;
+        if (nmi || (m_IF && !drv_ei_shadow)) {
+            m_icount = 0;
+            external_int();
+            m_halted = 0;                    // an acceptance ends HALT
+            return -m_icount;
+        }
+    }
+    if (m_halted && (m_pending_irq & INT_IRQ))
+        m_halted = 0;                        // a masked INT releases HALT: no acknowledge, no clocks (model)
+    return 0;
 }
 
 int nec_common_device::drv_instruction()
@@ -175,6 +190,7 @@ void v40_reset(v40 *c)
     uint32_t int_held = d.m_irq_state, nmi_held = d.m_nmi_state;
     d.device_reset();
     d.m_no_interrupt = 0;
+    d.drv_ei_shadow = 0;
     d.m_prefetch_count = 0;
     d.m_prefetch_reset = 0;
     d.m_seg_prefix = 0;
@@ -196,6 +212,8 @@ int v40_step(v40 *c)
     c->cycles += (uint64_t)acc;              // B
     if (d.m_no_interrupt)                    // C
         d.m_no_interrupt--;
+    if (d.drv_ei_shadow)                     // C: EI's delay
+        d.drv_ei_shadow--;
 
     c->steps++;                              // D
     if (!d.m_halted)

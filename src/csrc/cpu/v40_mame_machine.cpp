@@ -286,6 +286,7 @@ public:
 	u32 drv_undefined_at;                     // the linear address of the last one
 	bool drv_fault;                           // BRKEM entered the 8080 mode, which is not modelled
 	u16 drv_psw();                            // the flags word (CompressFlags)
+	u8 drv_ei_shadow;                         // EI's delay: INT (not NMI) held off through the next instruction
 
 	// nec.h lines 33-64, the few kept (no longer virtual)
 	void init_tables();                       // device_start()'s tables and first values (the generated file)
@@ -1978,7 +1979,8 @@ OP( 0x03, i_add_r16w ) { DEF_r16w;  ADDW;   RegWord(ModRM)=dst;         CLKR(15,
 OP( 0x04, i_add_ald8 ) { DEF_ald8;  ADDB;   Breg(AL)=dst;           CLKS(4,4,2);                }
 OP( 0x05, i_add_axd16) { DEF_axd16; ADDW;   Wreg(AW)=dst;           CLKS(4,4,2);                }
 OP( 0x06, i_push_es  ) { PUSH(Sreg(DS1));   CLKS(12,8,3);   }
-OP( 0x07, i_pop_es   ) { POP(Sreg(DS1));    CLKS(12,8,5);   }
+OP( 0x07, i_pop_es   ) { POP(Sreg(DS1));    CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP SS
+	// (instruction manual p.118, POP: "When dst = sreg", NMI and INT deferred).  Upstream: POP SS only
 
 OP( 0x08, i_or_br8   ) { DEF_br8;   ORB;    PutbackRMByte(ModRM,dst);   CLKM(2,2,2,16,16,7);        }
 OP( 0x09, i_or_wr16  ) { DEF_wr16;  ORW;    PutbackRMWord(ModRM,dst);   CLKR(24,24,11,24,16,7,2,m_EA);}
@@ -2125,7 +2127,7 @@ OP( 0x1b, i_sbb_r16w ) { DEF_r16w;  SUBCW;   RegWord(ModRM)=dst;         CLKR(15
 OP( 0x1c, i_sbb_ald8 ) { DEF_ald8;  SUBCB;   Breg(AL)=dst;           CLKS(4,4,2);                }
 OP( 0x1d, i_sbb_axd16) { DEF_axd16; SUBCW;   Wreg(AW)=dst;           CLKS(4,4,2);    }
 OP( 0x1e, i_push_ds  ) { PUSH(Sreg(DS0));       CLKS(12,8,3);   }
-OP( 0x1f, i_pop_ds   ) { POP(Sreg(DS0));        CLKS(12,8,5);   }
+OP( 0x1f, i_pop_ds   ) { POP(Sreg(DS0));        CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP DS1
 
 OP( 0x20, i_and_br8  ) { DEF_br8;   ANDB;   PutbackRMByte(ModRM,dst);   CLKM(2,2,2,16,16,7);        }
 OP( 0x21, i_and_wr16 ) { DEF_wr16;  ANDW;   PutbackRMWord(ModRM,dst);   CLKR(24,24,11,24,16,7,2,m_EA);}
@@ -2336,6 +2338,8 @@ OP( 0x8c, i_mov_wsreg ) { GetModRM;
 		case 0x18: PutRMWord(ModRM,Sreg(DS0)); CLKR(14,14,5,14,10,3,2,m_EA); break;
 		default:   logerror("%06x: MOV Sreg - Invalid register\n",PC());
 	}
+	m_no_interrupt=1;   // CHANGED: a move FROM a segment register defers NMI and INT through the next instruction
+	// (data book p.34: "Moves to/from segment registers"; instruction manual p.98).  Upstream: only moves to
 }
 OP( 0x8d, i_lea       ) { uint16_t ModRM = fetch(); if (ModRM >= 0xc0) logerror("LDEA invalid mode %Xh\n", ModRM); else { (void)(this->*s_GetEA[ModRM])(); RegWord(ModRM)=m_EO; }  CLKS(4,4,2); }
 OP( 0x8e, i_mov_sregw ) { uint16_t src; GetModRM; src = GetRMWord(ModRM); CLKR(15,15,7,15,11,5,2,m_EA);
@@ -2361,7 +2365,9 @@ OP( 0x97, i_xchg_axdi ) { XchgAWReg(IY); CLK(3); }
 OP( 0x98, i_cbw       ) { Breg(AH) = (Breg(AL) & 0x80) ? 0xff : 0;      CLK(2); }
 OP( 0x99, i_cwd       ) { Wreg(DW) = (Breg(AH) & 0x80) ? 0xffff : 0;    CLK(4); }
 OP( 0x9a, i_call_far  ) { uint32_t tmp, tmp2; tmp = fetchword(); tmp2 = fetchword(); PUSH(Sreg(PS)); PUSH(m_ip); m_ip = (WORD)tmp; Sreg(PS) = (WORD)tmp2; CHANGE_PC; CLKW(29,29,13,29,21,9,Wreg(SP)); }
-OP( 0x9b, i_wait      ) { if (!m_poll_state) m_ip--; CLK(5); }
+OP( 0x9b, i_wait      ) { if (!m_poll_state) m_ip--; else m_no_interrupt=1; CLK(5); }   // CHANGED: a
+	// completed POLL defers NMI and INT through the next instruction (data book p.34).  A waiting POLL is left
+	// as upstream has it (interruptible at each re-execution): no source says, and cpu.h has no POLL line
 OP( 0x9c, i_pushf     ) { uint16_t tmp = CompressFlags(); PUSH( tmp ); CLKS(12,8,3); }
 OP( 0x9d, i_popf      ) { uint32_t tmp; POP(tmp); ExpandFlags(tmp); CLKS(12,8,5); if (m_TF) nec_trap(); }
 OP( 0x9e, i_sahf      ) { uint32_t tmp = (CompressFlags() & 0xff00) | (Breg(AH) & 0xd5); ExpandFlags(tmp); CLKS(3,3,2); }
@@ -2633,7 +2639,9 @@ OP( 0xf7, i_f7pre   ) { uint32_t tmp,tmp2; uint32_t uresult,uresult2; int32_t re
 OP( 0xf8, i_clc   ) { m_CarryVal = 0;  CLK(2); }
 OP( 0xf9, i_stc   ) { m_CarryVal = 1;  CLK(2); }
 OP( 0xfa, i_di    ) { SetIF(0);         CLK(2); }
-OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); }
+OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); drv_ei_shadow=1; }   // CHANGED: EI delays INT, not NMI,
+	// through the next instruction (data book p.34: "EI instruction (maskable interrupts only)"; instruction
+	// manual p.80).  Its own counter: m_no_interrupt would hold off NMI too.  Upstream has no delay
 OP( 0xfc, i_cld   ) { SetDF(0);         CLK(2); }
 OP( 0xfd, i_std   ) { SetDF(1);         CLK(2); }
 OP( 0xfe, i_fepre ) { uint32_t tmp, tmp1; GetModRM; tmp=GetRMByte(ModRM);
@@ -2671,8 +2679,9 @@ void nec_common_device::set_int_line(int state)
 	else
 	{
 		m_pending_irq |= INT_IRQ;
-		// CHANGED: HALT is left at an acceptance (v40_mame.cpp, phase A), so an INT with IE = 0 leaves the CPU
-		// halted, as the 8086's HLT does; upstream wakes it whatever IE says
+		// CHANGED: HALT is released at the next step's A (v40_mame.cpp), not here at the line: by an acceptance
+		// when IE = 1, and with IE = 0 without one, execution resuming after the HLT (NEC's V40 data book, 1990,
+		// printed p.34).  Upstream releases it here, mid-step, so the instruction after the HLT ran first
 	}
 }
 

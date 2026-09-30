@@ -374,15 +374,41 @@ in the core: a board models what its firmware uses and drives `V40_INT` from its
 - **INT** **(MAME)**: a level, sampled at A when IE is set and no shadow runs; its acceptance reads the vector
   NUMBER from `irq_ack(ctx, V40_INT, 0)` (the V40's ICU supplies 8-15 on the Speak-Out), pushes the flags, PS and IP,
   clears IE and BRK, and consumes the request: MAME clears the line, so a board asserts it again for a further one.
-  The acceptance costs 12 clocks: MAME's, its PUSHF's; NEC's figure for an interrupt acknowledge is not modelled.
+- **The interrupt response's clocks are open.** An acceptance costs 12 clocks here: MAME's `nec_interrupt` charges
+  nothing of its own, only its PUSHF's (the V20 column). Twelve clocks of PUSHF are not evidence for the whole
+  hardware response (for INT the acknowledge bus cycles, then the flags, PS and PC pushed and the vector read), and
+  Intel's 8086 figures (51 for INT n, 61 for INTR) are Intel's software and hardware timings for another CPU: not
+  substituted. No NEC figure is in hand: the V40 section of the 1990 data book, as read, gives none; the instruction
+  manual's clock table (Table 2-8, a V40 column) times instructions, its only interrupt note being CHKIND's; the data
+  book's "27 + N clocks" interrupt latency is the V25's (uPD70320), a different CPU. The 12 stays, labelled MAME's,
+  until a NEC source gives the response.
 - **NMI** **(MAME)**: an edge, vector 2, taken whatever IE says, before INT.
-- **Shadows** **(MAME)**: after MOV sreg, POP SS and LOCK one more instruction runs before an interrupt is taken.
-  **EI (STI) has none**: an INT pending at EI's step is taken before the instruction after it. Intel's 8086 delays it
-  by one instruction; NEC's V40 manual is still to be checked.
-- **HALT**: ended by an acceptance, at the next step's A, never by the line itself (changed: MAME wakes at the line,
-  so the instruction after the HLT ran before the interrupt). With IE = 0 an INT leaves the CPU halted, as on the
-  8086 **(chip, the 8086's; changed: MAME wakes it)**. During the slots `v40_pc()` stays on the HLT; at A it is the
-  address after it, which is pushed.
+- **Deferrals** **(chip: NEC's 1990 V-Series Data Book, the uPD70208 section, printed p.34 / PDF p.159; Instruction
+  Manual U11301EJ5V0UMJ1)**: NMI and an enabled INT are taken at an instruction boundary, except:
+  - after a **move to or from a segment register** (MOV sreg,r/m and MOV r/m,sreg; the manual's MOV caution, printed
+    p.98 / PDF p.109, "dst = sreg or src = sreg"), **POP sreg** (any segment register: the manual's POP caution,
+    printed p.118 / PDF p.129), **POLL**, and a **prefix**, both NMI and INT wait until the following instruction has
+    run;
+  - after **EI**, only the maskable interrupt waits ("EI instruction (maskable interrupts only)"; the manual's EI,
+    printed p.80 / PDF p.91: "the interrupt is actually enabled when the single instruction following the EI
+    instruction is executed"). NMI is not delayed.
+
+  MAME had MOV to sreg, POP SS and BUSLOCK (`m_no_interrupt`, which holds NMI and INT). Changed in the extraction
+  (after Astra, Reply 103): EI's delay, as its own counter that holds INT only (`drv_ei_shadow`; reusing
+  `m_no_interrupt` would hold NMI too); a move FROM a segment register; POP DS0 and POP DS1; a completed POLL. A
+  prefix and its instruction are one step already (above). Both counters run down at C. **Open:** a POLL that waits
+  (its line inactive) is left as MAME has it, interruptible at each re-execution; no source says, and `cpu.h` has no
+  POLL line, so it cannot occur here. Also not modelled: the data book's note that a block transfer's interrupt "may
+  be delayed up to three bus cycles".
+- **HALT** **(chip: NEC, data book printed p.34)**: RESET, NMI or INT releases it. NMI, and INT with IE set, are
+  accepted before the instruction after the HLT, whose address is pushed. **An INT with IE = 0 releases HALT without
+  an acknowledge**: execution resumes with the instruction after the HLT (no `irq_ack`), the request stays pending,
+  and it is serviced once interrupts are enabled again (after EI and its one instruction). Release and acceptance are
+  separate operations, both at a step's A, never mid-step at the line (changed: MAME releases at the line, so the
+  instruction after the HLT ran before the interrupt): delivery stays at instruction boundaries. The release costs no
+  clocks **(model: no figure)**. During the slots `v40_pc()` stays on the HLT; at A it is the address after it.
+  Withdrawn: this clause's earlier rule that an INT with IE = 0 leaves the CPU halted "as on the 8086" -- NEC says
+  otherwise for the V40.
 - **Undefined opcodes** **(MAME)**: executed as MAME executes them (0x63, 0x66, 0x67, 0xF1: 10 clocks and nothing
   else; SETALC; the undefined shift and group forms) and counted in `v40_regs.undefined`, with the last one's address.
   The FPO escapes (D8h-DFh) are the coprocessor's, defined, not counted. **The 8080 emulation mode** (BRKEM) is not
@@ -390,8 +416,15 @@ in the core: a board models what its firmware uses and drives `V40_INT` from its
 - **Divide error** **(MAME)**: vector 0 with the address after the DIV pushed, AW and DW unchanged.
 - `v40_pc()` is linear (PS * 16 + IP, 20 bits).
 
-Tests (`test_v40_contract.c`, 22): `zero_budget`, `reset_vector`, `reset`, `two_cores`, `int_accept`, `int_masked`,
-`ei_no_shadow`, `sreg_shadow`, `prefix_atomic`, `rep_steps`, `rep_irq`, `rep_seg_irq`, `rep_seg_steps`, `halt_int`,
-`halt_masked`, `nmi`, `nmi_priority`, `undefined`, `mode8080_fault`, `div_overflow`, `word_order`, `wrap20`.
-`v40_controls.py` undoes 19 rules, each failing exactly its tests. No control is possible for the statics made members
-(`Mod_RM`, `parity_table`, `nec_popa_tmp`): the tables are the same in every instance.
+Tests (`test_v40_contract.c`, 28): `zero_budget`, `reset_vector`, `reset`, `two_cores`, `int_accept`, `int_masked`,
+`ei_shadow`, `ei_nmi`, `ei_halt`, `sreg_shadow`, `sreg_from_shadow`, `pop_sreg_shadow`, `poll_shadow`,
+`prefix_atomic`, `rep_steps`, `rep_irq`, `rep_seg_irq`, `rep_seg_steps`, `halt_int`, `halt_masked_wake`, `halt_nmi`,
+`nmi`, `nmi_priority`, `undefined`, `mode8080_fault`, `div_overflow`, `word_order`, `wrap20`. Astra's four probes
+(Reply 103) are `ei_shadow` (an INT pending at EI: handler one step later, IP 0407 pushed), `halt_masked_wake` (CLI;
+HLT; a masked INT: resumed after the HLT without an acknowledge, then serviced after a later EI and one instruction),
+`sreg_from_shadow` (MOV AW,DS0) and `poll_shadow`; the deferral tests take NMI as well as INT. `v40_controls.py`
+undoes 28 rules, each failing exactly its tests: among them EI's delay removed, EI's delay put on `m_no_interrupt`
+(then `ei_nmi` alone fails), each new deferral removed, the masked release removed, turned into a drop or into an
+acceptance, and HALT released at the line. No control is possible for the statics made members (`Mod_RM`,
+`parity_table`, `nec_popa_tmp`: the tables are the same in every instance), nor for reset clearing EI's delay (reset
+clears IE, and the first instruction spends the delay).

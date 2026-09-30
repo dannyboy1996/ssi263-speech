@@ -48,6 +48,7 @@ CLASS_HEAD = [
     "\tu32 drv_undefined_at;                     // the linear address of the last one",
     "\tbool drv_fault;                           // BRKEM entered the 8080 mode, which is not modelled",
     "\tu16 drv_psw();                            // the flags word (CompressFlags)",
+    "\tu8 drv_ei_shadow;                         // EI's delay: INT (not NMI) held off through the next instruction",
     "",
     "\t// nec.h lines 33-64, the few kept (no longer virtual)",
     "\tvoid init_tables();                       // device_start()'s tables and first values (the generated file)",
@@ -121,14 +122,39 @@ SUBS = [
      "HLT's slice end", 1),
     ("\t\tm_pending_irq |= INT_IRQ;\n\t\tm_halted = 0;\n",
      "\t\tm_pending_irq |= INT_IRQ;\n"
-     "\t\t// CHANGED: HALT is left at an acceptance (v40_mame.cpp, phase A), so an INT with IE = 0 leaves the CPU\n"
-     "\t\t// halted, as the 8086's HLT does; upstream wakes it whatever IE says\n",
+     "\t\t// CHANGED: HALT is released at the next step's A (v40_mame.cpp), not here at the line: by an acceptance\n"
+     "\t\t// when IE = 1, and with IE = 0 without one, execution resuming after the HLT (NEC's V40 data book, 1990,\n"
+     "\t\t// printed p.34).  Upstream releases it here, mid-step, so the instruction after the HLT ran first\n",
      "INT and HALT", 1),
     ("\t\tm_pending_irq |= NMI_IRQ;\n\t\tm_halted = 0;\n",
      "\t\tm_pending_irq |= NMI_IRQ;\n"
      "\t\t// CHANGED: HALT is left at the acceptance, the next step's A (v40_mame.cpp): upstream wakes it at the line,\n"
      "\t\t// so a step would run the instruction after the HLT before the NMI is taken\n",
      "NMI and HALT", 1),
+    # NEC's interrupt deferrals (V40 data book, 1990, printed p.34, PDF p.159; Instruction Manual U11301EJ5V0UMJ1)
+    ("OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); }",
+     "OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); drv_ei_shadow=1; }   // CHANGED: EI delays INT, not NMI,"
+     "\n\t// through the next instruction (data book p.34: \"EI instruction (maskable interrupts only)\"; instruction"
+     "\n\t// manual p.80).  Its own counter: m_no_interrupt would hold off NMI too.  Upstream has no delay",
+     "EI's delay", 1),
+    ("\t\tdefault:   logerror(\"%06x: MOV Sreg - Invalid register\\n\",PC());\n\t}\n}\nOP( 0x8d, i_lea",
+     "\t\tdefault:   logerror(\"%06x: MOV Sreg - Invalid register\\n\",PC());\n\t}\n"
+     "\tm_no_interrupt=1;   // CHANGED: a move FROM a segment register defers NMI and INT through the next instruction"
+     "\n\t// (data book p.34: \"Moves to/from segment registers\"; instruction manual p.98).  Upstream: only moves to\n"
+     "}\nOP( 0x8d, i_lea",
+     "MOV from a segment register", 1),
+    ("OP( 0x07, i_pop_es   ) { POP(Sreg(DS1));    CLKS(12,8,5);   }",
+     "OP( 0x07, i_pop_es   ) { POP(Sreg(DS1));    CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP SS"
+     "\n\t// (instruction manual p.118, POP: \"When dst = sreg\", NMI and INT deferred).  Upstream: POP SS only",
+     "POP DS1", 1),
+    ("OP( 0x1f, i_pop_ds   ) { POP(Sreg(DS0));        CLKS(12,8,5);   }",
+     "OP( 0x1f, i_pop_ds   ) { POP(Sreg(DS0));        CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP DS1",
+     "POP DS0", 1),
+    ("OP( 0x9b, i_wait      ) { if (!m_poll_state) m_ip--; CLK(5); }",
+     "OP( 0x9b, i_wait      ) { if (!m_poll_state) m_ip--; else m_no_interrupt=1; CLK(5); }   // CHANGED: a"
+     "\n\t// completed POLL defers NMI and INT through the next instruction (data book p.34).  A waiting POLL is left"
+     "\n\t// as upstream has it (interruptible at each re-execution): no source says, and cpu.h has no POLL line",
+     "POLL", 1),
     ("void nec_common_device::device_start()\n{",
      "void nec_common_device::init_tables()   // CHANGED: was device_start(); its tables and first values only\n{",
      "device_start", 1),
