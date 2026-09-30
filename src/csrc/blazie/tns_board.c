@@ -1,5 +1,6 @@
 /* tns_board.c -- the Type 'n Speak board (see tns_board.h).  Structured as bl_board.c: the board drives its CPU only
- * through ../cpu/cpu.h, every callback gets its tns_unit, no globals.
+ * through ../cpu/cpu.h, every callback gets its tns_unit, no globals.  The serial port (ASCI0; port B0h bit 0 = its
+ * line drivers on) is unplugged unless tns_serial_attach carries it to a real port (bl_serial.h).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,7 @@ struct tns_unit {
     unsigned char ssi[5];
     int ssi_ctl, ssi_ar, ssi_mode;
     unsigned char port_f0, port_b0;
+    bl_serial_line *line;                    /* tns_serial_attach: the serial port carried to a real port */
     unsigned char keyq[KEYQ], key_latch;
     int n_keyq, key_ready;
     bl_event *ev;
@@ -131,8 +133,29 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     }
 }
 
-static int asci_rx(void *ctx, int channel) { (void)ctx; (void)channel; return -1; }
-static void asci_tx(void *ctx, int channel, uint8_t data) { (void)ctx; (void)channel; (void)data; }
+static void serial_note(tns_unit *u)         /* the line status now, in order with the bytes sent */
+{
+    z180_asci_regs r;
+    bl_serial_status s;
+    z180_asci_get(u->cpu, 0, &r);
+    bl_serial_decode(&r, CLOCK_HZ, u->port_b0 & 1, &s);
+    bl_serial_note(u->line, &s);
+}
+
+static int asci_rx(void *ctx, int channel)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    return u->line && channel == 0 ? bl_serial_next(u->line) : -1;
+}
+
+static void asci_tx(void *ctx, int channel, uint8_t data)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    if (u->line && channel == 0) {
+        serial_note(u);
+        bl_serial_sent(u->line, data);
+    }
+}
 static int serial_pin(void *ctx, int pin) { (void)ctx; return pin == Z180_PIN_DCD0 ? 1 : 0; }
 
 static void boundary(void *ctx, uint32_t pc)
@@ -232,6 +255,7 @@ void tns_destroy(tns_unit *u)
         return;
     if (u->cpu)
         z180_destroy(u->cpu);
+    bl_serial_free(u->line);
     free(u->ram);
     free(u->fdata);
     free(u->ev);
@@ -274,6 +298,43 @@ int tns_events(const tns_unit *u, const bl_event **events)
 void tns_clear_events(tns_unit *u)
 {
     u->n_ev = 0;
+}
+
+int tns_serial_attach(tns_unit *u, int on)
+{
+    if (on && !u->line) {
+        u->line = bl_serial_new();
+        if (!u->line)
+            return 0;
+        serial_note(u);
+    } else if (!on && u->line) {
+        bl_serial_free(u->line);
+        u->line = NULL;
+    }
+    return 1;
+}
+
+int tns_serial_write(tns_unit *u, const unsigned char *bytes, int n)
+{
+    return u->line ? bl_serial_put(u->line, bytes, n) : 0;
+}
+
+int tns_serial_space(const tns_unit *u)
+{
+    return u->line ? bl_serial_room(u->line) : 0;
+}
+
+int tns_serial_read(tns_unit *u, unsigned char *out, int cap, bl_serial_status *status)
+{
+    if (!u->line) {                          /* unplugged: nothing sent, the status now */
+        z180_asci_regs r;
+        z180_asci_get(u->cpu, 0, &r);
+        if (status)
+            bl_serial_decode(&r, CLOCK_HZ, u->port_b0 & 1, status);
+        return 0;
+    }
+    serial_note(u);
+    return bl_serial_take(u->line, out, cap, status);
 }
 
 int tns_save_state(const tns_unit *u, const char *path)

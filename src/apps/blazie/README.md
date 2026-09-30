@@ -10,11 +10,14 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | --- | --- |
 | `chords.h`, `chords.c` | A braille chord from separate key presses: sent when the last key of the chord comes up. Portable. |
 | `emu_unit.h`, `emu_unit.c` | One unit running in real time: create from firmware + state, render 16-bit PCM, take chords. Portable. |
-| `main_win.c` | The Windows shell: the window, the menu (unit, idle channel sound, help), the keyboard, waveOut. |
+| `main_win.c` | The Windows shell: the window, the menu (unit, idle channel sound, serial port, help), the keyboard, waveOut. |
+| `serial_win.c`, `.h` | The unit's serial port on a Windows COM port: the port list, and a thread moving bytes and setting the port as the firmware programs it. The portable half is `../../csrc/blazie/bl_serial.c`. |
 | `tns_keymap_win.c`, `.h` | A Windows key to the Type 'n Speak's key code (measured on the running firmware). |
-| `build_app.py` | Builds `blazie_emu.exe` and the two test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
+| `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
+| `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
+| `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
 
 ## Keys
 
@@ -36,6 +39,39 @@ Settings > Idle channel (hiss, whine or silent) and Settings > Sample rate (1102
 the new rate with its memory kept). The unit's own speech settings -- rate, pitch, inflection, volume -- are set on
 the unit, with its own keys, as on the real one.
 
+## The serial port: WinDisk, PCDISK, a terminal
+
+Settings > Serial port plugs the unit's serial port (its RS-232 port) into a COM port of this PC. The menu lists
+the COM ports Windows has at the moment you open it, each with its name from Device Manager, for example "COM10,
+com0com - serial port emulator", and "None (not connected)" first; the one in use is checked. The choice is kept
+in `blazie_emu.ini` (`[serial]`, `port=COM10`) and used again next time; if that port is gone, the program says
+so and starts with the serial port unplugged. The window's title says which port the unit is on ("Braille Lite
+2000 (English), serial port on COM10").
+
+**WinDisk on the same PC** needs a virtual null-modem cable: a pair of COM ports wired to each other. com0com (a
+free driver) makes one, for example COM10 and COM11. Keep its default wiring (each side's RTS to the other's CTS,
+DTR to DSR and DCD); its "emulate baud rate" option is not needed. Choose one end in the emulator (Settings >
+Serial port > COM10) and the other end in WinDisk (COM11). A real null-modem cable to another PC works the same
+way with the real COM port.
+
+Then use the unit as you would with the disk drive or WinDisk: on the Braille Lite, s-chord (Storage) and a
+command letter -- d for a directory, l to load a file, s to save one -- or t-chord in the Files menu to send or
+receive several files; on the Type 'n Speak, F8 or Alt+S. The unit finds the far end by itself: it switches its
+serial port on, calls at 19200 bit/s, and when nothing answers says "storage device missing". For a terminal
+program, turn the serial port on in the unit's Status menu (dots 3-4 chord, f, y); it runs at the unit's own
+settings, 9600 bit/s, 8 data bits, no parity, software handshake unless you change them there.
+
+What is carried, measured on the running firmware (`../../csrc/blazie/bl_serial.h`): the unit's RS-232 port, at
+the rate, data bits and parity the firmware programs, changed on the COM port in step with the bytes (the storage
+commands switch to 19200 and back). DTR is on while the unit's serial port is on; RTS follows the unit's own
+handshake line. The unit's XON and XOFF go through as they are, and so do the far end's: Windows' own flow
+control is off. The far end's CTS, DSR and DCD are not watched (the unit always sees them on). The disk drive's
+own port on the Braille Lite is not carried: WinDisk and PCDISK talk over the RS-232 port.
+
+Not yet tried: WinDisk itself against the emulator (the machine it was built on has no com0com). The tests answer
+the unit's call from a program instead: the unit calls with XON ENQ at 19200 8N1, the far end answers ACK, the unit
+answers 'C' and says "storage"; the directory command then goes out as ENQ, "d", carriage return.
+
 ## Firmware
 
 Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.BNS` + `bl2_2003_warm.state`,
@@ -54,4 +90,4 @@ Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the uni
 
 ## Not yet
 
-- Linux and Android shells (the two portable files are ready for them).
+- Linux and Android shells (the portable files are ready for them; the serial port would be a tty there).

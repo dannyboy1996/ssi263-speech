@@ -225,8 +225,13 @@ opcode fetch already happens before the charge), not by a constant. Before migra
 - **Instances.** No global mutable state. Distinct instances may run on distinct threads, and two instances
   interleaved in one thread must behave as each alone (a required test; `test_bl_board.c` does it today for the
   board).
-- **Re-entry.** A callback may call `*_cycles`, `*_steps`, `*_pc`, `*_regs_get` and `*_set_irq`, but not `*_step`,
-  `*_run`, `*_reset` or `*_destroy`. The 8086's `intercept` may also call `i86_regs_set` (its whole purpose).
+- **Re-entry.** A callback may call `*_cycles`, `*_steps`, `*_pc`, `*_regs_get`, `z180_asci_get` and `*_set_irq`,
+  but not `*_step`, `*_run`, `*_reset` or `*_destroy`.
+- **Z180 only:** `z180_asci_get` reads an ASCI channel's control registers without side effects, so a board that
+  carries the serial line to a real port can set that port to the format the firmware programmed (the Blazie
+  emulator's COM port, `../blazie/bl_serial.h`). The pin bits are each core's own: z180emu's CNTLA0 readback sets
+  MOD0 (its /RTS0 readback lands in bit 0) and clears RTS0, so a firmware read-modify-write stores 2 stop bits and
+  RTS0 asserted; MAME's `cntlb_r` masks bit 5. The 8086's `intercept` may also call `i86_regs_set` (its whole purpose).
 - **x86 only** (a host standing in for DOS writes the machine's registers): `i86_regs_set` between steps or from
   `intercept` (FLAGS bits 12-15 are forced to 1; setting TF does not arm the trap); `i86_next_pc` (CS * 16 + IP now,
   for a run-until test); `i86_aliased` (opcodes whose meaning differs on the 80186 and later: a program needing a

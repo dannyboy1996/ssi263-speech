@@ -385,6 +385,16 @@ void z180_set_irq(z180 *c, int line, int asserted)
                               asserted ? ASSERT_LINE : CLEAR_LINE);
 }
 
+void z180_asci_get(const z180 *c, int channel, z180_asci_regs *out)
+{
+    const z180_asci &a = channel ? c->dev->m_asci_1 : c->dev->m_asci_0;
+    out->cntla = a.cntla_r();
+    out->cntlb = a.cntlb_r();             // bit 5 (/CTS) reads 0 here: the written value is not kept
+    out->stat = a.stat_r();
+    out->asext = a.asext_r();
+    out->astc = (uint16_t)(a.astcl_r() | (a.astch_r() << 8));
+}
+
 uint64_t z180_cycles(const z180 *c) { return c->cycles; }
 uint64_t z180_steps(const z180 *c) { return c->steps; }
 uint32_t z180_pc(const z180 *c) { return c->pc; }

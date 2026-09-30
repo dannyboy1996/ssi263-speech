@@ -7,7 +7,8 @@
  *   Type 'n Speak: the whole keyboard is the unit's (tns_keymap_win.c) -- Alt and F10 included -- except F11, which
  *   opens this program's menu.
  * Sound: waveOut, four blocks of 20 ms, each rendered by the unit when the card gives one back -- the card's clock
- * paces the unit.  Settings: blazie_emu.ini beside the program.
+ * paces the unit.  Settings: blazie_emu.ini beside the program.  Settings > Serial port plugs the unit's serial port
+ * into a COM port (serial_win.c), for WinDisk, PCDISK or a terminal on the other end.
  *
  * Firmware: firmware\ beside the program (a release carries it), or firmware_dir= in the settings.
  */
@@ -18,6 +19,7 @@
 #include <string.h>
 #include "chords.h"
 #include "emu_unit.h"
+#include "serial_win.h"
 #include "tns_keymap_win.h"
 
 #define RATE_MAX 48000
@@ -26,7 +28,8 @@
 
 enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET,
        ID_RATE = 220,
-       ID_KEYS = 300, ID_ABOUT };
+       ID_KEYS = 300, ID_ABOUT,
+       ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
 
 /* state NULL: a cold start (the Type 'n Speak asks to initialise its flash; answer y twice) */
 typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; } unit_kind;
@@ -55,11 +58,20 @@ static HANDLE g_wave_event, g_thread;
 static volatile LONG g_quit;
 static char g_dir[MAX_PATH], g_ini[MAX_PATH], g_fw_dir[MAX_PATH], g_save_dir[MAX_PATH];
 static int g_keymap[256];                  /* virtual key -> chord bit */
+static com_link *g_link;                   /* the COM port the unit's serial port is plugged into; NULL: none */
+static char g_com[16];                     /* its name ("COM10"), or "" */
+static HMENU g_serial_menu;
+static com_port_info g_ports[COM_MAX];     /* as the Serial port menu last listed them */
+static int g_n_ports;
 
+/* the window's title, which a screen reader reads on focus: the unit, and the COM port it is plugged into */
 static void status(const char *text)
 {
     char title[256];
-    snprintf(title, sizeof title, "%s - Blazie emulator", text);
+    if (g_link)
+        snprintf(title, sizeof title, "%s, serial port on %s - Blazie emulator", text, g_com);
+    else
+        snprintf(title, sizeof title, "%s - Blazie emulator", text);
     SetWindowTextA(g_wnd, title);
 }
 
@@ -153,6 +165,8 @@ static int start_unit(int kind)
         MessageBoxA(g_wnd, msg, "Blazie emulator", MB_OK | MB_ICONERROR);
         return 0;
     }
+    if (g_link)
+        emu_serial_attach(u, 1);            /* the new unit takes the old one's place on the COM port */
     EnterCriticalSection(&g_lock);
     emu_destroy(g_unit);
     g_unit = u;
@@ -180,6 +194,7 @@ static DWORD WINAPI audio_thread(LPVOID arg)
                 emu_render(g_unit, g_buf[i], g_rate / 50);
             else
                 memset(g_buf[i], 0, sizeof g_buf[i]);
+            com_kick(g_link);               /* the unit ran: its serial bytes may be waiting, both ways */
             LeaveCriticalSection(&g_lock);
             g_hdr[i].dwFlags &= ~WHDR_DONE;
             waveOutWrite(g_wave, &g_hdr[i], sizeof(WAVEHDR));
@@ -267,6 +282,70 @@ static void set_whine(int w)
     WritePrivateProfileStringA("sound", "idle", w == 1 ? "hiss" : w == 2 ? "whine" : "off", g_ini);
 }
 
+/* ---- the serial port ------------------------------------------------------------------------------------------ */
+/* plugs the unit's serial port into COM port `name` ("" = none, unplugged); 1 on success.  at_start: the port saved
+   last time -- if it is gone, the unit starts unplugged and the setting stays for next time */
+static int set_serial(const char *name, int at_start)
+{
+    char err[300], msg[600];
+    com_link *old = g_link, *link = NULL;
+    EnterCriticalSection(&g_lock);
+    g_link = NULL;                          /* the sound thread stops kicking it */
+    LeaveCriticalSection(&g_lock);
+    com_close(old);                         /* (its thread takes the lock: never hold it here) */
+    EnterCriticalSection(&g_lock);
+    if (g_unit)
+        emu_serial_attach(g_unit, 0);
+    LeaveCriticalSection(&g_lock);
+    g_com[0] = 0;
+    if (name[0]) {
+        EnterCriticalSection(&g_lock);
+        if (g_unit)
+            emu_serial_attach(g_unit, 1);   /* first, so the port's first status is the unit's */
+        LeaveCriticalSection(&g_lock);
+        link = com_open(name, &g_lock, &g_unit, err, sizeof err);
+        if (!link) {
+            EnterCriticalSection(&g_lock);
+            if (g_unit)
+                emu_serial_attach(g_unit, 0);
+            LeaveCriticalSection(&g_lock);
+            snprintf(msg, sizeof msg, "Could not open %s. %s\n\nThe unit's serial port is not connected.%s", name,
+                     err, at_start ? " Settings, Serial port chooses another port." : "");
+            MessageBoxA(g_wnd, msg, "Blazie emulator", MB_OK | MB_ICONWARNING);
+        } else {
+            snprintf(g_com, sizeof g_com, "%s", name);
+            EnterCriticalSection(&g_lock);
+            g_link = link;
+            LeaveCriticalSection(&g_lock);
+            com_kick(link);
+        }
+    }
+    if (!at_start || link)
+        WritePrivateProfileStringA("serial", "port", link ? name : "none", g_ini);
+    if (g_unit)
+        status(KINDS[g_kind].name);
+    return link != NULL;
+}
+
+/* the Serial port menu, listed afresh each time it opens (a com0com pair made meanwhile shows up) */
+static void fill_serial_menu(void)
+{
+    int k, current = -1;
+    while (GetMenuItemCount(g_serial_menu) > 0)
+        DeleteMenu(g_serial_menu, 0, MF_BYPOSITION);
+    g_n_ports = com_list(g_ports, COM_MAX);
+    AppendMenuA(g_serial_menu, MF_STRING, ID_SERIAL_NONE, "&None (not connected)");
+    for (k = 0; k < g_n_ports; k++) {
+        AppendMenuA(g_serial_menu, MF_STRING, ID_SERIAL_PORT + k, g_ports[k].label);
+        if (g_link && !_stricmp(g_ports[k].name, g_com))
+            current = k;
+    }
+    if (!g_n_ports)
+        AppendMenuA(g_serial_menu, MF_STRING | MF_GRAYED, ID_SERIAL_PORT + COM_MAX, "No COM ports found");
+    CheckMenuRadioItem(g_serial_menu, ID_SERIAL_NONE, ID_SERIAL_PORT + COM_MAX, current < 0 ? ID_SERIAL_NONE
+                       : ID_SERIAL_PORT + current, MF_BYCOMMAND);
+}
+
 static HMENU make_menu(void)
 {
     HMENU bar = CreateMenu(), unit = CreatePopupMenu(), sound = CreatePopupMenu(), help = CreatePopupMenu();
@@ -292,6 +371,9 @@ static HMENU make_menu(void)
     }
     AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
     AppendMenuA(sound, MF_POPUP, (UINT_PTR)rates, "Sample &rate");
+    g_serial_menu = CreatePopupMenu();
+    AppendMenuA(g_serial_menu, MF_STRING, ID_SERIAL_NONE, "&None (not connected)");   /* filled when it opens */
+    AppendMenuA(sound, MF_POPUP, (UINT_PTR)g_serial_menu, "Serial &port");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)sound, "S&ettings");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)help, "&Help");
     return bar;
@@ -405,9 +487,16 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_HISS: set_whine(1); return 0;
         case ID_WHINE: set_whine(2); return 0;
         case ID_QUIET: set_whine(0); return 0;
+        case ID_SERIAL_NONE: set_serial("", 0); return 0;
         default:
             if (LOWORD(wp) >= ID_RATE && LOWORD(wp) < ID_RATE + N_RATES) {
                 set_rate(RATES[LOWORD(wp) - ID_RATE]);
+                return 0;
+            }
+            if (LOWORD(wp) >= ID_SERIAL_PORT && LOWORD(wp) < ID_SERIAL_PORT + g_n_ports) {
+                char name[16];
+                snprintf(name, sizeof name, "%s", g_ports[LOWORD(wp) - ID_SERIAL_PORT].name);
+                set_serial(name, 0);
                 return 0;
             }
             break;
@@ -430,6 +519,10 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         "Z180 core: z180emu (GPL-2.0-or-later), so this program is GPL.", "About", MB_OK);
             return 0;
         }
+        break;
+    case WM_INITMENUPOPUP:
+        if ((HMENU)wp == g_serial_menu)
+            fill_serial_menu();
         break;
     case WM_TIMER:                          /* the unit's memory saved every minute: nothing is lost if the */
         save_unit();                        /* program is ended without closing its window */
@@ -514,10 +607,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                 start = k;
         start_unit(start);
     }
+    GetPrivateProfileStringA("serial", "port", "none", v, sizeof v, g_ini);
+    if (_stricmp(v, "none") && v[0])
+        set_serial(v, 1);                   /* the COM port chosen last time */
     while (GetMessageA(&m, NULL, 0, 0) > 0) {
         TranslateMessage(&m);
         DispatchMessageA(&m);
     }
+    set_serial("", 1);                      /* unplugged: the port closed (the setting kept) */
     close_audio();
     save_unit();                            /* switched off: the memory is kept */
     emu_destroy(g_unit);

@@ -8,6 +8,7 @@
 #define BL_HOST_H
 
 #include "../ssi263.h"
+#include "bl_serial.h"
 
 #if defined(_WIN32)
 #define BL_API __declspec(dllexport)
@@ -56,6 +57,12 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v);
 BL_API double bh_get_double(const bl_host *h, const char *name);
 BL_API void bh_set_double(bl_host *h, const char *name, double v);
 BL_API int bh_tx(const bl_host *h, const unsigned char **bytes);   /* every byte the unit sent back */
+BL_API void bh_clear_tx(bl_host *h);        /* forget them (a program that never reads them: the emulator app) */
+/* the serial port carried to a real port (bl_board.h's bl_serial_*); the drivers never attach it */
+BL_API int bh_serial_attach(bl_host *h, int on);
+BL_API int bh_serial_write(bl_host *h, const unsigned char *bytes, int n);
+BL_API int bh_serial_space(const bl_host *h);
+BL_API int bh_serial_read(bl_host *h, unsigned char *out, int cap, bl_serial_status *status);
 BL_API int bh_key(bl_host *h, int chord);   /* a braille chord pressed live (bl_key) */
 BL_API void bh_battery(bl_host *h, int level);   /* the battery gauge's reading (bl_battery) */
 BL_API int bh_save_state(const bl_host *h, const char *path);   /* bl_save_state: 1 on success */

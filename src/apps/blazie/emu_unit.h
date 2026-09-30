@@ -12,6 +12,8 @@
 #ifndef BLAZIE_EMU_UNIT_H
 #define BLAZIE_EMU_UNIT_H
 
+#include "../../csrc/blazie/bl_serial.h"
+
 typedef struct emu_unit emu_unit;
 
 enum { EMU_BRAILLE_LITE, EMU_TYPE_N_SPEAK };
@@ -36,5 +38,16 @@ int emu_save(const emu_unit *u, const char *path);
 void emu_set_whine(emu_unit *u, int whine);
 /* 0-100: the output gain (the unit's own volume keys still work on top of it) */
 void emu_set_volume(emu_unit *u, int volume);
+
+/* The unit's serial port (its RS-232 port: WinDisk, PCDISK, a terminal or a screen reader on the far end;
+   ../../csrc/blazie/bl_serial.h says what was measured).  Unplugged by default.  emu_serial_attach(u, 1) plugs it
+   into the shell's port: emu_serial_write gives the unit the bytes that arrived there (returns how many it took --
+   at most emu_serial_space; keep the rest for later), emu_serial_read hands out what the unit sent, one run of bytes
+   per status (call until it returns 0; set the port to *status before sending the bytes).  The bytes move as the
+   unit runs (emu_render), at the rate the firmware programmed, in the unit's time.  0 from attach: out of memory. */
+int emu_serial_attach(emu_unit *u, int on);
+int emu_serial_space(const emu_unit *u);
+int emu_serial_write(emu_unit *u, const unsigned char *bytes, int n);
+int emu_serial_read(emu_unit *u, unsigned char *out, int cap, bl_serial_status *status);
 
 #endif

@@ -78,6 +78,15 @@ uint64_t z180_steps(const z180 *c);                /* steps since reset, HALT an
 uint32_t z180_pc(const z180 *c);                   /* the SAVED instruction-start PC (regs_get: architectural) */
 void z180_regs_get(const z180 *c, z180_regs *out);
 
+typedef struct {                                               /* an ASCI channel's control registers, as written */
+    uint8_t cntla, cntlb, stat, asext;
+    uint16_t astc;
+} z180_asci_regs;
+/* An ASCI channel's (0 or 1) control registers, read without side effects, as the core holds them (CONTRACT.md 9:
+   the pin bits differ between cores).  A board whose host carries the serial line to a real port programs that
+   port from them (the line format the firmware chose). */
+void z180_asci_get(const z180 *c, int channel, z180_asci_regs *out);
+
 /* ---- 8085 (Intel 8085A: the Accent SA) ------------------------------------------------------------------------- */
 typedef struct i8085 i8085;
 

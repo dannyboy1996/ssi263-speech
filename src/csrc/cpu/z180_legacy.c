@@ -189,6 +189,16 @@ uint64_t z180_cycles(const z180 *c)
     return c->cyc_base + (unsigned long long)(c->cur_slice - cpu_icount_z180((device_t *)c->dev));
 }
 
+void z180_asci_get(const z180 *c, int channel, z180_asci_regs *out)
+{
+    const struct z180asci_channel *ch = channel ? c->dev->z180asci->m_chan1 : c->dev->z180asci->m_chan0;
+    out->cntla = ch->m_cntla;
+    out->cntlb = ch->m_cntlb;
+    out->stat = ch->m_stat;
+    out->asext = ch->m_asext;
+    out->astc = ch->m_astc;
+}
+
 uint64_t z180_steps(const z180 *c) { return c->steps; }
 uint32_t z180_pc(const z180 *c) { return c->pc; }
 
