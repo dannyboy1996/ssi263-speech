@@ -28,6 +28,8 @@ Must-fail controls of the completion rule itself; N = the utterance (0-4 are the
     COMPLETE_FUZZ_NO_DONE=N        the driver's done notifications dropped  -> MISSING DONE
     COMPLETE_FUZZ_HANG=N           the worker stuck in the unit's say()     -> TIMEOUT
     COMPLETE_FUZZ_KILL_WORKER=N    the worker told to stop (its queue's None) -> WORKER DIED
+    COMPLETE_FUZZ_EARLY_DONE=N     (Braille Lite) the unit reports idle at once, its open channel speaks on after the
+                                   done -> LATE (exit 1): the late check's own control
 """
 import os
 import random
@@ -179,6 +181,15 @@ FORGE = os.environ.get("COMPLETE_FUZZ_STALE") == "1" or os.environ.get("COMPLETE
 NO_INDEX_FROM = breaks_from("COMPLETE_FUZZ_NO_INDEX")
 NO_DONE_FROM = breaks_from("COMPLETE_FUZZ_NO_DONE")
 KILL_FROM = breaks_from("COMPLETE_FUZZ_KILL_WORKER")
+EARLY_FROM = breaks_from("COMPLETE_FUZZ_EARLY_DONE")
+if EARLY_FROM is not None:
+    # control of the late check (the Braille Lite only): the unit reports idle at once from utterance N, so the driver
+    # says done early, and with the channel kept open (hiss) its idle tail runs the unit on -- the rest of the line is
+    # loaded AFTER the done, still tagged with it
+    assert SYNTH == "blazie", "COMPLETE_FUZZ_EARLY_DONE needs the Braille Lite's idle tail"
+    d._whine = d._want_whine = unit.whine = "hiss"
+    _o_busy = unit.busy
+    unit.busy = lambda *a, **k: False if cur[0] >= EARLY_FROM else _o_busy(*a, **k)
 
 if STALE:
     # control: the rule before Reply 104 -- the queue empty and any done since the speak counts as this one's

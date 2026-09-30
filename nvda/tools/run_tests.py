@@ -79,9 +79,20 @@ for what, env, marks in (
     CHECKS.append(check("complete_fuzz CONTROL (%s, must error)" % what, [PY, "complete_fuzz.py", "150", "1"],
                         env=dict({"SIM_SPEED": "10", "COMPLETE_FUZZ_WAIT_S": "5"}, **env), expect_fail=True,
                         fail_marks=marks, fail_codes=(2,)))
+# the late check, apart from the phonemes at completion: the unit told idle at once from utterance 5, the Braille
+# Lite's open channel speaks the rest after the done -- it must be counted late (exit 1), not pass as complete
+CHECKS.append(check("complete_fuzz CONTROL (early done, must count late)", [PY, "complete_fuzz.py", "150", "1"],
+                    env={"SIM_SPEED": "10", "COMPLETE_FUZZ_EARLY_DONE": "5"}, expect_fail=True,
+                    fail_marks=[r"^#\d+ '.*': LATE, \d+ phonemes loaded after its completion: ",
+                                r"^\d+ finished utterances checked, \d+ incomplete, [1-9]\d* late$"]))
 # ... and the positive half: the same forged dones under the owned rule change nothing
 CHECKS.append(check("complete_fuzz, forged dones (owned rule)", [PY, "complete_fuzz.py", "150", "1"],
                     env={"SIM_SPEED": "10", "COMPLETE_FUZZ_FORGE_DONE": "1"}))
+# driver_sim.py's own copy of the rule, the same way: the old rule and forged dones put back must fail (every scenario
+# then ends at once, with no audio), not pass
+CHECKS.append(check("driver_sim CONTROL (stale done, must fail)", [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"],
+                    env={"DRIVER_SIM_STALE": "1"}, expect_fail=True,
+                    fail_marks=[r"^sample rate: .*11025 0\.00 s rms 0.*: FAILED$", r"^speakout rt: .*all ok False"]))
 # the Accent-mini on MAME's 8086 core (opt-in; not gated before Reply 104 because the old rule failed it on seed 3)
 PC86_FUZZ = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib", "x64", "pc86.dll")
 if os.path.isfile(PC86_FUZZ):
