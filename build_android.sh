@@ -81,6 +81,8 @@ objects() {
     cc --target="$TARGET" $BOARD -c -o "$O/bl_unity.o" "$SRC/blazie/bl_unity.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_host.o" "$SRC/blazie/bl_host.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_voice.o" "$SRC/blazie/bl_voice.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_state.o" "$SRC/blazie/bl_state.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
 }

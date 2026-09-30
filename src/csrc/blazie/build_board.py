@@ -98,7 +98,8 @@ def main():
         chip_dll = os.path.join(engine, "ssi263", "_bin", arch, "ssi263.dll")
         subprocess.run([os.path.join(bindir, "gcc.exe")] + DLL_FLAGS + extra + inc
                        + ["-o", os.path.join(out_dir, "bl.dll"), os.path.join(HERE, "bl_unity.c"),
-                          os.path.join(HERE, "bl_host.c"), os.path.join(HERE, "bl_voice.c"), chip_dll], env=env, check=True)
+                          os.path.join(HERE, "bl_host.c"), os.path.join(HERE, "bl_voice.c"),
+                          os.path.join(HERE, "bl_firmware.c"), os.path.join(HERE, "bl_state.c"), chip_dll], env=env, check=True)
     print("built %s" % OUT)
 
 

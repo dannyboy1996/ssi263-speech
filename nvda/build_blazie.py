@@ -92,7 +92,8 @@ def main():
                     z.write(os.path.join(d, fn), sub + "/" + fn)
         z.write(os.path.join(ENGINE, "csrc", "ssi263.h"), "ssi263.h")
         z.writestr("BUILD-bl.txt", "bl.dll (the in-process unit), from this folder:\n"
-                   "  gcc %s -I. -Iz180 -o bl.dll blazie/bl_unity.c blazie/bl_host.c blazie/bl_voice.c ssi263.dll\n"
+                   "  gcc %s -I. -Iz180 -o bl.dll blazie/bl_unity.c blazie/bl_host.c blazie/bl_voice.c "
+                   "blazie/bl_firmware.c blazie/bl_state.c ssi263.dll\n"
                    "(32-bit: add -msse2 -mfpmath=sse.  ssi263.dll is the chip, in the add-on's ssi263/_bin.)\n"
                    % " ".join(build_board.DLL_FLAGS))
         z.writestr("BUILD.txt", "Built with w64devkit GCC 16.2, i686 (32-bit), as one translation unit:\n"
