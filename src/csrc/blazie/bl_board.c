@@ -409,6 +409,16 @@ int bl_drop(bl_unit *u)
     return n6;
 }
 
+int bl_save_state(const bl_unit *u, const char *path)
+{
+    FILE *s = fopen(path, "wb");
+    int ok;
+    if (!s)
+        return 0;
+    ok = fwrite(u->ram + 0x40000, 1, 0x40000, s) == 0x40000 && fwrite(u->fflash, 1, 0x80000, s) == 0x80000;
+    return fclose(s) == 0 && ok;
+}
+
 int bl_key(bl_unit *u, int chord)
 {
     if (u->n_live_keys == (int)sizeof u->live_keys)

@@ -75,6 +75,29 @@ int main(int argc, char **argv)
     check("a chord is answered", with_key > 0.01 && without < 0.002, d);
     snprintf(d, sizeof d, "10 s of unit in %.2f s (%.1fx real time)", secs, 10.0 / secs);
     check("faster than real time", secs < 5.0, d);
+    {   /* switched off and on: the saved memory is the state format, and the unit boots from it and speaks */
+        char err[256], path[] = "test_emu_unit.saved.state";
+        emu_unit *u = emu_create(argv[1], argv[2], RATE, 0, err, sizeof err);
+        short *buf = (short *)calloc(RATE, sizeof(short));
+        FILE *f;
+        long size = -1;
+        double again;
+        emu_render(u, buf, RATE);
+        emu_key(u, 0x01);
+        emu_render(u, buf, RATE);
+        check("save", emu_save(u, path), "emu_save returned 1");
+        emu_destroy(u);
+        if ((f = fopen(path, "rb")) != NULL) {
+            fseek(f, 0, SEEK_END);
+            size = ftell(f);
+            fclose(f);
+        }
+        again = run(argv[1], path, 0, 0, 0.0, 2.0, NULL);
+        snprintf(d, sizeof d, "%ld bytes (want 786432); booted from it: rms %.4f over the first 2 s", size, again);
+        check("switched off and on", size == 786432 && again > 0.01, d);
+        remove(path);
+        free(buf);
+    }
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

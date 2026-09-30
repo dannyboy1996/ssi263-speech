@@ -31,8 +31,13 @@ Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.
 speech off). Run from the source tree, the program finds
 `firmware/blazie/` itself; `firmware_dir=` in `[unit]` overrides both.
 
+## What the unit keeps
+
+As a real unit keeps its battery-backed RAM and file flash while switched off, the program saves them on exit (and
+when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or `spanish.state`, and starts from
+them next time. The first time, and after Unit > Back to the factory state, it starts from the shipped state.
+
 ## Not yet
 
 - The Type 'n Speak (a QWERTY unit): a different board -- the chip at 90h-94h, other key ports. Being mapped.
-- Keeping what you write across runs (saving the unit's RAM and file flash on exit).
 - Linux and Android shells (the two portable files are ready for them).

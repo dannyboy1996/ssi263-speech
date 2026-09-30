@@ -432,3 +432,8 @@ int bh_key(bl_host *h, int chord)
 {
     return bl_key(h->unit, chord);
 }
+
+int bh_save_state(const bl_host *h, const char *path)
+{
+    return bl_save_state(h->unit, path);
+}

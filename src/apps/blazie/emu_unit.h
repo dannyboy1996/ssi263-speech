@@ -22,6 +22,9 @@ void emu_destroy(emu_unit *u);
 void emu_render(emu_unit *u, short *out, int n);
 /* a braille chord (chords.h bits); 0 if the unit's key queue is full */
 int emu_key(emu_unit *u, int chord);
+/* saves what the unit keeps while switched off (battery RAM + file flash: its files and settings), in the state
+   format emu_create reads; 1 on success */
+int emu_save(const emu_unit *u, const char *path);
 void emu_set_whine(emu_unit *u, int whine);
 /* 0-100: the output gain (the unit's own volume keys still work on top of it) */
 void emu_set_volume(emu_unit *u, int volume);

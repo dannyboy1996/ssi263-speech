@@ -57,6 +57,7 @@ BL_API double bh_get_double(const bl_host *h, const char *name);
 BL_API void bh_set_double(bl_host *h, const char *name, double v);
 BL_API int bh_tx(const bl_host *h, const unsigned char **bytes);   /* every byte the unit sent back */
 BL_API int bh_key(bl_host *h, int chord);   /* a braille chord pressed live (bl_key) */
+BL_API int bh_save_state(const bl_host *h, const char *path);   /* bl_save_state: 1 on success */
 
 #ifdef __cplusplus
 }

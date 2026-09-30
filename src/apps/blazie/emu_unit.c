@@ -76,6 +76,11 @@ int emu_key(emu_unit *u, int chord)
     return bh_key(u->host, chord);
 }
 
+int emu_save(const emu_unit *u, const char *path)
+{
+    return bh_save_state(u->host, path);
+}
+
 void emu_set_whine(emu_unit *u, int whine)
 {
     bh_set_whine(u->host, whine);

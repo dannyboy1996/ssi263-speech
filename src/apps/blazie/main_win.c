@@ -19,12 +19,12 @@
 #define BLOCK (RATE / 50)
 #define NBLOCKS 4
 
-enum { ID_EN = 100, ID_ES, ID_TNS, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_KEYS = 300, ID_ABOUT };
+enum { ID_EN = 100, ID_ES, ID_TNS, ID_FACTORY, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_KEYS = 300, ID_ABOUT };
 
-typedef struct { const char *name, *firmware, *state; } unit_kind;
+typedef struct { const char *name, *firmware, *state, *saved; } unit_kind;
 static const unit_kind KINDS[] = {
-    {"Braille Lite 2000 (English)", "BL2ENG.BNS", "bl2_2003_warm.state"},
-    {"Braille Lite 2000 (Spanish)", "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state"},
+    {"Braille Lite 2000 (English)", "BL2ENG.BNS", "bl2_2003_warm.state", "english.state"},
+    {"Braille Lite 2000 (Spanish)", "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state", "spanish.state"},
 };
 
 static HWND g_wnd;
@@ -37,7 +37,7 @@ static WAVEHDR g_hdr[NBLOCKS];
 static short g_buf[NBLOCKS][BLOCK];
 static HANDLE g_wave_event, g_thread;
 static volatile LONG g_quit;
-static char g_dir[MAX_PATH], g_ini[MAX_PATH], g_fw_dir[MAX_PATH];
+static char g_dir[MAX_PATH], g_ini[MAX_PATH], g_fw_dir[MAX_PATH], g_save_dir[MAX_PATH];
 static int g_keymap[256];                  /* virtual key -> chord bit */
 
 static void status(const char *text)
@@ -87,12 +87,42 @@ static void load_keymap(void)
 }
 
 /* ---- the unit ------------------------------------------------------------------------------------------------ */
+static int exists(const char *path)
+{
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+/* what the unit keeps while switched off (its files and settings): %APPDATA%\ssi263-speech\blazie-emu\<kind>.state */
+static void saved_path(int kind, char *out, int cap)
+{
+    snprintf(out, cap, "%s\\%s", g_save_dir, KINDS[kind].saved);
+}
+
+static void save_unit(void)
+{
+    char path[MAX_PATH];
+    int ok = 1;
+    if (!g_unit)
+        return;
+    CreateDirectoryA(g_save_dir, NULL);
+    saved_path(g_kind, path, sizeof path);
+    EnterCriticalSection(&g_lock);
+    ok = emu_save(g_unit, path);
+    LeaveCriticalSection(&g_lock);
+    if (!ok)
+        MessageBoxA(g_wnd, "Could not save the unit's memory; what you wrote this time is lost.", "Blazie emulator",
+                    MB_OK | MB_ICONWARNING);
+}
+
 static int start_unit(int kind)
 {
     char fw[MAX_PATH], st[MAX_PATH], err[256];
     emu_unit *u;
+    save_unit();                            /* first: the unit being left keeps its memory (it may be this kind) */
     snprintf(fw, sizeof fw, "%s\\%s", g_fw_dir, KINDS[kind].firmware);
-    snprintf(st, sizeof st, "%s\\%s", g_fw_dir, KINDS[kind].state);
+    saved_path(kind, st, sizeof st);
+    if (!exists(st))                        /* the first time: the unit as it left the factory (the shipped state) */
+        snprintf(st, sizeof st, "%s\\%s", g_fw_dir, KINDS[kind].state);
     status("Starting");
     u = emu_create(fw, st, RATE, g_whine, err, sizeof err);
     if (!u) {
@@ -195,6 +225,8 @@ static HMENU make_menu(void)
     AppendMenuA(unit, MF_STRING, ID_EN, "Braille Lite 2000, &English");
     AppendMenuA(unit, MF_STRING, ID_ES, "Braille Lite 2000, &Spanish");
     AppendMenuA(unit, MF_STRING | MF_GRAYED, ID_TNS, "&Type 'n Speak (not yet)");
+    AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(unit, MF_STRING, ID_FACTORY, "Back to the &factory state (erases this unit's files)...");
     AppendMenuA(sound, MF_STRING, ID_HISS, "Idle channel: &hiss");
     AppendMenuA(sound, MF_STRING, ID_WHINE, "Idle channel: &whine");
     AppendMenuA(sound, MF_STRING, ID_QUIET, "Idle channel: &silent");
@@ -238,6 +270,22 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case ID_EN: case ID_ES: start_unit(LOWORD(wp) - ID_EN); return 0;
+        case ID_FACTORY: {
+            char path[MAX_PATH];
+            emu_unit *old;
+            if (MessageBoxA(w, "Put this unit back as it left the factory? Its files and settings are erased.",
+                            "Blazie emulator", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+                return 0;
+            EnterCriticalSection(&g_lock);
+            old = g_unit;
+            g_unit = NULL;                  /* so start_unit saves nothing over the deletion */
+            LeaveCriticalSection(&g_lock);
+            emu_destroy(old);
+            saved_path(g_kind, path, sizeof path);
+            DeleteFileA(path);
+            start_unit(g_kind);
+            return 0;
+        }
         case ID_HISS: set_whine(1); return 0;
         case ID_WHINE: set_whine(2); return 0;
         case ID_QUIET: set_whine(0); return 0;
@@ -262,11 +310,6 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     return DefWindowProcA(w, msg, wp, lp);
-}
-
-static int exists(const char *path)
-{
-    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
 }
 
 /* firmware_dir= in the settings; else firmware\ beside the program; else the source tree's firmware\blazie\ when
@@ -296,6 +339,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if ((slash = strrchr(g_dir, '\\')) != NULL)
         *slash = 0;
     snprintf(g_ini, sizeof g_ini, "%s\\blazie_emu.ini", g_dir);
+    {
+        char appdata[MAX_PATH];
+        if (!GetEnvironmentVariableA("APPDATA", appdata, sizeof appdata))
+            snprintf(appdata, sizeof appdata, "%s", g_dir);
+        snprintf(g_save_dir, sizeof g_save_dir, "%s\\ssi263-speech", appdata);
+        CreateDirectoryA(g_save_dir, NULL);
+        snprintf(g_save_dir, sizeof g_save_dir, "%s\\ssi263-speech\\blazie-emu", appdata);
+    }
     find_firmware();
     load_keymap();
     InitializeCriticalSection(&g_lock);
@@ -322,6 +373,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
         DispatchMessageA(&m);
     }
     close_audio();
+    save_unit();                            /* switched off: the memory is kept */
     emu_destroy(g_unit);
     return 0;
 }

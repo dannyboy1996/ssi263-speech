@@ -41,6 +41,9 @@ unsigned long long bl_cycles(const bl_unit *u);              /* CPU cycles so fa
 /* a braille key chord pressed live (port 40h: dot 1 = bit 0 .. dot 6 = bit 5, space = bit 6, bit 7 = an advance
    key): latched with /INT2 at the next boundary after the last chord was read; 0 if 16 are already waiting */
 int  bl_key(bl_unit *u, int chord);
+/* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
+   1 on success */
+int  bl_save_state(const bl_unit *u, const char *path);
 
 /* the events since the last bl_clear_events, in order */
 int  bl_events(const bl_unit *u, const bl_event **events);
