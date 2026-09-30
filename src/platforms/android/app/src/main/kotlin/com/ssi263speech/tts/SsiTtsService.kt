@@ -26,10 +26,12 @@ class SsiTtsService : TextToSpeechService() {
     private fun isSpanish(lang: String?) = lang == "spa" || lang == "es"
     private fun isEnglish(lang: String?) = lang == "eng" || lang == "en"
 
+    // The app carries no firmware: until the user imports a unit's, its language is supported but its data missing.
     private fun availability(lang: String?, country: String?): Int = when {
-        isEnglish(lang) -> if (country == "USA" || country == "US") TextToSpeech.LANG_COUNTRY_AVAILABLE
+        isEnglish(lang) -> if (!SsiEngine.english(this)) TextToSpeech.LANG_MISSING_DATA
+                           else if (country == "USA" || country == "US") TextToSpeech.LANG_COUNTRY_AVAILABLE
                            else TextToSpeech.LANG_AVAILABLE
-        isSpanish(lang) -> if (!SsiEngine.spanish(this)) TextToSpeech.LANG_NOT_SUPPORTED
+        isSpanish(lang) -> if (!SsiEngine.spanish(this)) TextToSpeech.LANG_MISSING_DATA
                            else if (country == "ESP" || country == "ES") TextToSpeech.LANG_COUNTRY_AVAILABLE
                            else TextToSpeech.LANG_AVAILABLE
         else -> TextToSpeech.LANG_NOT_SUPPORTED
@@ -38,7 +40,8 @@ class SsiTtsService : TextToSpeechService() {
     override fun onIsLanguageAvailable(lang: String?, country: String?, variant: String?): Int =
         availability(lang, country)
 
-    override fun onGetLanguage(): Array<String> = arrayOf("eng", "USA", "")
+    override fun onGetLanguage(): Array<String> =
+        if (!SsiEngine.english(this) && SsiEngine.spanish(this)) arrayOf("spa", "ESP", "") else arrayOf("eng", "USA", "")
 
     override fun onLoadLanguage(lang: String?, country: String?, variant: String?): Int = availability(lang, country)
 
@@ -66,7 +69,8 @@ class SsiTtsService : TextToSpeechService() {
     override fun onSynthesizeText(request: SynthesisRequest, callback: SynthesisCallback) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
         val text = request.charSequenceText?.toString() ?: ""
-        if (!SsiEngine.open(this)) { callback.error(TextToSpeech.ERROR_SERVICE); return }
+        // No firmware imported yet: the voice data is not installed, which the settings screen's Import fixes.
+        if (!SsiEngine.open(this)) { callback.error(TextToSpeech.ERROR_NOT_INSTALLED_YET); return }
         val s = SsiSettings.snapshot(this)
 
         // A request in Spanish gets the Spanish unit when it is here.  Otherwise the voice chosen in the settings

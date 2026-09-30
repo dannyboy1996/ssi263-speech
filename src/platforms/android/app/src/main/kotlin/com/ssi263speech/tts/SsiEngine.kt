@@ -1,5 +1,5 @@
 // The one engine in this process, shared by the TTS service and the settings screen's preview: opens the native
-// side on the staged unit files, lists the voices, and owns the engine for one utterance at a time.  A stop from any
+// side on the imported unit files, lists the voices, and owns the engine for one utterance at a time.  A stop from any
 // thread reaches the render in progress (nativeStop); the synthesis thread then cancels, so the unit drops what it
 // has not spoken and the next utterance starts clean -- as the speech-dispatcher module does after STOP.
 package com.ssi263speech.tts
@@ -18,25 +18,37 @@ object SsiEngine {
     private val lock = Any()
     @Volatile private var opened = false
 
-    /** Stage the unit's files and open the native side on them.  False when the APK carries no English unit. */
+    /** Open the native side on the unit's files.  False until the user has imported firmware. */
     fun open(ctx: Context): Boolean {
         if (opened) return true
         synchronized(lock) {
             if (opened) return true
-            if (!SsiData.stage(ctx)) { Log.e("SsiEngine", "no English unit in the APK"); return false }
+            if (!SsiData.any(ctx)) { Log.w("SsiEngine", "no firmware imported"); return false }
             opened = SsiNative.nativeOpen(SsiData.dir(ctx).absolutePath)
             return opened
         }
     }
 
-    /** The voices this APK can speak with: English, and Spanish when its files were built in. */
-    fun voices(ctx: Context): List<VoiceInfo> = ALL.filter { SsiData.ships(ctx, it.index) }
+    /** Let the native side go after an import or a removal: the next use opens it on the files now there.  Waits
+     * for an utterance in progress. */
+    fun reload() = synchronized(lock) {
+        if (opened) {
+            opened = false                  // a stop from another thread now leaves the engine alone
+            SsiNative.nativeClose()
+        }
+    }
+
+    /** The voices that can speak now: those whose firmware has been imported. */
+    fun voices(ctx: Context): List<VoiceInfo> = ALL.filter { SsiData.has(ctx, it.index) }
 
     fun voiceByName(ctx: Context, name: String?): VoiceInfo? = voices(ctx).firstOrNull { it.name == name }
 
-    fun voiceFor(ctx: Context, index: Int): VoiceInfo = voices(ctx).firstOrNull { it.index == index } ?: ALL[0]
+    fun voiceFor(ctx: Context, index: Int): VoiceInfo =
+        voices(ctx).let { v -> v.firstOrNull { it.index == index } ?: v.firstOrNull() } ?: ALL[0]
 
-    fun spanish(ctx: Context): Boolean = SsiData.ships(ctx, SsiNative.SPANISH)
+    fun english(ctx: Context): Boolean = SsiData.has(ctx, SsiNative.ENGLISH)
+
+    fun spanish(ctx: Context): Boolean = SsiData.has(ctx, SsiNative.SPANISH)
 
     /** Own the engine for one utterance: every native call but a stop happens inside. */
     fun <T> withEngine(block: () -> T): T = synchronized(lock) { block() }

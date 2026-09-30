@@ -1,5 +1,6 @@
-// The framework fires ACTION_CHECK_TTS_DATA to ask whether the engine's voice data is usable.  The unit's files
-// come inside the APK, so English always is; Spanish when its files were built in.  ISO-3 locales, not voice names.
+// The framework fires ACTION_CHECK_TTS_DATA to ask whether the engine's voice data is usable.  The app carries no
+// firmware, so a voice's data is there once the user has imported its unit's firmware (the settings screen, which
+// also answers INSTALL_TTS_DATA); until then it is reported unavailable.  ISO-3 locales, not voice names.
 package com.ssi263speech.tts
 
 import android.app.Activity
@@ -10,19 +11,16 @@ import android.speech.tts.TextToSpeech
 class CheckVoiceDataActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pass = SsiData.ships(this, SsiNative.ENGLISH)
-        val voices = ArrayList<String>()
-        if (pass) {
-            voices.add("eng-USA")
-            if (SsiEngine.spanish(this)) voices.add("spa-ESP")
-        }
+        val available = ArrayList<String>()
+        val unavailable = ArrayList<String>()
+        (if (SsiEngine.english(this)) available else unavailable).add("eng-USA")
+        (if (SsiEngine.spanish(this)) available else unavailable).add("spa-ESP")
         val data = Intent().apply {
-            putStringArrayListExtra(TextToSpeech.Engine.EXTRA_AVAILABLE_VOICES, voices)
-            putStringArrayListExtra(TextToSpeech.Engine.EXTRA_UNAVAILABLE_VOICES,
-                if (pass) arrayListOf() else arrayListOf("eng-USA"))
+            putStringArrayListExtra(TextToSpeech.Engine.EXTRA_AVAILABLE_VOICES, available)
+            putStringArrayListExtra(TextToSpeech.Engine.EXTRA_UNAVAILABLE_VOICES, unavailable)
         }
-        setResult(if (pass) TextToSpeech.Engine.CHECK_VOICE_DATA_PASS else TextToSpeech.Engine.CHECK_VOICE_DATA_FAIL,
-                  data)
+        setResult(if (available.isNotEmpty()) TextToSpeech.Engine.CHECK_VOICE_DATA_PASS
+                  else TextToSpeech.Engine.CHECK_VOICE_DATA_FAIL, data)
         finish()
     }
 }

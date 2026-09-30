@@ -113,5 +113,13 @@ int main(int argc, char **argv)
         report("spanish", &d);
     }
     ssa_free(e);
+
+    /* the import's check (ssa_probe): a unit of its own speaks the first case again, as the first case did */
+    {
+        unsigned long long h;
+        long n = ssa_probe(argv[1], SSA_ENGLISH, HELLO, &h, err, sizeof err);
+        if (n < 0) { fprintf(stderr, "probe: %s\n", err); return 1; }
+        printf("probe %ld %016llx\n", n, h);
+    }
     return 0;
 }

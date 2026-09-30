@@ -6,8 +6,8 @@ plugins {
 }
 
 // Everything the APK carries besides code is staged by build_android.sh at the repository root into
-// build/android/assets: the unit's firmware (never in the repository; the APK is a release artifact, as the NVDA
-// add-on that also carries it), the licences, and z180emu's GPL source.  The native library, from the same sources
+// build/android/assets: the licences and z180emu's GPL source.  No firmware: the app's users import their own
+// (FirmwareImport.kt); only a developer build asked for with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it.  The native library, from the same sources
 // as the Linux and Windows builds, is dropped under jniLibs.  Gradle only checks both are there.
 val repoRoot = rootProject.file("../../..")
 val stagedAssets = File(repoRoot, "build/android/assets")
@@ -18,8 +18,8 @@ val verifyNativeBuild = tasks.register("verifyNativeBuild") {
             val library = file("src/main/jniLibs/$abi/libssi263speech.so")
             check(library.isFile) { "Build the $abi library with `sh build_android.sh` first" }
         }
-        for (name in listOf("firmware/BL2ENG.BNS", "firmware/bl2_2003_warm.state", "licenses/DISTRIBUTION.txt",
-                            "licenses/z180emu-GPL-2.0.txt", "source/ssi263-speech-source.tgz")) {
+        for (name in listOf("licenses/DISTRIBUTION.txt", "licenses/z180emu-GPL-2.0.txt",
+                            "source/ssi263-speech-source.tgz")) {
             check(File(stagedAssets, name).isFile) { "build/android/assets/$name is missing: run `sh build_android.sh`" }
         }
     }
@@ -43,8 +43,9 @@ android {
         }
     }
 
-    // Kotlin sources live under src/main/kotlin.
+    // Kotlin sources live under src/main/kotlin; the JVM tests (the import's logic, no phone) under src/test/kotlin.
     sourceSets["main"].java.srcDirs("src/main/kotlin")
+    sourceSets["test"].java.srcDirs("src/test/kotlin")
     sourceSets["main"].assets.srcDir(stagedAssets)
 
     // The firmware and state are read as they are: no compression, so they copy out of the APK quickly.
@@ -82,4 +83,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}
+
+// The JVM tests' must-fail control: -Pssi263ImportBreak=1 switches FirmwareImport's layout rules off.
+tasks.withType<Test>().configureEach {
+    if (project.hasProperty("ssi263ImportBreak")) systemProperty("ssi263.import.break", "1")
 }

@@ -59,6 +59,12 @@ void ssa_cancel(ssa_engine *e);
 /* Non-empty blocks the unit has rendered for the current utterance (the test's stop point). */
 int ssa_blocks(const ssa_engine *e);
 
+/* The firmware import's last check, on a folder of its own: boots the voice's unit from the files in datadir (the
+   defaults: 22050 Hz, inflection on, no idle sound), speaks utf8 at the app's default settings and returns the
+   samples it made -- 0 when the unit stays silent -- with the FNV-1a 64 of their little-endian bytes in *fnv when
+   fnv is not NULL; or -1 with the reason in err. */
+long ssa_probe(const char *datadir, int voice, const char *utf8, unsigned long long *fnv, char *err, int errlen);
+
 #ifdef __cplusplus
 }
 #endif

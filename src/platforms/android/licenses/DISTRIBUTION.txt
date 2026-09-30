@@ -17,9 +17,10 @@ https://github.com/tgeczy/ssi263-speech
 
 The app also carries the Kotlin runtime (Apache License 2.0).
 
-The Blazie Braille Lite 2000's firmware in this app is not ours. It is
-shared with permission so the unit can speak again, and it will be removed
-if its rights holders ask. It is not covered by the licenses above.
+This app carries no Blazie Braille Lite 2000 firmware. You import your
+own copy, which stays in the app's storage on this device; the unit's
+battery-backed state is made from it here. The firmware is not ours and is
+not covered by the licenses above.
 
 Use Full licenses to read the included terms. Third-party components retain
 their own licenses.
