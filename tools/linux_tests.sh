@@ -44,5 +44,8 @@ check "chip defaults" python3 src/csrc/gen_chip_defaults.py --check
 check "speech-dispatcher module" python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 check "module CONTROL (no cancel, must fail)" ! env SD_SSI263_TEST_NO_CANCEL=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
+# the Python wheel: built from build/linux, installed into a fresh venv, the Braille Lite as the library directly
+check "Python wheel" python3 python/test_wheel.py --build "$DATA"
+check "Python wheel CONTROL (rate 70, must fail)" ! env WHEEL_TEST_BREAK=1 python3 python/test_wheel.py --build "$DATA"
 [ $fail -eq 0 ] && echo "all Linux checks passed ($PLAT)" || echo "Linux checks FAILED ($PLAT)"
 exit $fail

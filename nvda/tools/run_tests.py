@@ -121,6 +121,13 @@ if os.path.isfile(ANDROID_TEST):
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
     CHECKS.append(check("MAME 8085 core: CPU contract tests", [os.path.join(LIB, "test_i8085_contract.exe")]))
+# the Python wheel (python/): built from this tree's libraries, installed into a fresh venv, the chip audible and
+# deterministic and the Braille Lite byte for byte as bl.dll; its control (rate 70 asked for) must differ
+WHEEL_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "python", "test_wheel.py")
+if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
+    CHECKS.append(check("Python wheel (64-bit)", [PY, WHEEL_TEST, "--build", ENG]))
+    CHECKS.append(check("Python wheel CONTROL (rate 70, must fail)", [PY, WHEEL_TEST, "--build", ENG],
+                        env={"WHEEL_TEST_BREAK": "1"}, expect_fail=True))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail
