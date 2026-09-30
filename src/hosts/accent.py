@@ -63,11 +63,23 @@ class Stop(Exception):
 
 
 class Accent:
-    def __init__(self, dvc_path, chip=None, out_rate=44100, cpu_ips=5_000_000, log=None):
+    def __init__(self, dvc_path, chip=None, out_rate=44100, cpu_ips=5_000_000, log=None, core=None):
         self.chip = chip or SSI263(out_rate=out_rate)
         self.cpu_ips = cpu_ips
         self.log = log if log is not None else []
-        self.uc = uc = Uc(UC_ARCH_X86, UC_MODE_16)
+        # the CPU: Unicorn (the default), or -- opt-in, SSI263_ACCENT_CORE=mame -- MAME's 8086 (pc86.py), which
+        # takes the same calls; everything below (DOS, EMS, the card, the PIC) is the host's either way
+        self.core = core or os.environ.get("SSI263_ACCENT_CORE", "unicorn")
+        if self.core == "mame":
+            try:
+                from .pc86 import Pc86
+            except ImportError:
+                from hosts.pc86 import Pc86
+            self.uc = uc = Pc86()
+        elif self.core == "unicorn":
+            self.uc = uc = Uc(UC_ARCH_X86, UC_MODE_16)
+        else:
+            raise ValueError("SSI263_ACCENT_CORE: unicorn or mame, not %r" % self.core)
         uc.mem_map(0, 0x100000)
         data = open(dvc_path, "rb").read()
         h = struct.unpack_from("<14H", data)

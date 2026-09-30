@@ -11,7 +11,9 @@ The same two programs on MAME's Z180 core (../cpu/z180_mame.cpp, the corrected p
 ../cpu/README.md), for comparing the cores:
   bl_live_mame.exe, test_bl_board_mame.exe
 and the CPU contract's own tests on that core, test_z180_contract.exe; and those of MAME's 8085 core (the Accent
-SA's, ../cpu/i8085_mame.cpp), test_i8085_contract.exe.
+SA's, ../cpu/i8085_mame.cpp), test_i8085_contract.exe, and of MAME's 8086 (the Accent-mini's PC,
+../cpu/i86_mame.cpp), test_i86_contract.exe, with x64/ and x86/pc86.dll (../pc86) for the Accent-mini host's opt-in
+CPU (src/hosts/pc86.py, SSI263_ACCENT_CORE=mame).
 """
 import os
 import subprocess
@@ -54,7 +56,9 @@ def build_mame(gcc, env):
             ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"]),
             ("test_z180_contract", os.path.join(cpu, "test_z180_contract.c"), gcc, ["-O2", "-std=gnu89"]),
             ("i8085_mame", os.path.join(cpu, "i8085_mame.cpp"), gxx, MAME_CXX + ["-Wno-sign-compare"]),
-            ("test_i8085_contract", os.path.join(cpu, "test_i8085_contract.c"), gcc, ["-O2", "-std=gnu89"])):
+            ("test_i8085_contract", os.path.join(cpu, "test_i8085_contract.c"), gcc, ["-O2", "-std=gnu89"]),
+            ("i86_mame", os.path.join(cpu, "i86_mame.cpp"), gxx, MAME_CXX + ["-Wno-sign-compare"]),
+            ("test_i86_contract", os.path.join(cpu, "test_i86_contract.c"), gcc, ["-O2", "-std=gnu89"])):
         objs[name] = os.path.join(obj, name + ".o")
         subprocess.run([cc] + flags + inc + ["-c", "-o", objs[name], src], env=env, check=True)
     core = [objs["bl_board"], objs["flash29"], objs["z180_mame"], objs["z180_asci"]]
@@ -70,6 +74,26 @@ def build_mame(gcc, env):
     # MAME's 8085 core (the Accent SA's; no board yet): the CPU contract's tests, ../cpu/test_i8085_contract.c
     subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, "test_i8085_contract.exe"),
                                         objs["test_i8085_contract"], objs["i8085_mame"]], env=env, check=True)
+    # MAME's 8086 core (the Accent-mini's PC): the CPU contract's tests, ../cpu/test_i86_contract.c
+    subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, "test_i86_contract.exe"),
+                                        objs["test_i86_contract"], objs["i86_mame"]], env=env, check=True)
+
+
+def build_pc86(arch, bindir, env, extra):
+    """pc86.dll (../pc86: MAME's 8086 with 1 MB of flat memory) for src/hosts/pc86.py -- the Accent-mini host's
+    opt-in CPU (SSI263_ACCENT_CORE=mame).  Static: KERNEL32 and msvcrt only, as the other DLLs."""
+    cpu = os.path.join(os.path.dirname(HERE), "cpu")
+    pc86 = os.path.join(os.path.dirname(HERE), "pc86")
+    obj = os.path.join(OUT, "obj_pc86_" + arch)
+    os.makedirs(obj, exist_ok=True)
+    core_o, shim_o = os.path.join(obj, "i86_mame.o"), os.path.join(obj, "pc86.o")
+    subprocess.run([os.path.join(bindir, "g++.exe"), "-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti"] + extra
+                   + ["-Wall", "-Wno-sign-compare", "-I" + cpu, "-c", "-o", core_o, os.path.join(cpu, "i86_mame.cpp")],
+                   env=env, check=True)
+    subprocess.run([os.path.join(bindir, "gcc.exe"), "-O3", "-std=gnu89", "-Wall", "-I" + cpu] + extra
+                   + ["-c", "-o", shim_o, os.path.join(pc86, "pc86.c")], env=env, check=True)
+    subprocess.run([os.path.join(bindir, "g++.exe"), "-shared"] + MAME_LINK
+                   + ["-o", os.path.join(OUT, arch, "pc86.dll"), shim_o, core_o], env=env, check=True)
 
 
 def main():
@@ -100,6 +124,7 @@ def main():
                        + ["-o", os.path.join(out_dir, "bl.dll"), os.path.join(HERE, "bl_unity.c"),
                           os.path.join(HERE, "bl_host.c"), os.path.join(HERE, "bl_voice.c"),
                           os.path.join(HERE, "bl_firmware.c"), os.path.join(HERE, "bl_state.c"), chip_dll], env=env, check=True)
+        build_pc86(arch, bindir, env, extra)
     print("built %s" % OUT)
 
 

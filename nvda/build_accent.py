@@ -53,6 +53,9 @@ def main():
     copy_engine(ENGINE, eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "accent.py"), os.path.join(eng, "accent_host.py"))
     shutil.copy2(os.path.join(ENGINE, "hosts", "ucmini.py"), eng)
+    # MAME's 8086 in Unicorn's place: opt-in only (SSI263_ACCENT_CORE=mame, with SSI263_PC86_DLL naming pc86.dll,
+    # which the add-on does not carry); the module alone, so the tests can run the built add-on on it
+    shutil.copy2(os.path.join(ENGINE, "hosts", "pc86.py"), eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "accent_sa.py"), os.path.join(eng, "accent_sa_host.py"))
     shutil.copy2(os.path.join(ENGINE, "hosts", "i8085.py"), eng)
     os.makedirs(os.path.join(eng, "accent-sa"))
