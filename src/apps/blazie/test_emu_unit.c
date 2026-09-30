@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <process.h>
 #include "emu_unit.h"
 
 #define RATE 44100
@@ -91,12 +92,14 @@ int main(int argc, char **argv)
     snprintf(d, sizeof d, "10 s of unit in %.2f s (%.1fx real time)", secs, 10.0 / secs);
     check("faster than real time", secs < 5.0, d);
     {   /* switched off and on: the saved memory is the state format, and the unit boots from it and speaks */
-        char err[256], path[] = "test_emu_unit.saved.state";
-        emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+        char err[256], path[64];     /* per process: run_tests runs the bl and tns checks side by side */
+        emu_unit *u;
         short *buf = (short *)calloc(RATE, sizeof(short));
         FILE *f;
         long size = -1;
         double again;
+        snprintf(path, sizeof path, "test_emu_unit.%d.saved.state", (int)_getpid());
+        u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
         emu_render(u, buf, RATE);
         emu_key(u, g_kind == EMU_TYPE_N_SPEAK ? 0xBD : 0x01);
         emu_render(u, buf, RATE);
