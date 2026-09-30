@@ -399,6 +399,11 @@ int bl_key(bl_unit *u, int chord)
     return 1;
 }
 
+void bl_hold(bl_unit *u, int chord)
+{
+    u->hold_chord = chord & 0x7F;            /* bns.c's --hold */
+}
+
 unsigned long long bl_cycles(const bl_unit *u)
 {
     return z180_cycles(u->cpu);

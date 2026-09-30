@@ -169,3 +169,27 @@ void ssa_stop(ssa_engine *e)
 }
 
 int ssa_blocks(const ssa_engine *e) { return e->blocks; }
+
+long ssa_probe(const char *datadir, int voice, const char *utf8, unsigned long long *fnv, char *err, int errlen)
+{
+    ssa_settings s = {50, 50, 7, 100, 1};
+    ssa_engine *e = ssa_new(datadir);
+    short buf[4096];
+    unsigned long long h = 1469598103934665603ULL;
+    long samples = 0;
+    int n, i;
+    if (!e) { snprintf(err, errlen, "out of memory"); return -1; }
+    if (ssa_load(e, voice, err, errlen) != 0) { ssa_free(e); return -1; }
+    if (ssa_start(e, voice, utf8, &s, 100, 100) == 0)
+        while ((n = ssa_pull(e, buf, 4096)) > 0) {
+            for (i = 0; i < n; i++) {
+                unsigned v = (unsigned short)buf[i];
+                h = (h ^ (v & 0xFF)) * 1099511628211ULL;
+                h = (h ^ (v >> 8)) * 1099511628211ULL;
+            }
+            samples += n;
+        }
+    ssa_free(e);
+    if (fnv) *fnv = h;
+    return samples;
+}

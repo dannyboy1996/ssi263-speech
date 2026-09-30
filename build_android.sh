@@ -2,8 +2,8 @@
 # Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (z180emu's
 # Z180 core), the Braille Lite host and voice -- the same sources and flags as build_linux.sh -- plus the app's
 # front end (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle
-# packages prebuilt libraries.  Then it stages what the APK carries besides code: the unit's firmware (never in the
-# repository), the licences, and for z180emu's GPL the complete corresponding source.
+# packages prebuilt libraries.  Then it stages what the APK carries besides code: the licences, and for z180emu's GPL
+# the complete corresponding source.  Not the unit's firmware: the app's users import their own.
 #
 #   sh build_android.sh                  arm64-v8a, armeabi-v7a and x86_64
 #   sh build_android.sh arm64-v8a        one ABI
@@ -11,7 +11,8 @@
 #
 # Found from the environment first, then paths.local (the key of the same name), then the default:
 #   Z180EMU            a z180emu checkout (default third_party/z180emu)
-#   SSI263_FIRMWARE    the folder with BL2ENG.BNS + bl2_2003_warm.state, and BL2SPA.BNS + bl2spa_fresh.state for
+#   SSI263_FIRMWARE    only with SSI263_ANDROID_BUNDLE_FIRMWARE=1 (a developer build that carries the firmware):
+#                      the folder with BL2ENG.BNS + bl2_2003_warm.state, and BL2SPA.BNS + bl2spa_fresh.state for
 #                      the Spanish unit, there or in its spanish/ folder (default firmware/blazie)
 #   ANDROID_NDK_HOME   the NDK (default: the newest under $ANDROID_HOME/ndk or $ANDROID_SDK_ROOT/ndk)
 #
@@ -81,6 +82,8 @@ objects() {
     cc --target="$TARGET" $BOARD -c -o "$O/bl_unity.o" "$SRC/blazie/bl_unity.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_host.o" "$SRC/blazie/bl_host.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_voice.o" "$SRC/blazie/bl_voice.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_state.o" "$SRC/blazie/bl_state.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
 }
@@ -113,18 +116,24 @@ build_test() {
 stage_assets() {
     A="$OUT/assets"
     rm -rf "$A"
-    mkdir -p "$A/firmware" "$A/licenses" "$A/source"
-    for f in BL2ENG.BNS bl2_2003_warm.state; do
-        [ -f "$FW/$f" ] || { echo "missing firmware: $FW/$f (set SSI263_FIRMWARE)"; exit 1; }
-        cp "$FW/$f" "$A/firmware/"
-    done
-    # the Spanish unit, when both of its files are there
-    for d in "$FW" "$FW/spanish"; do
-        if [ -f "$d/BL2SPA.BNS" ] && [ -f "$d/bl2spa_fresh.state" ]; then
-            cp "$d/BL2SPA.BNS" "$d/bl2spa_fresh.state" "$A/firmware/"
-            break
-        fi
-    done
+    mkdir -p "$A/licenses" "$A/source"
+    # No firmware: the app is where it can NOT ship, so its users import their own (SettingsActivity).  A developer
+    # build may carry it, by asking: SSI263_ANDROID_BUNDLE_FIRMWARE=1 (never a release).
+    if [ "${SSI263_ANDROID_BUNDLE_FIRMWARE:-0}" = 1 ]; then
+        mkdir -p "$A/firmware"
+        for f in BL2ENG.BNS bl2_2003_warm.state; do
+            [ -f "$FW/$f" ] || { echo "missing firmware: $FW/$f (set SSI263_FIRMWARE)"; exit 1; }
+            cp "$FW/$f" "$A/firmware/"
+        done
+        # the Spanish unit, when both of its files are there
+        for d in "$FW" "$FW/spanish"; do
+            if [ -f "$d/BL2SPA.BNS" ] && [ -f "$d/bl2spa_fresh.state" ]; then
+                cp "$d/BL2SPA.BNS" "$d/bl2spa_fresh.state" "$A/firmware/"
+                break
+            fi
+        done
+        echo "DEVELOPER BUILD: the firmware is bundled; do not distribute this APK"
+    fi
     cp "$ROOT/src/platforms/android/licenses/"*.txt "$A/licenses/"
     cp "$ROOT/LICENSE" "$A/licenses/ssi263-speech-MIT.txt"
     cp "$Z180/COPYING" "$A/licenses/z180emu-GPL-2.0.txt"
@@ -139,10 +148,10 @@ stage_assets() {
         -C "$Z180_PARENT" "$Z180_NAME/z180" "$Z180_NAME/COPYING")
     cat > "$A/source/BUILD.txt" <<EOF
 libssi263speech.so was built with the Android NDK $(basename "$NDK") (clang, --target=<abi>-linux-android$API).
-Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, put the unit's firmware in
-firmware/blazie, then: sh build_android.sh, and in src/platforms/android: ./gradlew assembleDebug
+Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, then: sh build_android.sh, and
+in src/platforms/android: ./gradlew assembleDebug.  The firmware is not part of it: the app imports it.
 EOF
-    ls "$A/firmware"
+    ls -R "$A" | head -20
 }
 
 if [ "$1" = "--test" ]; then

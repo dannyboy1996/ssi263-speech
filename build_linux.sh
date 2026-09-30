@@ -36,6 +36,8 @@ $CC $CHIP -c -o "$OUT/obj/ssi263dsp.o" "$SRC/ssi263dsp.c"
 $CC $BOARD -c -o "$OUT/obj/bl_unity.o" "$SRC/blazie/bl_unity.c"
 $CC $BOARD -c -o "$OUT/obj/bl_host.o" "$SRC/blazie/bl_host.c"
 $CC $BOARD -c -o "$OUT/obj/bl_voice.o" "$SRC/blazie/bl_voice.c"
+$CC $BOARD -c -o "$OUT/obj/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
+$CC $BOARD -c -o "$OUT/obj/bl_state.o" "$SRC/blazie/bl_state.c"
 
 # only the API is exported (SSI263_API / BL_API mark it); the Z180 core's globals stay inside
 $CC -shared -o "$OUT/libssi263speech.so" "$OUT"/obj/*.o -lm

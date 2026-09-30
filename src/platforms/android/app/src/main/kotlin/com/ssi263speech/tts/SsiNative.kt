@@ -42,4 +42,38 @@ object SsiNative {
 
     /** The synthesis thread, after a stop: the unit drops what it has not spoken, so the next utterance is clean. */
     external fun nativeCancel()
+
+    /** Let the engine go, so the next [nativeOpen] reads the unit's files afresh (after an import or a removal). */
+    external fun nativeClose()
+
+    // ---- the firmware import (bl_firmware.h, bl_state.h, ssa_probe) ------------------------------------------------
+
+    const val FW_OTHER = 2
+    const val FW_NONE = -1
+    const val FW_REFUSED = -2
+
+    /** Find the Braille Lite ROM image in these bytes by its content and write it to `out` as a .BNS: [ENGLISH] or
+     * [SPANISH] for the releases the voice ships for, [FW_OTHER] for another the voice can run; [FW_NONE] when there
+     * is no firmware in them, [FW_REFUSED] when it is not firmware the voice can run -- the reason in
+     * [nativeImportError]. */
+    external fun nativeImportFirmware(data: ByteArray, out: String): Int
+
+    /** [ENGLISH] or [SPANISH] when the bytes are the state the voice ships with for that release, else -1. */
+    external fun nativeStateLanguage(data: ByteArray): Int
+
+    /** Make the unit's state from its firmware, as the shipped one was made: 1, or 0 with the reason in
+     * [nativeImportError].  Seconds long: never on the main thread. */
+    external fun nativeMakeState(firmware: String, language: Int, out: String): Int
+
+    /** How far [nativeMakeState] has come, 0..1; any thread. */
+    external fun nativeStateProgress(): Double
+
+    /** Any thread: [nativeMakeState] stops at its next report and fails with "cancelled". */
+    external fun nativeStateCancel()
+
+    /** Boot the voice's unit from the files in `dir` and speak the text: the samples (0 when it stays silent), or -1
+     * with the reason in [nativeImportError]. */
+    external fun nativeProbe(dir: String, voice: Int, utf8: ByteArray): Long
+
+    external fun nativeImportError(): String
 }

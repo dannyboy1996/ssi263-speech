@@ -1,14 +1,23 @@
 // The app's screen, laid out as outspoken's: two pages behind two plain buttons (a tab bar is hard to hit on a small
-// screen, and TalkBack reads a selected/unselected button pair well).  Setup: what this is, a preview, the way to the
-// system's TTS settings, the licences and source.  Voice settings: the voice and the unit's own settings.
+// screen, and TalkBack reads a selected/unselected button pair well).  Setup: what this is, the firmware import, a
+// preview, the way to the system's TTS settings, the licences and source.  Voice settings: the voice and the unit's
+// own settings.
 package com.ssi263speech.tts
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.StatFs
 import android.provider.Settings
+import android.util.Log
+import android.widget.ProgressBar
+import java.io.File
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -31,6 +40,14 @@ class SettingsActivity : Activity() {
     private lateinit var voiceTab: Button
     private var pages: List<View> = emptyList()
     private var voiceButton: Button? = null
+    private lateinit var firmwareStatus: TextView
+    private lateinit var importStatus: TextView
+    private lateinit var removeButton: Button
+    private var importDialog: AlertDialog? = null
+    private var importBar: ProgressBar? = null
+    private var importMessage: TextView? = null
+    private var importAnnounced = -1
+    private val ticker = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +96,30 @@ class SettingsActivity : Activity() {
                 intent.getFloatExtra("rate", 1f), intent.getFloatExtra("pitch", 1f),
                 intent.getBooleanExtra("aloud", false), intent.getIntExtra("stop", 0)).run()
         }
+
+        // An import already running -- this screen was rebuilt underneath it -- shows its progress again.
+        // Otherwise, the adb route, as outspoken's: `am start ... --es import /path/to/file` (or a content: URI)
+        // imports without the confirm dialog, typing the command being the consent; `--es language en|es` answers
+        // the question an unknown release asks.  `--ez removefirmware true` removes what was imported.
+        SsiImport.job?.let { attachImport(it) } ?: intent?.getStringExtra("import")?.let { arg ->
+            val source = if (arg.startsWith("content:") || arg.startsWith("file:"))
+                SsiImport.source(this, Uri.parse(arg)) else SsiImport.source(File(arg))
+            importFrom(source, confirm = false, language = intent.getStringExtra("language"))
+        }
+        if (intent?.getBooleanExtra("removefirmware", false) == true) removeFirmware(confirm = false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshStatus()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_FIRMWARE) return
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) { importStatus.text = "No file chosen."; return }
+        importFrom(SsiImport.source(this, uri), confirm = true, language = null)
     }
 
     override fun onSaveInstanceState(out: Bundle) {
@@ -88,6 +129,9 @@ class SettingsActivity : Activity() {
 
     override fun onDestroy() {
         PreviewPlayer.stop()
+        SsiImport.job?.listener = null
+        ticker.removeCallbacksAndMessages(null)
+        importDialog?.dismiss(); importDialog = null
         super.onDestroy()
     }
 
@@ -126,6 +170,21 @@ class SettingsActivity : Activity() {
             "reading and the inflection are the firmware's own, live; nothing is recorded. It is the same voice " +
             "as the NVDA add-on and the Linux module, byte for byte."))
 
+        root.addView(ui.heading("Firmware"))
+        root.addView(ui.body(
+            "The firmware is Blazie's and cannot come with this app: import your own copy. Choose the Braille " +
+            "Lite 2000's update program (such as blt2000.exe), the BL2ENG.BNS (English) or BL2SPA.BNS (Spanish) " +
+            "inside it, a zip holding them, or the NVDA add-on (.nvda-addon), which carries both. This phone " +
+            "then prepares the unit once, as the add-on's was prepared: a few seconds for English, about a " +
+            "minute for Spanish. The files stay in this app's protected storage."))
+        firmwareStatus = ui.body("")
+        root.addView(firmwareStatus)
+        root.addView(Button(this).apply { text = "Import firmware…"; setOnClickListener { pickFile() } })
+        removeButton = Button(this).apply { text = "Remove firmware…"; setOnClickListener { removeFirmware(true) } }
+        root.addView(removeButton)
+        importStatus = ui.body("")
+        root.addView(importStatus)
+
         root.addView(ui.heading("Status"))
         status = ui.body("")
         root.addView(status)
@@ -151,16 +210,189 @@ class SettingsActivity : Activity() {
         root.addView(ui.body(
             "This app is free software under the GNU General Public License, version 2 or later, because it " +
             "carries z180emu. Its complete source is inside the app and at github.com/tgeczy/ssi263-speech. The " +
-            "Braille Lite's firmware is shared with permission and is not covered by that license."))
+            "app carries no Braille Lite firmware: the copy you import is Blazie's, is not covered by that " +
+            "license, and never leaves this phone."))
         root.addView(Button(this).apply { text = "Licenses and source"; setOnClickListener { showLicenses() } })
     }
 
     private fun refreshStatus() {
         val voices = SsiEngine.voices(this)
-        status.text = if (voices.isEmpty()) "This build carries no Braille Lite firmware, so it cannot speak."
+        val labels = listOf(SsiNative.ENGLISH, SsiNative.SPANISH).mapNotNull { SsiData.label(this, it) }
+        firmwareStatus.text = if (labels.isEmpty()) "No firmware imported."
+            else labels.joinToString("\n") { "$it, imported." }
+        removeButton.isEnabled = labels.isNotEmpty()
+        status.text = if (voices.isEmpty()) "No voice can speak until firmware is imported."
             else "Voices: " + voices.joinToString(", ") { it.label } + "."
         speakButton.isEnabled = voices.isNotEmpty()
+        voiceButton?.text = "Voice: " + SsiEngine.voiceFor(this, SsiSettings.snapshot(this).voice).label
     }
+
+    // ---- the firmware import (FirmwareImport.kt, SsiImport.kt), as outspoken's zip import ------------------------
+
+    /** The system's file picker, on any file: firmware comes as .BNS, .exe, .zip and .nvda-addon alike. */
+    private fun pickFile() {
+        if (SsiImport.job != null) { toast("An import is already running."); return }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        try { startActivityForResult(intent, REQUEST_FIRMWARE) }
+        catch (e: ActivityNotFoundException) {
+            AlertDialog.Builder(this).setTitle("No file picker on this device")
+                .setMessage("This device has no file picker, so there is no way to choose the firmware on it.")
+                .setPositiveButton("Close", null).show()
+        }
+    }
+
+    /** Read what the source holds, say what will happen, and -- with `confirm`, once OK is pressed -- do it. */
+    private fun importFrom(source: SsiImport.Source, confirm: Boolean, language: String?) {
+        if (SsiImport.job != null) { toast("An import is already running."); return }
+        importStatus.text = "Checking ${source.name}…"
+        val checking = AlertDialog.Builder(this).setTitle("Checking the file")
+            .setMessage("Looking for Braille Lite firmware in ${source.name}…").setCancelable(false).create()
+            .also { it.show() }
+        Thread({
+            val plan = try { SsiImport.inspect(this, source) }
+                catch (e: Exception) { FirmwareImport.Plan(emptyList(), "${source.name} could not be read: ${e.message}") }
+            runOnUiThread {
+                checking.dismiss()
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val free = try { StatFs(filesDir.absolutePath).availableBytes } catch (e: Exception) { -1L }
+                val refusal = plan.refusal ?: if (free in 0 until (16L shl 20))
+                    "Not enough room: the firmware and the unit's state need about 3 MB, and this device has " +
+                    "${free shr 10} KB free." else null
+                if (refusal != null) {
+                    importStatus.text = "Not imported."
+                    Log.i("SsiImport", "refused ${source.name}: $refusal")
+                    AlertDialog.Builder(this).setTitle("Cannot import ${source.name}").setMessage(refusal)
+                        .setPositiveButton("Close", null).show()
+                    return@runOnUiThread
+                }
+                when {
+                    !plan.needsLanguage -> confirmImport(source, plan, SsiNative.ENGLISH, confirm)
+                    language == "en" || language == "es" ->
+                        confirmImport(source, plan, if (language == "es") SsiNative.SPANISH else SsiNative.ENGLISH, confirm)
+                    else -> AlertDialog.Builder(this).setTitle("Which unit is this firmware for?")
+                        .setItems(arrayOf("English", "Spanish")) { _, which ->
+                            confirmImport(source, plan, if (which == 1) SsiNative.SPANISH else SsiNative.ENGLISH, true)
+                        }
+                        .setNegativeButton("Cancel") { _, _ -> importStatus.text = "Not imported." }.show()
+                }
+            }
+        }, "ssi263-inspect").start()
+    }
+
+    private fun confirmImport(source: SsiImport.Source, plan: FirmwareImport.Plan, choice: Int, confirm: Boolean) {
+        val lines = plan.found.map { f ->
+            val language = if (f.language == FirmwareImport.OTHER) choice else f.language
+            val name = FirmwareImport.languageName(language)
+            (if (f.language == FirmwareImport.OTHER)
+                "Will import ${f.from} as the $name unit. It is not a release this app knows, so it is checked by " +
+                "making it speak before it replaces anything."
+            else "Will import ${f.label} (from ${f.from}).") +
+            (if (f.state == null) " The unit is then prepared on this phone, " +
+                (if (language == SsiNative.SPANISH) "which takes about a minute." else "which takes a few seconds.")
+             else "") +
+            (if (SsiData.has(this, language)) " The $name firmware already here will be replaced." else "")
+        }
+        val message = (lines + plan.notes).joinToString("\n\n")
+        if (!confirm) { startImport(plan, choice); return }
+        AlertDialog.Builder(this).setTitle("Import the firmware?").setMessage(message)
+            .setPositiveButton("OK") { _, _ -> startImport(plan, choice) }
+            .setNegativeButton("Cancel") { _, _ -> importStatus.text = "Not imported." }
+            .show()
+    }
+
+    private fun startImport(plan: FirmwareImport.Plan, choice: Int) {
+        val job = SsiImport.Job(plan, choice)
+        SsiImport.job = job
+        attachImport(job)
+        job.start(this)
+    }
+
+    /** Show a running import's progress on this screen, whichever screen instance this is. */
+    private fun attachImport(job: SsiImport.Job) {
+        importDialog?.dismiss()
+        val box = ui.column()
+        importMessage = ui.body("Importing the firmware…").also { box.addView(it) }
+        importBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            contentDescription = "Import progress"
+            box.addView(this)
+        }
+        box.addView(ui.body("Keep the app open until it finishes."))
+        importDialog = AlertDialog.Builder(this).setTitle("Importing the firmware").setView(box).setCancelable(false)
+            .setNegativeButton("Cancel") { _, _ -> job.cancel(); importStatus.text = "Cancelling…" }
+            .create().also { it.show() }
+        importAnnounced = -1
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        job.listener = { j -> runOnUiThread { showImportProgress(j) } }
+        tick(job)
+    }
+
+    /** The state is made in native code that reports how far it is, so the screen asks four times a second. */
+    private fun tick(job: SsiImport.Job) {
+        showImportProgress(job)
+        if (job.result == null) ticker.postDelayed({ tick(job) }, 250)
+    }
+
+    private fun showImportProgress(job: SsiImport.Job) {
+        if (isFinishing || isDestroyed || SsiImport.job !== job) return
+        if (job.result != null) { finishImport(job); return }
+        val permille = (job.progress() * 1000).toInt().coerceIn(0, 1000)
+        importBar?.progress = permille
+        importMessage?.text = "${job.step.ifEmpty { "Importing the firmware" }}… ${permille / 10}%"
+        // A screen reader hears the dialog once; the percentage moving is silent unless said. Every fifth will do.
+        val fifth = permille / 200
+        if (fifth != importAnnounced && fifth in 1..4) {
+            importAnnounced = fifth
+            try { importMessage?.announceForAccessibility("${fifth * 20} percent") } catch (e: Throwable) {}
+        }
+    }
+
+    private fun finishImport(job: SsiImport.Job) {
+        job.listener = null
+        SsiImport.job = null
+        ticker.removeCallbacksAndMessages(null)
+        importDialog?.dismiss(); importDialog = null
+        window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val result = job.result ?: return
+        result.onSuccess { labels ->
+            refreshStatus()
+            importStatus.text = "Imported ${labels.joinToString(" and ")}. The voice speaks now."
+            Log.i("SsiImport", importStatus.text.toString())
+            try { importStatus.announceForAccessibility(importStatus.text) } catch (e: Throwable) {}
+        }.onFailure { e ->
+            refreshStatus()
+            if (e is SsiImport.Cancelled) {
+                importStatus.text = "Import cancelled. Nothing was changed."
+            } else {
+                Log.e("SsiImport", "import failed", e)
+                importStatus.text = "Import failed. Nothing was changed."
+                AlertDialog.Builder(this).setTitle("Import failed").setMessage(e.message ?: e.toString())
+                    .setPositiveButton("Close", null).show()
+            }
+            try { importStatus.announceForAccessibility(importStatus.text) } catch (e: Throwable) {}
+        }
+    }
+
+    private fun removeFirmware(confirm: Boolean) {
+        if (SsiImport.job != null) { toast("An import is running."); return }
+        val remove = {
+            PreviewPlayer.stop()
+            SsiData.remove(this)
+            refreshStatus()
+            importStatus.text = "The firmware was removed. The voice cannot speak until it is imported again."
+            try { importStatus.announceForAccessibility(importStatus.text) } catch (e: Throwable) {}
+        }
+        if (!confirm) { remove(); return }
+        AlertDialog.Builder(this).setTitle("Remove the firmware?")
+            .setMessage("The voice cannot speak until you import the firmware again.")
+            .setPositiveButton("Remove") { _, _ -> remove() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
+    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
     private fun speak() {
         val text = sampleText.text.toString().ifBlank { "Hello there." }
@@ -210,11 +442,12 @@ class SettingsActivity : Activity() {
         fun put(key: String, v: Boolean) = p.edit().putBoolean(key, v).apply()
 
         val voiceLabel = ui.heading("Voice").also { root.addView(it) }
-        val voices = SsiEngine.voices(this)
         voiceButton = Button(this).apply {
             id = View.generateViewId()
             text = "Voice: " + SsiEngine.voiceFor(this@SettingsActivity, s.voice).label
             setOnClickListener {
+                val voices = SsiEngine.voices(this@SettingsActivity)     // what is imported now
+                if (voices.isEmpty()) { toast("No firmware imported: import it on the Setup page."); return@setOnClickListener }
                 val at = voices.indexOfFirst { it.index == SsiSettings.snapshot(this@SettingsActivity).voice }
                 AlertDialog.Builder(this@SettingsActivity).setTitle("Voice")
                     .setSingleChoiceItems(voices.map { it.label }.toTypedArray(), at) { dialog, which ->
@@ -267,4 +500,6 @@ class SettingsActivity : Activity() {
         root.addView(ui.body("Inflection, the idle sound and the sample rate restart the unit on the next " +
             "utterance, which takes a moment."))
     }
+
+    private companion object { const val REQUEST_FIRMWARE = 42 }
 }

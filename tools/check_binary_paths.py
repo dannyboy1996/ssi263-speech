@@ -54,7 +54,7 @@ def main():
         env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
         r = subprocess.run([os.path.join(bindir, "gcc.exe")] + B.DLL_FLAGS
                            + ["-I.", "-Iz180", "-o", "bl.dll", "blazie/bl_unity.c", "blazie/bl_host.c",
-                              "blazie/bl_voice.c", "ssi263.dll"], cwd=d, env=env, capture_output=True, text=True)
+                              "blazie/bl_voice.c", "blazie/bl_firmware.c", "blazie/bl_state.c", "ssi263.dll"], cwd=d, env=env, capture_output=True, text=True)
         ok = r.returncode == 0
         tools = os.path.join(REPO, "nvda", "tools")
         for lang in ("en", "es") if ok else ():

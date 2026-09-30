@@ -223,6 +223,7 @@ def main():
     try:
         data = data_folder(a.firmware, tmp)
         want = reference(load_reference(a.lib, a.chip), data)
+        want["probe"] = want["default"]            # ssa_probe: a fresh unit speaks the first case as it did
         bad = compare("desktop", run_desktop(build_desktop(), data), want)
         if a.adb:
             bad += compare("device", run_adb(a.abi, data), want)
