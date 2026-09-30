@@ -2606,7 +2606,7 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 				if (!ZF && m_regs.w[CX])
 				{
 					m_ip = m_ip + disp;
-					CLK(LOOP_T);
+					m_icount -= 19;   // CHANGED: LOOPNE taken 19 ("19 or 5", printed 2-60/PDF 83); upstream LOOP's 17.  Not taken: LOOP's 5, as upstream
 				}
 				else
 					CLK(LOOP_NT);
@@ -2922,7 +2922,10 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 					tmp &= fetch();
 					m_CarryVal = m_OverVal = 0;
 					set_SZPF_Byte(tmp);
-					CLKM(ALU_RI8,ALU_MI8_RO);
+					if (m_modrm >= 0xc0)
+						m_icount -= 5;   // CHANGED: TEST r8,imm 5 (printed 2-67/PDF 90); upstream the ALU's reg,imm 4 (TEST AL/AX,imm keeps its own 4)
+					else
+						m_icount -= 11;   // CHANGED: TEST m8,imm 11 + EA (printed 2-67/PDF 90); upstream CMP's mem,imm 10 + EA
 					break;
 				case 0x10:  /* NOT */
 					PutbackRMByte(~tmp);
@@ -2945,7 +2948,7 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 				case 0x28:  /* IMUL */
 					result = (int16_t)((int8_t)m_regs.b[AL])*(int16_t)((int8_t)tmp);
 					m_regs.w[AX] = (uint16_t)result;
-					m_CarryVal = m_OverVal = (m_regs.b[AH]!=0) ? 1 : 0;
+					m_CarryVal = m_OverVal = (result < -128 || result > 127) ? 1 : 0;   // CHANGED: IMUL r/m8: set when the product does not fit a signed byte, AH not AL's sign extension (printed 2-37/PDF 60); upstream AH != 0
 					set_ZF(m_regs.w[AX]);
 					CLKM(IMUL_R8,IMUL_M8);
 					break;
@@ -3017,7 +3020,10 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 					tmp &= tmp2;
 					m_CarryVal = m_OverVal = 0;
 					set_SZPF_Word(tmp);
-					CLKM(ALU_RI16,ALU_MI16_RO);
+					if (m_modrm >= 0xc0)
+						m_icount -= 5;   // CHANGED: TEST r16,imm 5 (printed 2-67/PDF 90); upstream the ALU's reg,imm 4 (TEST AL/AX,imm keeps its own 4)
+					else
+						m_icount -= 11;   // CHANGED: TEST m16,imm 11 + EA (printed 2-67/PDF 90); upstream CMP's mem,imm 10 + EA
 					break;
 				case 0x10:  /* NOT */
 					PutbackRMWord(~tmp);
@@ -3042,7 +3048,7 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 					result = (int32_t)((int16_t)m_regs.w[AX]) * (int32_t)((int16_t)tmp);
 					m_regs.w[AX] = result & 0xffff;
 					m_regs.w[DX] = result >> 16;
-					m_CarryVal = m_OverVal = (m_regs.w[DX] != 0) ? 1 : 0;
+					m_CarryVal = m_OverVal = (result < -32768 || result > 32767) ? 1 : 0;   // CHANGED: IMUL r/m16: set when the product does not fit a signed word, DX not AX's sign extension (printed 2-37/PDF 60); upstream DX != 0
 					set_ZF(m_regs.w[AX] | m_regs.w[DX]);
 					CLKM(IMUL_R16,IMUL_M16);
 					break;

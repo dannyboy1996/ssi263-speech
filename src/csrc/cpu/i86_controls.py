@@ -2,7 +2,7 @@
 (i86_mame.cpp), a named change of the extraction, or an upstream rule the contract relies on (i86_mame_machine.cpp)
 -- in a temporary copy, and exactly that rule's tests must then fail.  Proves the tests see what they claim to (the
 repo's rule for any fix claim).  The runner guard (exit code, summary line, the full test inventory) is
-contract_controls.py's.  Not in run_tests: some sixty C++ builds (in parallel) take a few minutes.
+contract_controls.py's.  Not in run_tests: some seventy-five C++ builds (in parallel) take a few minutes.
 
     python src/csrc/cpu/i86_controls.py
 """
@@ -35,7 +35,8 @@ VARIANTS = {
         DRV, "    c->pc = i86_linear(d);                // A's callbacks see where execution resumes\n", "",
         ["intr_vector"]),
     "a prefix and its instruction are one step": (
-        DRV, "        if (!m_seg_prefix_next)\n            break;", "        break;", ["prefix_atomic", "rep_iteration"]),
+        DRV, "        if (!m_seg_prefix_next)\n            break;", "        break;",
+        ["prefix_atomic", "rep_iteration", "wait_prefixed"]),
     "the seam only for the instruction's": (
         DRV, "    if (!m_in_instruction || !m_bus->intercept || int_num < 0)",
         "    if (!m_bus->intercept || int_num < 0)", ["hw_not_offered", "trap"]),
@@ -60,21 +61,22 @@ VARIANTS = {
              "or ended the slice)\n\t\t\tif (m_test_state == 0)\n\t\t\t\twait_hold();   // CHANGED: TEST inactive: IP "
              "back on the WAIT, the next step rechecks (upstream ended the slice)",
         "\t\t\tif (m_test_state == 0)\n\t\t\t{\n\t\t\t\tm_icount = 0;\n\t\t\t\tm_ip--;\n\t\t\t}\n\t\t\telse\n"
-        "\t\t\t\tCLK(WAIT);", ["wait", "wait_interrupt"]),
+        "\t\t\t\tCLK(WAIT);", ["wait", "wait_interrupt", "wait_prefixed"]),
     "WAIT's entry 3 (not a flat 5)": (
         HPP, "        m_icount -= m_wait_continue ? (int)I86_WAIT_RECHECK_T : m_timing[WAIT];",
-        "        m_icount -= (int)I86_WAIT_RECHECK_T;", ["wait", "wait_interrupt"]),
+        "        m_icount -= (int)I86_WAIT_RECHECK_T;", ["wait", "wait_interrupt", "wait_prefixed"]),
     "WAIT's recheck 5 (not the entry's 3 again)": (
         HPP, "        m_icount -= m_wait_continue ? (int)I86_WAIT_RECHECK_T : m_timing[WAIT];",
-        "        m_icount -= m_timing[WAIT];", ["wait", "wait_interrupt"]),
+        "        m_icount -= m_timing[WAIT];", ["wait", "wait_interrupt", "wait_prefixed"]),
     "WAIT holds IP while TEST is inactive": (
-        HPP, "        m_ip--;                           // upstream's: IP back on the WAIT\n", "",
-        ["wait", "wait_interrupt"]),
+        HPP, "        m_ip--;                           // upstream's: IP back on the WAIT -- on its 9Bh byte, after "
+             "any prefix: a\n", "",
+        ["wait", "wait_interrupt", "wait_prefixed"]),
     "a recheck recognised": (
         DRV, "    m_wait_continue = m_wait_pending && start == m_wait_at;", "    m_wait_continue = false;",
-        ["wait", "wait_interrupt"]),
+        ["wait", "wait_interrupt", "wait_prefixed"]),
     "an interrupted WAIT is entered again": (
-        DRV, "    m_wait_pending = false;\n", "", ["wait_interrupt"]),
+        DRV, "    m_wait_pending = false;\n", "", ["wait_interrupt", "wait_prefixed"]),
     # upstream rules the contract states
     "MOV sreg shadow": (
         GEN, "\t\t\tm_no_interrupt = 1; // Disable IRQ after load segment register.", "", ["ss_shadow", "trap_ss"]),
@@ -98,9 +100,9 @@ VARIANTS = {
     "INT 3 52": (GEN, "\t\t52,51, 4,53, /* INTs */", "\t\t 2,51, 4,53, /* INTs */", ["int_costs"]),
     "INTO taken 53": (GEN, "\t\t52,51, 4,53, /* INTs */", "\t\t52,51, 4, 2, /* INTs */", ["int_costs"]),
     "IRET 24": (GEN, "\t51,24,          /* exception, IRET */", "\t51,32,          /* exception, IRET */",
-                ["int_iret", "odd_word", "rep_iteration", "wait_interrupt"]),
+                ["int_iret", "odd_word", "rep_iteration", "wait_interrupt", "wait_prefixed"]),
     "IRET charges no POPF": (GEN, "\t\t\tm_icount += m_timing[POPF];   // CHANGED", "\t\t\t//",
-                             ["int_iret", "odd_word", "rep_iteration", "wait_interrupt"]),
+                             ["int_iret", "odd_word", "rep_iteration", "wait_interrupt", "wait_prefixed"]),
     "NOP 3": (GEN, "\t\t2,16, 2, 3, 3,11,   /* misc */", "\t\t2,16, 2, 2, 3,11,   /* misc */",
               ["accept_costs", "rep_counts", "tstates", "wait", "wait_interrupt"]),
     "LOCK 2": (GEN, "\t\t\tCLK(OVERRIDE);   // CHANGED: LOCK", "\t\t\tCLK(NOP);   // (undone) LOCK", ["tstates"]),
@@ -124,11 +126,12 @@ VARIANTS = {
     "the continuation recognised": (DRV, "    if (m_rep_ran && m_ip == m_prev_ip) {", "    if (0) {",
                                     ["rep_counts", "rep_iteration"]),
     "INTR 61": (DRV, "            m_icount -= I86_INTR_T;\n", "",
-                ["accept_costs", "intr_vector", "rep_iteration", "wait_interrupt"]),
+                ["accept_costs", "intr_vector", "rep_iteration", "wait_interrupt", "wait_prefixed"]),
     "NMI 50": (DRV, "            m_icount -= I86_NMI_T;\n", "", ["accept_costs"]),
     "the trap 50": (DRV, "            m_icount -= I86_TRAP_T;\n", "", ["accept_costs"]),
     "odd word 4": (HPP, "if (addr & 1) m_icount -= I86_ODD_WORD_T;", "(void)addr;",
-                   ["odd_word", "port_counts", "return_counts", "stack_counts", "word_memory_counts"]),
+                   ["odd_word", "port_counts", "return_counts", "stack_counts", "test_imm_counts",
+                    "word_memory_counts"]),
     # the 8086's own rows (Astra, Reply 106): each number put back to upstream's 8088-flavoured one alone
     "PUSH r16 11": (GEN, "\t11,16,10,10,    /* pushes */", "\t15,16,10,10,    /* pushes */", ["stack_counts"]),
     "PUSH mem 16": (GEN, "\t11,16,10,10,    /* pushes */", "\t11,24,10,10,    /* pushes */", ["stack_counts"]),
@@ -156,6 +159,37 @@ VARIANTS = {
     "IMUL m16 134": (GEN, "\t80,128,86,134,  /* IMUL */", "\t80,128,86,138,  /* IMUL */", ["word_memory_counts"]),
     "DIV m16 150": (GEN, "\t80,144,86,150,  /* DIV */", "\t80,144,86,154,  /* DIV */", ["word_memory_counts"]),
     "IDIV m16 171": (GEN, "\t101,165,107,171,/* IDIV */", "\t101,165,107,175,/* IDIV */", ["word_memory_counts"]),
+    # Astra's Reply 110: three more rows, each substitution undone alone (upstream's charge back), and the rows they
+    # must NOT move -- TEST AL/AX,imm (A8/A9) keeps its own 4, so a blanket 4 -> 5 fails
+    "LOOPNE taken 19": (GEN, "\t\t\t\t\tm_icount -= 19;   // CHANGED: LOOPNE taken 19",
+                        "\t\t\t\t\tCLK(LOOP_T);   // (undone) LOOPNE taken 19", ["loopne_counts"]),
+    "TEST r8,imm 5": (GEN, "\t\t\t\t\t\tm_icount -= 5;   // CHANGED: TEST r8,imm 5",
+                      "\t\t\t\t\t\tCLK(ALU_RI8);   // (undone) TEST r8,imm 5", ["test_imm_counts"]),
+    "TEST r16,imm 5": (GEN, "\t\t\t\t\t\tm_icount -= 5;   // CHANGED: TEST r16,imm 5",
+                       "\t\t\t\t\t\tCLK(ALU_RI16);   // (undone) TEST r16,imm 5", ["test_imm_counts"]),
+    "TEST m8,imm 11 + EA": (GEN, "\t\t\t\t\t\tm_icount -= 11;   // CHANGED: TEST m8,imm 11 + EA",
+                            "\t\t\t\t\t\tCLK(ALU_MI8_RO);   // (undone) TEST m8,imm 11 + EA", ["test_imm_counts"]),
+    "TEST m16,imm 11 + EA": (GEN, "\t\t\t\t\t\tm_icount -= 11;   // CHANGED: TEST m16,imm 11 + EA",
+                             "\t\t\t\t\t\tCLK(ALU_MI16_RO);   // (undone) TEST m16,imm 11 + EA", ["test_imm_counts"]),
+    "TEST AL,imm (A8) keeps its own 4": (GEN, "\t\t\tDEF_ald8();\n\t\t\tANDB();\n\t\t\tCLK(ALU_RI8);",
+                                         "\t\t\tDEF_ald8();\n\t\t\tANDB();\n\t\t\tm_icount -= 5;   // (a blanket 5)",
+                                         ["test_imm_counts"]),
+    "TEST AX,imm (A9) keeps its own 4": (GEN, "\t\t\tDEF_axd16();\n\t\t\tANDX();\n\t\t\tCLK(ALU_RI16);",
+                                         "\t\t\tDEF_axd16();\n\t\t\tANDX();\n\t\t\tm_icount -= 5;   // (a blanket 5)",
+                                         ["test_imm_counts"]),
+    # IMUL's CF and OF (Reply 110): each width's substitution undone alone, upstream's MUL-style test back
+    "IMUL r/m8's CF and OF": (GEN, "m_CarryVal = m_OverVal = (result < -128 || result > 127) ? 1 : 0;   // CHANGED",
+                              "m_CarryVal = m_OverVal = (m_regs.b[AH]!=0) ? 1 : 0;   // (undone) CHANGED",
+                              ["imul_flags_byte"]),
+    "IMUL r/m16's CF and OF": (GEN,
+                               "m_CarryVal = m_OverVal = (result < -32768 || result > 32767) ? 1 : 0;   // CHANGED",
+                               "m_CarryVal = m_OverVal = (m_regs.w[DX] != 0) ? 1 : 0;   // (undone) CHANGED",
+                               ["imul_flags_word"]),
+    # the prefixed WAIT's reproducer (Reply 110) sees where a waiting WAIT restarts: a variant that puts IP back on
+    # the first prefix instead (NOT a proposed fix -- the 8086's own retention is not established) fails it alone
+    "(reproducer) a prefixed WAIT restarts at its WAIT byte": (
+        HPP, "        m_ip--;                           // upstream's: IP back on the WAIT",
+        "        m_ip = m_prev_ip;                 // (variant) back on the first prefix", ["wait_prefixed"]),
 }
 
 CXX = ["-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti"]

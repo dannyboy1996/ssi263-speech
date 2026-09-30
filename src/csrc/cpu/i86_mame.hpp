@@ -158,7 +158,9 @@ public:
     }
     void wait_hold()
     {
-        m_ip--;                           // upstream's: IP back on the WAIT
+        m_ip--;                           // upstream's: IP back on the WAIT -- on its 9Bh byte, after any prefix: a
+                                          // prefixed WAIT rechecks and is interrupted without it (a documented
+                                          // limitation, not a hardware claim: test wait_prefixed; Reply 110)
         m_wait_pending = true;
         m_wait_at = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
     }

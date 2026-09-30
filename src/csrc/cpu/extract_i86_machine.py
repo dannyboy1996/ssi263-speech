@@ -15,7 +15,8 @@ against is i86_mame.hpp.
 
 The clock counts the substitutions correct come from Intel's manual (Astra, Replies 104 and 106; CONTRACT.md 4): each
 is its own named substitution, so i86_controls.py can put one back alone and see exactly its tests fail.  After
-Reply 106 every row is the 8086's (one CPU, no 8088 rows), and WAIT is Intel's 3 + 5n.
+Reply 106 every row is the 8086's (one CPU, no 8088 rows), and WAIT is Intel's 3 + 5n.  Reply 110 adds three rows
+(LOOPNE taken, TEST reg,imm and mem,imm) and one defined-flag correction: IMUL's CF and OF, byte and word.
 """
 import hashlib
 import os
@@ -177,6 +178,47 @@ SUBS = [
      "\t101,165,107,171,/* IDIV */   // CHANGED: IDIV m16 171 + EA, the low end of (171-190) + EA (printed 2-55/"
      "PDF 78); upstream 175 (the 8088's)",
      "IDIV m16 171", 1),
+    # ---- three more of the 8086's rows (Astra, Reply 110): where upstream charges a row shared with another form,
+    # the substitution is in the one instruction's handler, so the rows it shares (LOOP's 17, the ALU's reg,imm 4 --
+    # TEST AL/AX,imm (A8/A9) and the 80h-83h group -- and CMP's mem,imm 10) stay as they are
+    ("\t\t\t\tif (!ZF && m_regs.w[CX])\n\t\t\t\t{\n\t\t\t\t\tm_ip = m_ip + disp;\n\t\t\t\t\tCLK(LOOP_T);",
+     "\t\t\t\tif (!ZF && m_regs.w[CX])\n\t\t\t\t{\n\t\t\t\t\tm_ip = m_ip + disp;\n"
+     "\t\t\t\t\tm_icount -= 19;   // CHANGED: LOOPNE taken 19 (\"19 or 5\", printed 2-60/PDF 83); upstream LOOP's "
+     "17.  Not taken: LOOP's 5, as upstream",
+     "LOOPNE taken 19", 1),
+] + [
+    # TEST r/m,imm (F6/F7 /0): Intel's register,immediate 5 and memory,immediate 11 + EA (printed 2-67/PDF 90);
+    # upstream charged the ALU's reg,imm 4 and CMP's mem,imm 10.  Two rows, two substitutions (each width): the first
+    # splits upstream's CLKM into its register and memory arms and sets the register's, the second the memory's
+    ("\t\t\t\t\tset_SZPF_%s(tmp);\n\t\t\t\t\tCLKM(ALU_RI%s,ALU_MI%s_RO);" % (name, w, w),
+     "\t\t\t\t\tset_SZPF_%s(tmp);\n\t\t\t\t\tif (m_modrm >= 0xc0)\n"
+     "\t\t\t\t\t\tm_icount -= 5;   // CHANGED: TEST r%s,imm 5 (printed 2-67/PDF 90); upstream the ALU's reg,imm 4 "
+     "(TEST AL/AX,imm keeps its own 4)\n\t\t\t\t\telse\n\t\t\t\t\t\tCLK(ALU_MI%s_RO);" % (name, w, w),
+     "TEST r%s,imm 5" % w, 1)
+    for name, w in (("Byte", "8"), ("Word", "16"))
+] + [
+    ("\t\t\t\t\telse\n\t\t\t\t\t\tCLK(ALU_MI%s_RO);" % w,
+     "\t\t\t\t\telse\n\t\t\t\t\t\tm_icount -= 11;   // CHANGED: TEST m%s,imm 11 + EA (printed 2-67/PDF 90); upstream "
+     "CMP's mem,imm 10 + EA" % w,
+     "TEST m%s,imm 11 + EA" % w, 1)
+    for w in ("8", "16")
+] + [
+    # IMUL's CF and OF (Astra, Reply 110): Intel's IMUL "If the upper half of the result (AH for a byte source, DX for
+    # a word source) is not the sign extension of the lower half of the result, CF and OF are set; otherwise they are
+    # cleared" (printed 2-37/PDF 60) -- set exactly when the signed product does not fit the source's width.  Upstream
+    # tests AH != 0 / DX != 0, which is MUL's rule: it sets them for every small negative product (-1 x 1) and misses
+    # a positive overflow whose upper half is zero (127 x 2).  The product itself was right; AF, PF, SF and ZF stay
+    # upstream's (Intel: undefined after IMUL)
+    ("\t\t\t\t\tm_regs.w[AX] = (uint16_t)result;\n\t\t\t\t\tm_CarryVal = m_OverVal = (m_regs.b[AH]!=0) ? 1 : 0;",
+     "\t\t\t\t\tm_regs.w[AX] = (uint16_t)result;\n"
+     "\t\t\t\t\tm_CarryVal = m_OverVal = (result < -128 || result > 127) ? 1 : 0;   // CHANGED: IMUL r/m8: set when "
+     "the product does not fit a signed byte, AH not AL's sign extension (printed 2-37/PDF 60); upstream AH != 0",
+     "IMUL r/m8's CF and OF", 1),
+    ("\t\t\t\t\tm_regs.w[DX] = result >> 16;\n\t\t\t\t\tm_CarryVal = m_OverVal = (m_regs.w[DX] != 0) ? 1 : 0;",
+     "\t\t\t\t\tm_regs.w[DX] = result >> 16;\n"
+     "\t\t\t\t\tm_CarryVal = m_OverVal = (result < -32768 || result > 32767) ? 1 : 0;   // CHANGED: IMUL r/m16: set "
+     "when the product does not fit a signed word, DX not AX's sign extension (printed 2-37/PDF 60); upstream DX != 0",
+     "IMUL r/m16's CF and OF", 1),
     # the divide error (DIV, IDIV, AAM 0): its entry, charged when the instruction raises it, before the host's seam
     ("\tif (drv_intercept(int_num, trap))\n\t\treturn;\n",
      "\tif (m_in_instruction && trap)   // CHANGED: a divide error's entry, 51 -- a MODEL: Intel gives no figure. "

@@ -185,6 +185,15 @@ documented as it behaves):**
     LOW execution continues, otherwise the processor waits", the 8086 data sheet, printed B-9/PDF 552); 0 means
     inactive, the pin HIGH, and a WAIT waits. A new core's TEST is asserted; `i86_reset` leaves it as it is (an
     input line, like INTR).
+  - **Three more rows** (Reply 110), each changed in its own instruction's handler, so the rows upstream shared
+    with it stay: **LOOPNE taken 19** ("19 or 5", 2-60/PDF 83; MAME LOOP's 17; not taken 5, as LOOP's); **TEST
+    r8/r16,imm 5** and **TEST m8/m16,imm 11 + EA** (2-67/PDF 90; MAME the ALU's 4 and CMP's 10 + EA). TEST AL/AX,imm
+    (A8/A9) keeps its own 4 (the same page), as do the 80h-83h group's reg,imm 4 and CMP mem,imm 10 + EA. A word
+    TEST m16,imm at an odd address adds the 4 **(model**: the table's Transfers column shows "-" for this row, where
+    every other memory,immediate row shows its transfers (CMP's and MOV's 1, 2-53/PDF 76 and 2-61/PDF 84; ADD's and
+    the other ALU rows' 2) and TEST register,memory shows 1; the operand is read, so it is counted as one
+    transfer**)**.
+    LOOP 17/5 and LOOPE 18/6 were already Intel's.
   - MUL/DIV are one figure each, the lowest of Intel's data-dependent ranges. Which physical PC drove the card
     (8086 or 8088) is not established and need not be: the core is a named virtual 8086.
 - **Forward progress**: every step costs at least 2 T-states -- every path charges an entry of Intel's table, the
@@ -201,9 +210,25 @@ documented as it behaves):**
   `i86_regs_set`. Zero or no callback: the core pushes and vectors. NMI, INTR and the trap are never offered (they
   happen at A). This is the seam a DOS/BIOS/EMS stand-in needs (the Accent-mini host), the equivalent of Unicorn's
   interrupt hook.
+- **Defined flags: IMUL's CF and OF** (Reply 110) **(chip)**: set exactly when the upper half of the product (AH for
+  a byte source, DX for a word) is not the sign extension of the lower half, i.e. the signed product does not fit
+  the source's width ("If the upper half of the result ... is not the sign extension of the lower half of the
+  result, CF and OF are set; otherwise they are cleared", printed 2-37/PDF 60). MAME tested AH != 0 / DX != 0,
+  MUL's rule: it set them for every small negative product (-1 x 1) and cleared them on a positive overflow with a
+  zero upper half (127 x 2, -128 x -1). The product itself was already right. A named change of the extraction for
+  each width; AF, PF, SF and ZF, undefined after IMUL, are left as MAME computes them and not asserted. MUL is
+  unchanged (CF = OF = the upper half nonzero, the same page).
 - **Prefixes**: a segment override and the instruction it modifies are ONE step (MAME runs the prefix as its own
   loop turn but never dispatches an interrupt between them); the saved PC is the first prefix's. LOCK is MAME's own
   step and opens a one-instruction shadow.
+- **A prefixed WAIT: a documented limitation, not a hardware claim** (Reply 110). A WAIT that waits puts IP back on
+  its own 9Bh byte (MAME's `m_ip--`), after any prefix: its rechecks run without the prefix, an interrupt between
+  rechecks pushes the WAIT's address rather than the prefix's, and after the handler the WAIT is entered again
+  without it (3, not the prefix's 2 + 3). What the real 8086 keeps of a prefix across a WAIT's rechecks and an
+  interrupt is not established, so this is left as it is and pinned by an executable reproducer (`wait_prefixed`,
+  with a control showing it sees a restart at the prefix). The REP clause's prefix preservation below applies to
+  REP string instructions only; it is not extended to WAIT or to any other instruction. The Accent-mini's driver
+  has no prefixed WAIT.
 - **REP string instructions**: one iteration per step. An interrupt is sampled between iterations; the pushed IP is
   the first prefix's, so the instruction resumes with all its prefixes (MAME; the real 8086 keeps only one). Each
   pass re-fetches its prefixes; the first pass pays them and the 9, a pass continuing the instruction the previous
@@ -358,7 +383,7 @@ next step's A, not inside SIM's step), `sim_r75`, `rst_levels`; `intr_rst`, `int
 2; 18 T), `intr_nop` (nothing pushed, 4 T), `intr_jcc`, `intr_twice` (the byte index restarts), `intr_halt`;
 `sid_sod`.
 
-**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 64 must-fail
+**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 75 must-fail
 controls, each undoing one rule of the driver, a named change of the extraction or an upstream rule, are
 `i86_controls.py`): `zero_budget`, `reset` (FFFF:0000, F002h, a pending NMI dropped, a held INTR sampled again),
 `two_cores`; `intr_vector` (the three pushes, IF/TF cleared, one `irq_ack` byte 0, a 61-T acceptance, `i86_pc()`
@@ -367,7 +392,8 @@ at the pushes), `intr_masked`, `intr_level`, `sti_shadow`, `ss_shadow` (MOV SS a
 vector vectored), `intercept_kinds` (INTO, INT 3, the divide error with IP past the DIV), `hw_not_offered`; `halt`
 (2 T, 2-T slots, the pushed address after the HLT), `halt_masked`, `wait` (3 when TEST is asserted; 3, 5, 5, 5
 waiting: 3 + 5n), `wait_interrupt` (an INTR between rechecks pushes the WAIT's address; entered again after IRET,
-3); `prefix_atomic` (15 T, as Intel),
+3), `wait_prefixed` (Reply 110: a reproducer of today's prefixed WAIT, rechecked and re-entered at its 9Bh byte
+without the prefix -- documented, not claimed as the 8086's); `prefix_atomic` (15 T, as Intel),
 `rep_iteration` (28, 17, the resumed pass 28); `trap`, `trap_ss`; `aliased`; `tstates` (MOV r16,imm 4, OUT/IN DX
 8, CLI/STI 2, JMP short 15: MAME = Intel; NOP 3, LOCK 2, ESC 2 and 8 + EA: Intel's); `io` (a word port access is
 two bytes); `flags`; after Astra's Reply 104: `int_costs` (51, 52, 4 and 53, the same when intercepted),
@@ -377,8 +403,11 @@ transfer: MOV, MOVSW, INT's pushes, IRET's pops, a word port), `forward_progress
 Reply 106, each at even AND odd addresses with both counts absolute (an odd-minus-even check alone passes a wrong
 base): `stack_counts` (PUSH/POP r16, sreg, mem, PUSHF/POPF; SP odd, and SP and the operand odd), `port_counts` (IN/OUT
 AL and AX, imm8 and DX, even and odd ports), `return_counts` (RET, RET n, RETF, RETF n, CALL near and far),
-`word_memory_counts` (DIV, IDIV, MUL, IMUL m16, LES, LDS). Against Unicorn on the Accent-mini's driver:
-`compare_i86_accent.py` (README.md).
+`word_memory_counts` (DIV, IDIV, MUL, IMUL m16, LES, LDS); after Reply 110: `test_imm_counts` (TEST r,imm 5 and
+m,imm 11 + EA, byte and word, even and odd; TEST AL/AX,imm and CMP's rows unchanged), `loopne_counts` (taken 19;
+not taken 5 by CX and by ZF; LOOP and LOOPE unchanged), `imul_flags_byte` and `imul_flags_word` (CF/OF, register
+and memory, each width's control failing it alone), `mul_flags` (MUL unchanged). Against Unicorn on the
+Accent-mini's driver: `compare_i86_accent.py` (README.md).
 
 **The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
 first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
