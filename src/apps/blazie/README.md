@@ -23,12 +23,18 @@ bar. There are no cursor-routing keys and no dots 7 and 8: the Braille Lite 2000
 Windows (Alt opens the menu). The keys can be changed in `blazie_emu.ini` beside the program, section `[keys]`
 (`dot1=F`, ..., `space=space`, `advance=A ;`).
 
-**Type 'n Speak**: the whole keyboard is the unit's, Alt and the function keys included; F11 opens this program's
-menu. A key goes to the unit as it goes down and again as it comes up (bit 7 = down), as the unit's own keyboard
+**Type 'n Speak**: the whole keyboard is the unit's, Alt and the function keys included. **Alt+Shift+F** (or F11)
+always opens this program's menu, whichever unit is running (the unit's held keys are let go first). A key goes to the unit as it goes down and again as it comes up (bit 7 = down), as the unit's own keyboard
 sends them; auto-repeat is left to the unit.
 
 The Braille Lite's key port: dot 1 = bit 0 .. dot 6 = bit 5, space = bit 6, and bit 7 for the advance bar (silent in the main
 menu, as moving a display would be; still to be confirmed on the unit).
+
+## Settings
+
+Settings > Idle channel (hiss, whine or silent) and Settings > Sample rate (11025 to 48000 Hz; the unit restarts at
+the new rate with its memory kept). The unit's own speech settings -- rate, pitch, inflection, volume -- are set on
+the unit, with its own keys, as on the real one.
 
 ## Firmware
 

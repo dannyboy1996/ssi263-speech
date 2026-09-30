@@ -20,11 +20,12 @@
 #include "emu_unit.h"
 #include "tns_keymap_win.h"
 
-#define RATE 44100
-#define BLOCK (RATE / 50)
+#define RATE_MAX 48000
+#define BLOCK_MAX (RATE_MAX / 50)
 #define NBLOCKS 4
 
 enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET,
+       ID_RATE = 220,
        ID_KEYS = 300, ID_ABOUT };
 
 /* state NULL: a cold start (the Type 'n Speak asks to initialise its flash; answer y twice) */
@@ -46,7 +47,10 @@ static int g_kind, g_whine = 1;
 static chord_state g_chord;
 static HWAVEOUT g_wave;
 static WAVEHDR g_hdr[NBLOCKS];
-static short g_buf[NBLOCKS][BLOCK];
+static short g_buf[NBLOCKS][BLOCK_MAX];
+static int g_rate = 44100;               /* the sound card's rate; the unit renders at it */
+static const int RATES[] = {11025, 16000, 22050, 32000, 44100, 48000};
+#define N_RATES ((int)(sizeof RATES / sizeof RATES[0]))
 static HANDLE g_wave_event, g_thread;
 static volatile LONG g_quit;
 static char g_dir[MAX_PATH], g_ini[MAX_PATH], g_fw_dir[MAX_PATH], g_save_dir[MAX_PATH];
@@ -141,7 +145,7 @@ static int start_unit(int kind)
             state = NULL;                   /* a cold start */
     }
     status("Starting");
-    u = emu_create(KINDS[kind].kind, fw, state, RATE, g_whine, err, sizeof err);
+    u = emu_create(KINDS[kind].kind, fw, state, g_rate, g_whine, err, sizeof err);
     if (!u) {
         char msg[700];
         snprintf(msg, sizeof msg, "Could not start the %s.\n\n%s\n\nFirmware looked for in:\n%s", KINDS[kind].name,
@@ -173,7 +177,7 @@ static DWORD WINAPI audio_thread(LPVOID arg)
                 continue;
             EnterCriticalSection(&g_lock);
             if (g_unit)
-                emu_render(g_unit, g_buf[i], BLOCK);
+                emu_render(g_unit, g_buf[i], g_rate / 50);
             else
                 memset(g_buf[i], 0, sizeof g_buf[i]);
             LeaveCriticalSection(&g_lock);
@@ -191,17 +195,17 @@ static int open_audio(void)
     memset(&f, 0, sizeof f);
     f.wFormatTag = WAVE_FORMAT_PCM;
     f.nChannels = 1;
-    f.nSamplesPerSec = RATE;
+    f.nSamplesPerSec = g_rate;
     f.wBitsPerSample = 16;
     f.nBlockAlign = 2;
-    f.nAvgBytesPerSec = RATE * 2;
+    f.nAvgBytesPerSec = g_rate * 2;
     g_wave_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wave_event, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR)
         return 0;
     for (i = 0; i < NBLOCKS; i++) {
         memset(&g_hdr[i], 0, sizeof g_hdr[i]);
         g_hdr[i].lpData = (LPSTR)g_buf[i];
-        g_hdr[i].dwBufferLength = sizeof g_buf[i];
+        g_hdr[i].dwBufferLength = (DWORD)(sizeof(short) * (g_rate / 50));
         waveOutPrepareHeader(g_wave, &g_hdr[i], sizeof(WAVEHDR));
         g_hdr[i].dwFlags |= WHDR_DONE;     /* all free: the thread fills them */
     }
@@ -223,6 +227,33 @@ static void close_audio(void)
     waveOutClose(g_wave);
 }
 
+static void check_rate(void)
+{
+    int k;
+    for (k = 0; k < N_RATES; k++)
+        if (RATES[k] == g_rate)
+            CheckMenuRadioItem(GetMenu(g_wnd), ID_RATE, ID_RATE + N_RATES - 1, ID_RATE + k, MF_BYCOMMAND);
+}
+
+/* a new sample rate: the sound card reopened at it, and the unit restarted to render at it (its memory kept) */
+static void set_rate(int r)
+{
+    char v[16];
+    if (r == g_rate)
+        return;
+    close_audio();
+    CloseHandle(g_thread);
+    CloseHandle(g_wave_event);
+    g_rate = r;
+    InterlockedExchange(&g_quit, 0);
+    start_unit(g_kind);
+    if (!open_audio())
+        MessageBoxA(g_wnd, "Could not open the sound card at that rate.", "Blazie emulator", MB_OK | MB_ICONERROR);
+    check_rate();
+    snprintf(v, sizeof v, "%d", r);
+    WritePrivateProfileStringA("sound", "rate", v, g_ini);
+}
+
 /* ---- the window ------------------------------------------------------------------------------------------------ */
 static void set_whine(int w)
 {
@@ -239,6 +270,8 @@ static void set_whine(int w)
 static HMENU make_menu(void)
 {
     HMENU bar = CreateMenu(), unit = CreatePopupMenu(), sound = CreatePopupMenu(), help = CreatePopupMenu();
+    HMENU rates = CreatePopupMenu();
+    int k;
     AppendMenuA(unit, MF_STRING, ID_EN, "Braille Lite 2000, &English");
     AppendMenuA(unit, MF_STRING, ID_ES, "Braille Lite 2000, &Spanish");
     AppendMenuA(unit, MF_STRING, ID_TNS_EN, "&Type 'n Speak, English");
@@ -252,7 +285,14 @@ static HMENU make_menu(void)
     AppendMenuA(help, MF_STRING, ID_KEYS, "&Keys");
     AppendMenuA(help, MF_STRING, ID_ABOUT, "&About");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)unit, "&Unit");
-    AppendMenuA(bar, MF_POPUP, (UINT_PTR)sound, "&Sound");
+    for (k = 0; k < N_RATES; k++) {
+        char label[32];
+        snprintf(label, sizeof label, "%d Hz", RATES[k]);
+        AppendMenuA(rates, MF_STRING, ID_RATE + k, label);
+    }
+    AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(sound, MF_POPUP, (UINT_PTR)rates, "Sample &rate");
+    AppendMenuA(bar, MF_POPUP, (UINT_PTR)sound, "S&ettings");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)help, "&Help");
     return bar;
 }
@@ -280,6 +320,14 @@ static void tns_release_all(void)
 
 static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
+    /* Alt+Shift+F always opens this program's menu, whatever unit has the keyboard (the Type 'n Speak takes Alt for
+       itself); the unit is told its held keys came up */
+    if ((msg == WM_SYSKEYDOWN || msg == WM_KEYDOWN) && wp == 'F' && (GetKeyState(VK_MENU) & 0x8000)
+            && (GetKeyState(VK_SHIFT) & 0x8000)) {
+        tns_release_all();
+        PostMessageA(w, WM_SYSCOMMAND, SC_KEYMENU, 0);
+        return 0;
+    }
     if (tns_active() && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP)) {
         int down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN, code;
         if (wp == VK_F11) {                 /* this program's own key: its menu */
@@ -357,6 +405,12 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_HISS: set_whine(1); return 0;
         case ID_WHINE: set_whine(2); return 0;
         case ID_QUIET: set_whine(0); return 0;
+        default:
+            if (LOWORD(wp) >= ID_RATE && LOWORD(wp) < ID_RATE + N_RATES) {
+                set_rate(RATES[LOWORD(wp) - ID_RATE]);
+                return 0;
+            }
+            break;
         case ID_KEYS:
             MessageBoxA(w, "Braille Lite, while this window is in front:\n\n"
                         "F D S = dots 1 2 3\nJ K L = dots 4 5 6\nSpace bar = space\nA or ; = advance bar\n\n"
@@ -364,7 +418,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         "The keys can be changed in blazie_emu.ini, section [keys].\n"
                         "Alt opens this program's menu; Alt+F4 closes it.\n\n"
                         "Type 'n Speak: the whole keyboard is the unit's, Alt and the function keys included.\n"
-                        "F11 opens this program's menu (Unit > Exit closes it).\n"
+                        "Alt+Shift+F (or F11) opens this program's menu (Unit > Exit closes it).\n"
                         "The first time, the unit asks to initialize its flash: press y, then y again "
                         "(the Spanish unit: s, then s).", "Keys", MB_OK);
             return 0;
@@ -436,6 +490,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_whine = !strcmp(v, "whine") ? 2 : !strcmp(v, "off") ? 0 : 1;
     CheckMenuRadioItem(GetMenu(g_wnd), ID_HISS, ID_QUIET, g_whine == 1 ? ID_HISS : g_whine == 2 ? ID_WHINE : ID_QUIET,
                        MF_BYCOMMAND);
+    {
+        int k, r = GetPrivateProfileIntA("sound", "rate", 44100, g_ini);
+        for (k = 0; k < N_RATES; k++)
+            if (RATES[k] == r)
+                g_rate = r;
+        check_rate();
+    }
     if (!open_audio())
         MessageBoxA(g_wnd, "Could not open the sound card.", "Blazie emulator", MB_OK | MB_ICONERROR);
     GetPrivateProfileStringA("unit", "kind", "english", v, sizeof v, g_ini);
