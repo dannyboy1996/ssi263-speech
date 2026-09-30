@@ -284,7 +284,7 @@ static HMENU make_menu(void)
     AppendMenuA(sound, MF_STRING, ID_QUIET, "Idle channel: &silent");
     AppendMenuA(help, MF_STRING, ID_KEYS, "&Keys");
     AppendMenuA(help, MF_STRING, ID_ABOUT, "&About");
-    AppendMenuA(bar, MF_POPUP, (UINT_PTR)unit, "&Unit");
+    AppendMenuA(bar, MF_POPUP, (UINT_PTR)unit, "&Firmware");
     for (k = 0; k < N_RATES; k++) {
         char label[32];
         snprintf(label, sizeof label, "%d Hz", RATES[k]);
@@ -418,7 +418,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         "The keys can be changed in blazie_emu.ini, section [keys].\n"
                         "Alt opens this program's menu; Alt+F4 closes it.\n\n"
                         "Type 'n Speak: the whole keyboard is the unit's, Alt and the function keys included.\n"
-                        "Alt+Shift+F (or F11) opens this program's menu (Unit > Exit closes it).\n"
+                        "Alt+Shift+F (or F11) opens this program's menu (Firmware > Exit closes it).\n"
                         "The first time, the unit asks to initialize its flash: press y, then y again "
                         "(the Spanish unit: s, then s).", "Keys", MB_OK);
             return 0;

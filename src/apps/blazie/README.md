@@ -48,7 +48,7 @@ speech off). Run from the source tree, the program finds
 
 As a real unit keeps its battery-backed RAM and file flash while switched off, the program saves them on exit (and
 when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or `spanish.state`, and starts from
-them next time. The first time, and after Unit > Back to the factory state, it starts from the shipped state; the
+them next time. The first time, and after Firmware > Back to the factory state, it starts from the shipped state; the
 Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the unit's own reset to its defaults
 (without it blank RAM leaves the volume at 0), and the unit asks to initialise its flash: y, then y (Spanish: s).
 
