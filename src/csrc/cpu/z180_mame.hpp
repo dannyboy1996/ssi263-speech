@@ -90,13 +90,17 @@ enum {
 // from the bus (byte n = 0, 1, ...) instead of memory.
 struct z180_inject {
     int on, n;
+    u8 bytes[8];                          // the acknowledge bytes read so far (the first eight)
 };
 
 inline u8 z180_ack_byte(const cpu_bus *bus, z180_inject *inj)
 {
     int v = bus->irq_ack ? bus->irq_ack(bus->ctx, Z180_INT0, inj->n) : -1;
+    u8 b = v < 0 ? 0xff : (u8)v;
+    if (inj->n < 8)
+        inj->bytes[inj->n] = b;
     inj->n++;
-    return v < 0 ? 0xff : (u8)v;
+    return b;
 }
 
 struct z180_mem {                         // m_program, m_cprogram: memory at the physical (post-MMU) address
@@ -152,6 +156,8 @@ public:
           m_cprogram{bus, &m_inject}, m_program{bus, nullptr}, m_copcodes{bus, &m_inject}, m_io{bus}, m_bus(bus)
     {
         m_inject.on = m_inject.n = 0;
+        for (int i = 0; i < 8; i++)
+            m_inject.bytes[i] = 0;
         m_inject_pending = 0;
         m_inject_pc0 = 0;
         m_inject_trapped = 0;

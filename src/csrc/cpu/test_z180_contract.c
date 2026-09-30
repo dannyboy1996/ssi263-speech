@@ -786,6 +786,83 @@ static void t_im0_more(void)
     }
 }
 
+/* Injected prefixed instructions that DO set the PC (Astra, Reply 95: a jump to the interrupted PC + 1 was taken
+   for the fetches' own advance and undone).  The interrupted instruction is at 0010h; IX and the stack are set
+   first.  JP (IX) and RETN to 0011h (the collision) and 0012h (ordinary); LD IX,nn at a wrapped PC (the interrupt
+   lands at 0000h after the shadow NOP at FFFFh: the PC stays 0000h); LDIR from the acknowledge runs once (model)
+   with the PC put back: one byte moved, BC 3 -> 2 (its set-up runs at 0100h, so it is interrupted at 010Dh). */
+static void t_im0_transfer(void)
+{
+    static const struct { const char *name; int n, b[4]; unsigned ix, stack, want_pc; int wrap; } cases[] = {
+        {"im0_jpix_collision", 2, {0xDD, 0xE9}, 0x0011, 0, 0x0011, 0},
+        {"im0_jpix_ordinary", 2, {0xDD, 0xE9}, 0x0012, 0, 0x0012, 0},
+        {"im0_retn_collision", 2, {0xED, 0x45}, 0x3000, 0x0011, 0x0011, 0},
+        {"im0_retn_ordinary", 2, {0xED, 0x45}, 0x3000, 0x0012, 0x0012, 0},
+        {"im0_wrap", 4, {0xDD, 0x21, 0x34, 0x12}, 0x3000, 0, 0x0000, 1},
+        {"im0_ldir_once", 2, {0xED, 0xB0}, 0x3000, 0, 0x010D, 0},
+    };
+    int k;
+    for (k = 0; k < (int)(sizeof cases / sizeof cases[0]); k++) {
+        machine *m = new_machine();
+        z180_regs r0, r1;
+        char d[200];
+        int i, steps, ok;
+        org(m, 0);
+        out0(m, 0x32, 0x00);                            /* 0000 no programmed waits */
+        ld_sp(m, 0x9000);                               /* 0005 */
+        db(m, 4, 0xDD, 0x21, cases[k].ix & 0xFF, cases[k].ix >> 8);   /* 0008 LD IX,nn */
+        if (cases[k].wrap) {
+            db(m, 3, 0xC3, 0xFC, 0xFF);                 /* 000C JP FFFCh */
+            org(m, 0xFFFC);
+            db(m, 2, 0xED, 0x46);                       /* FFFC IM 0 */
+            db(m, 1, 0xFB);                             /* FFFE EI */
+            db(m, 1, 0x00);                             /* FFFF NOP (the shadow); the interrupt then finds 0000h */
+            steps = 8;                                  /* LD A, OUT0, LD SP, LD IX, JP, IM 0, EI, NOP */
+        } else if (cases[k].b[1] == 0xB0) {
+            db(m, 3, 0xC3, 0x00, 0x01);                 /* 000C JP 0100h */
+            org(m, 0x0100);
+            db(m, 3, 0x21, 0x00, 0x40);                 /* 0100 LD HL,4000h */
+            db(m, 3, 0x11, 0x00, 0x50);                 /* 0103 LD DE,5000h */
+            db(m, 3, 0x01, 0x03, 0x00);                 /* 0106 LD BC,3 */
+            db(m, 2, 0xED, 0x46);                       /* 0109 IM 0 */
+            db(m, 1, 0xFB);                             /* 010B EI */
+            db(m, 3, 0x00, 0x00, 0x00);                 /* 010C NOP (the shadow); 010D the interrupted one */
+            steps = 11;                                 /* LD A, OUT0, LD SP, LD IX, JP, 3 loads, IM 0, EI, NOP */
+        } else {
+            db(m, 2, 0xED, 0x46);                       /* 000C IM 0 */
+            db(m, 1, 0xFB);                             /* 000E EI */
+            db(m, 3, 0x00, 0x00, 0x00);                 /* 000F NOP (the shadow); 0010 the interrupted one */
+            steps = 7;
+        }
+        m->mem[0x9000] = cases[k].stack & 0xFF;          /* RETN's return address */
+        m->mem[0x9001] = cases[k].stack >> 8;
+        for (i = 0; i < 4; i++)
+            m->ack[i] = cases[k].b[i];
+        if (cases[k].b[1] == 0xB0) {                    /* LDIR: HL = 4000h -> DE = 5000h, BC = 3 */
+            m->mem[0x4000] = 0xAB;
+            m->mem[0x4001] = 0xCD;
+        }
+        z180_set_irq(m->cpu, Z180_INT0, 1);
+        for (i = 0; i < steps; i++)
+            z180_step(m->cpu);
+        z180_regs_get(m->cpu, &r0);
+        z180_step(m->cpu);                              /* accepts, runs the injected instruction */
+        z180_regs_get(m->cpu, &r1);
+        ok = r1.pc == cases[k].want_pc;
+        if (cases[k].b[0] == 0xDD && cases[k].b[1] == 0x21)
+            ok = ok && r1.ix == 0x1234;
+        if (cases[k].b[1] == 0x45)
+            ok = ok && r1.sp == 0x9002;
+        if (cases[k].b[1] == 0xB0)                      /* one iteration: one byte, the counts stepped once */
+            ok = ok && m->mem[0x5000] == 0xAB && m->mem[0x5001] == 0x00 && r1.bc == 2 && r1.hl == 0x4001
+                 && r1.de == 0x5001;
+        sprintf(d, "interrupted at %04X: PC %04X (want %04X), SP %04X, IX %04X, BC %04X, [5000h] %02X %02X", r0.pc,
+                r1.pc, cases[k].want_pc, r1.sp, r1.ix, r1.bc, m->mem[0x5000], m->mem[0x5001]);
+        report(cases[k].name, ok, d);
+        free_machine(m);
+    }
+}
+
 /* TRAP on the bus (printed pp. 71-72, Figures 32 and 33), programmed waits off, IX = 3000h: the cycles, the R
    count, the reads, and the stack written PCH to SP-1 first. */
 static void t_trap_bus(void)
@@ -915,6 +992,7 @@ int main(void)
     t_dma_done_di();
     t_trap();
     t_im0_more();
+    t_im0_transfer();
     t_trap_bus();
     t_priority();
     printf("%s\n", failures ? "FAILED" : "all passed");

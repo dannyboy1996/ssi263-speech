@@ -96,8 +96,14 @@ int z180_device::drv_injected_instruction()
     int t;
     if (op == 0xcb || op == 0xdd || op == 0xed || op == 0xfd) {
         t = drv_dispatch(op);
-        if (!m_inject_trapped && ((_PCD - m_inject.n + 1) & 0xffff) == m_inject_pc0)
-            _PCD = m_inject_pc0;          // no control transfer: the PC is where the interrupt found it
+        // Decided by the instruction, not by where the PC ended up (a jump to the interrupted PC + 1 is
+        // arithmetically the fetches' own advance: Astra, Reply 95).  The prefixed forms that set the PC are JP (IX),
+        // JP (IY), RETN and RETI; for every other one -- the repeating block instructions included, which run once
+        // here (model: their "repeat" would re-fetch from memory, not from the acknowledge) -- the PC is put back.
+        uint8_t b2 = m_inject.bytes[1];
+        bool transfer = ((op == 0xdd || op == 0xfd) && b2 == 0xe9) || (op == 0xed && (b2 == 0x45 || b2 == 0x4d));
+        if (!m_inject_trapped && !transfer)
+            _PCD = m_inject_pc0;          // the PC is where the interrupt found it
     } else {
         _PCD = (_PCD - (z180_op_length(op) - 1)) & 0xffff;
         t = exec_op(op) + m_extra_cycles;

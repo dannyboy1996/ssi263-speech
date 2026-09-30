@@ -45,6 +45,8 @@ for synth in ("speakout", "accent"):
 # its must-fail control: 0.5.0's cancel put back on four seeds in parallel; it passes when a seed catches it (one seed
 # alone missed it under this suite's load about 1 run in 6)
 CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must be caught)", [PY, "complete_fuzz_control.py", "150"]))
+# the control's own guard: fake children that crash, mis-summarise, under-cover or hang must never count as a catch
+CHECKS.append(check("complete_fuzz CONTROL guard", [PY, "complete_fuzz_control_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
@@ -95,6 +97,9 @@ CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA
 CHECKS.append(check("keep the channel open", [PY, "keep_open_test.py"]))
 CHECKS.append(check("keep the channel open CONTROL (off, must fail)", [PY, "keep_open_test.py"],
                     env={"KEEP_OPEN_BREAK": "1"}, expect_fail=True))
+# ... and with every fed sample silent, each audio check must reject it (Astra, Reply 95: missing sound passed)
+CHECKS.append(check("keep the channel open CONTROL (mute, every audio check fails)", [PY, "keep_open_test.py"],
+                    env={"KEEP_OPEN_BREAK": "mute"}))
 # the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
 # bl_voice (the driver's front end in C, for speech-dispatcher and Android): the real driver's PCM, byte for byte;
 # and its control (the C side with packing flipped) must fail

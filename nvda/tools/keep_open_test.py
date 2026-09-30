@@ -10,7 +10,11 @@ stand-in NVDA; the tail's clock is sped up SPEED times.
   C  keep open OFF (the control): nothing after "done"
   D  hiss off, keep open on: nothing after "done"
 
+  E  the first speech after the click-off starts no later than with keep open off
+  F  speech interrupting the open channel (cancel, then speak) starts no later than with keep open off
+
     python keep_open_test.py            KEEP_OPEN_BREAK=1: case A runs with keep open off -- the test must fail
+                                        KEEP_OPEN_BREAK=mute: every fed sample silent -- passes only if A, B and E/F each fail
 """
 import os
 import sys
@@ -25,6 +29,9 @@ SPEED = 20.0
 _t0 = time.perf_counter()
 drv_mod._now = lambda: _t0 + (time.perf_counter() - _t0) * SPEED
 BREAK = os.environ.get("KEEP_OPEN_BREAK") == "1"
+if os.environ.get("KEEP_OPEN_BREAK") == "mute":     # the guards' control: silent audio must fail B, E and F
+    _feed = d._player.feed
+    d._player.feed = lambda data, onDone=None: _feed(bytes(len(data)), onDone)
 
 
 def fed():
@@ -51,6 +58,10 @@ def utter(text, whine, keep_open, wait_tail=True):
     t = time.time()
     while len(done_at) == n_done and time.time() - t < 30:
         time.sleep(0.02)
+    if len(done_at) == n_done:         # no NEW completion: never measure against an older utterance's end
+        print("FAIL %r never completed (30 s)" % text)
+        sys.stdout.flush()
+        os._exit(1)
     if not wait_tail:
         return done_at[-1]
     t = time.time()                  # the tail: until R3 = 00 and the feeding stops, or 1.5 s of real time
@@ -68,11 +79,14 @@ def utter(text, whine, keep_open, wait_tail=True):
 
 rate = None
 bad = 0
+failed = []
 
 
 def check(name, ok, detail):
     global bad
     bad += not ok
+    if not ok:
+        failed.append(name)
     print("%-4s %s: %s" % ("ok" if ok else "FAIL", name, detail))
 
 
@@ -82,7 +96,6 @@ import numpy as np   # noqa: E402
 utter("Warming up.", "hiss", True)          # the first utterance after a setting change reboots the unit
 rate = float(d._unit.chip.out_rate)
 d0 = utter("Hello there.", "hiss", not BREAK)
-tail = audio_since(0)[d0:] if False else None
 with d._player.lock:
     y = np.concatenate(d._player.chunks)
 tail = y[d0:]
@@ -100,14 +113,20 @@ d.cancel()                                  # end the second tail
 with d._player.lock:
     y = np.concatenate(d._player.chunks)
 seg = y[n_speak:]
-first_loud = int(np.argmax(np.abs(seg) > 0.02)) if np.any(np.abs(seg) > 0.02) else len(seg)
+loud = np.abs(seg) > 0.02
+first_loud = int(np.argmax(loud)) if np.any(loud) else None     # no speech at all must fail, not pass as "no idle"
 # what matters is after the new speak(): the tail stops and the speech follows the idle already fed (at most
 # IDLE_AHEAD_S, plus a block).  The tail fed before it depends on how much CPU the tail thread got (the full
 # run_tests load gave 0.76 s where an idle machine gives ~1.5 s), so it is only required to have been running.
-tail_before = (n_speak - d1) / rate
-idle_after = first_loud / rate
-check("B new speech stops the tail", tail_before > 0.1 and idle_after <= 0.4,
-      "the tail had run %.2f s; %.3f s of idle after the new speak() before its speech" % (tail_before, idle_after))
+tail_before = (n_speak - d1) / rate          # captured tail audio, in audio seconds (not wall time)
+if first_loud is None:
+    check("B new speech stops the tail", False, "no audible speech after the new speak()")
+else:
+    idle_after = first_loud / rate
+    speech_s = float(np.count_nonzero(loud)) / rate
+    check("B new speech stops the tail", tail_before > 0.1 and idle_after <= 0.4 and speech_s > 0.05,
+          "%.2f s of tail audio captured; %.3f s of idle after the new speak() before its speech (%.2f s audible)"
+          % (tail_before, idle_after, speech_s))
 time.sleep(0.5)
 
 # C: the control -- keep open off
@@ -122,7 +141,8 @@ check("D hiss off", fed() - d3 < int(0.05 * rate), "%.3f s after done" % ((fed()
 # E: the first speech after the firmware clicked the channel off starts no later than with keep open off
 #    (Tomi: keeping it open must not cost response time)
 def first_sound_ms(text, keep_open, runs=5):
-    """Median wall time from speak() to the first audible sample fed, over a few runs."""
+    """Median wall time from speak() to the first audible sample fed, over a few runs; None if any run stays silent
+    for 5 s (a silent run must fail, not count as 5000 ms beside an equally silent baseline)."""
     out = []
     for _ in range(runs):
         if keep_open == "open":
@@ -137,12 +157,17 @@ def first_sound_ms(text, keep_open, runs=5):
         n = fed()
         t = time.perf_counter()
         d.speak([text])
+        heard = False
         while time.perf_counter() - t < 5:
             with d._player.lock:
                 y = np.concatenate(d._player.chunks) if d._player.chunks else np.zeros(0)
             if np.any(np.abs(y[n:]) > 0.02):
+                heard = True
                 break
             time.sleep(0.002)
+        if not heard:
+            d.cancel()
+            return None
         out.append((time.perf_counter() - t) * 1e3)
         d.cancel()
         time.sleep(0.2)
@@ -152,12 +177,22 @@ def first_sound_ms(text, keep_open, runs=5):
 after_off = first_sound_ms("Hello there.", True)
 during = first_sound_ms("Hello there.", "open")
 baseline = first_sound_ms("Hello there.", False)
-check("E first speech after the click-off", after_off <= baseline + 15.0,
-      "%.1f ms after the click-off, %.1f ms with keep open off (median of 5)" % (after_off, baseline))
-check("F speech interrupting the open channel", during <= baseline + 15.0,
-      "%.1f ms with the channel open (cancel, then speak), %.1f ms with keep open off" % (during, baseline))
+if None in (after_off, during, baseline):
+    check("E/F first sound", False, "no sound within 5 s (after the click-off %s, open %s, keep open off %s)"
+          % (after_off, during, baseline))
+else:
+    check("E first speech after the click-off", after_off <= baseline + 15.0,
+          "%.1f ms after the click-off, %.1f ms with keep open off (median of 5)" % (after_off, baseline))
+    check("F speech interrupting the open channel", during <= baseline + 15.0,
+          "%.1f ms with the channel open (cancel, then speak), %.1f ms with keep open off" % (during, baseline))
 
 print("keep open: %s" % ("PASS" if not bad else "%d FAILED" % bad))
+if os.environ.get("KEEP_OPEN_BREAK") == "mute":     # the guards' control: each audio check must have failed
+    need = ("A hiss, keep open", "B new speech stops the tail", "E/F first sound")
+    missed = [n for n in need if n not in failed]
+    print("mute control: %s" % ("every audio check failed, as it must" if not missed else
+                                "NOT rejected: %s" % ", ".join(missed)))
+    bad = 1 if missed else 0
 sys.stdout.flush()
 d.terminate()
 os._exit(1 if bad else 0)

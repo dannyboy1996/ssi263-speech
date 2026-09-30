@@ -33,7 +33,8 @@ VARIANTS = {
     "IM0 injected": (
         "z180_mame.cpp", "    if (m_IM == 0 && m_IFF1 && !m_after_EI", "    if (0 && m_IM == 0 && m_IFF1 && !m_after_EI",
         ["im0_nop", "im0_rst", "im0_call", "im0_rst_nowait", "im0_nop_nowait", "im0_prefixed",
-         "im0_undefined"]),
+         "im0_undefined", "im0_jpix_collision", "im0_jpix_ordinary", "im0_retn_collision", "im0_retn_ordinary",
+         "im0_wrap", "im0_ldir_once"]),
     "no DMA in sleep": (
         "z180_mame.cpp", "    if (!burst && d.m_HALT != 2 && (d.m_dstat",
         "    if (!burst && (d.m_dstat", ["sleep_dma"]),
@@ -73,6 +74,14 @@ VARIANTS = {
     "IM0 acknowledge is an M1": (
         "z180_mame.cpp", "    m_R++;                                // the acknowledge cycle is an M1 cycle", "",
         ["im0_rst_nowait", "im0_nop_nowait", "im0_prefixed", "im0_undefined"]),
+    "IM0 transfer by instruction": (
+        "z180_mame.cpp", "        if (!m_inject_trapped && !transfer)",
+        "        if (!m_inject_trapped && ((_PCD - m_inject.n + 1) & 0xffff) == m_inject_pc0)",
+        # the old address test also missed LDIR, whose repeat moves PC back by 2 (so it was never put back)
+        ["im0_jpix_collision", "im0_retn_collision", "im0_ldir_once"]),
+    "IM0 prefixed PC put back": (
+        "z180_mame.cpp", "        if (!m_inject_trapped && !transfer)", "        if (0)",
+        ["im0_prefixed", "im0_wrap", "im0_ldir_once"]),
     "DD/FD R counted once each": (
         "z180_mame.cpp", "            m_R--;\n", "", ["im0_prefixed"]),
     "TRAP: the read at IX+d": (
