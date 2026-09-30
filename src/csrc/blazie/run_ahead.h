@@ -49,6 +49,13 @@
 #define RA_LIMIT_S 3.0             /* capture limit: no write for this long while speech is still owed (CPU time) */
 #define RA_FINAL_S 1.0             /* the final load must end within this much chip time, or the end is a limit */
 #define RA_AHEAD 16                /* segments captured ahead of the replay: the bound of the streaming capture */
+#ifndef RA_SETTLE_S                /* ra_settle: at most this much CPU time for the unit to wait for an interrupt.  The
+                                      Braille Lite's text copies met mid-routine take ~35 ms of CPU for a 90-character
+                                      line (its trace: ~2300 cycles a character staged, ~1260 moved); past them it may
+                                      read a line for longer, awake, where a cancel is safe (the lockstep's too).  Every
+                                      cap from 0.02 to 0.5 s cleared the sweeps; 0.5 s cost 11 ms a cancel, 0.1 s 2.5 */
+#define RA_SETTLE_S 0.1
+#endif
 
 /* why the capture ended (run_ahead.end) */
 enum { RA_END_NONE, RA_END_QUIET, RA_END_LIMIT, RA_END_ALLOC, RA_END_ABORT };
@@ -72,8 +79,11 @@ enum {
     RA_BRK_LIMIT,                  /* 0.7 draft: the capture limit ended as a success */
     RA_BRK_ALLOC,                  /* 0.7 draft: a failed allocation dropped the acknowledgement or the write */
     RA_BRK_READING,                /* 0.7 draft: any answer over RA_READ_S moved up, also after a spoken phoneme */
-    RA_BRK_SLIVER                  /* 0.7 draft (the Braille Lite host): a lockstep slice in a block's rounding
+    RA_BRK_SLIVER,                 /* 0.7 draft (the Braille Lite host): a lockstep slice in a block's rounding
                                       sliver while the script still played -- the unit stalled at 44.1 kHz */
+    RA_BRK_SETTLE                  /* 0.7 draft: a cancel reached the unit where the capture had stopped it, mid-
+                                      routine (ra_settle skipped; the Braille Lite host: the chip's request given at
+                                      once too) -- cancelled text leaked into the next utterance */
 };
 
 typedef struct {
@@ -87,6 +97,9 @@ typedef struct {
        1 moved up (reading), 2 moved up without waiting for a pause to end */
     void (*opened)(void *ctx, int seg, int how);
     double clock_hz;
+    /* optional (NULL: none): 1 while the unit's CPU waits for an interrupt -- halted or asleep.  A CPU state, not
+       any routine's: ra_settle */
+    int (*idle)(void *ctx);
 } ra_board;
 
 typedef struct {
@@ -118,6 +131,10 @@ typedef struct {
     int npace;
     int over;                      /* the speech is over (RA_TRAILING), from the moment it was seen until the end */
     int stop_trailing;             /* ra_play returns as soon as RA_TRAILING is reached (the host has input waiting) */
+    int settling;                  /* ra_settle runs: the unit's writes are dropped */
+    int settled;                   /* the last ra_settle: 1 the CPU waited for an interrupt, 0 not (the cap, or no
+                                      idle callback), -1 none needed (no capture running); dropped: its writes */
+    int dropped;
 } run_ahead;
 
 void ra_init(run_ahead *r, const ra_board *b);
@@ -148,6 +165,16 @@ int ra_rest_is_idle(const run_ahead *r);
 int ra_flush(run_ahead *r);
 /* stops: the script not yet played is dropped (the unit stays where the capture left it); RA_CANCELLED */
 void ra_abort(run_ahead *r);
+/* Before a cancel reaches the unit (a host's ^X ...) while the capture runs.  The capture stops the CPU wherever its
+   bound falls: just after an acknowledgement, which wakes the unit, so it is parked MID-ROUTINE (the Braille Lite:
+   awake at 97% of stops, against 15% of the time in the lockstep, whose CPU mostly waits on the chip).  A cancel
+   there meets the firmware halfway through whatever it was doing -- on the Braille Lite, copying the next line's text
+   into its line buffer, where a character of the cancelled text survived the ^X and led the next utterance.  So the
+   unit runs on, A/R not requesting (nothing more acknowledged), until its CPU waits for an interrupt (b.idle): where
+   a lockstep unit almost always is when a cancel comes.  At most RA_SETTLE_S of CPU time.  Its writes meanwhile
+   belong to the script being dropped: dropped too, never applied (r->dropped counts them).  Then ra_abort.
+   r->settled: 1 idle, 0 the cap (or no idle callback: nothing run), -1 no capture running (nothing to do). */
+void ra_settle(run_ahead *r);
 /* lane 1: apply write i of the next utterance's script at chip time t[i] (the lockstep's own schedule) instead of the
    retimed rule; a write past n waits.  The caller keeps t alive; NULL turns it off.  Tests only. */
 void ra_pace(run_ahead *r, const double *t, int n);

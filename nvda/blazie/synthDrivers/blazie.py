@@ -258,9 +258,10 @@ class SynthDriver(SynthDriver):
         # -- a bounded streaming capture (up to 16 segments ahead) replayed at the unit's own answer times, the
         # reading pauses cut; "done" once a pause after the last spoken phoneme has ended.  Its end is inferred from
         # the ^F echo accounting and a quiet interval (a policy).  The same register values on the tested sessions
-        # (nvda/tools/run_ahead_equiv.py, run_ahead_lanes.py, run_ahead_state.py), but OPEN: a cancel mid-utterance
-        # can leave a phoneme of the cancelled text at the head of the next one (English, 4 of 25 cancel times in
-        # run_ahead_state's sweep).  With "short pauses" on only, the in-process unit only, and only the voices whose
+        # (nvda/tools/run_ahead_equiv.py, run_ahead_lanes.py, run_ahead_state.py).  A cancel mid-utterance once left
+        # cancelled text at the head of the next one (English: 4 of 25 cancel times; through this driver, long lines
+        # cut 0.3-0.4 s in): fixed in the host's cancel (run_ahead.h ra_settle; run_ahead_cancel.py, 0 of 172, and
+        # run_ahead_driver.py).  With "short pauses" on only, the in-process unit only, and only the voices whose
         # firmware those tests cover (RUN_AHEAD_TESTED).
         BooleanDriverSetting("runAhead", "&Run the unit ahead (experimental: with short pauses)", defaultVal=False),
     )

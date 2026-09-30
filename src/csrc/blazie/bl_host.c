@@ -11,6 +11,21 @@
 #include "bl_whine_table.h"
 #include "run_ahead.c"             /* the run-ahead mode (bh_set_int "run_ahead"): one translation unit */
 
+/* BH_TRACE (-DBH_TRACE, a scratch build only, never a release): an ordered trace in the working directory's
+   bh_trace.txt -- the unit's serial receive and transmit, its SSI-263 writes and A/R, the host's queue, drop and ^X,
+   the capture's writes and the chip's, ^F echoes and the cancel's bookkeeping, and RAM writes in up to 8 watched
+   ranges (bh_set_int "watch_lo"/"watch_hi", then "trace" 1 on / 0 off / -1 closed, "trace_mark" n).  Watchpoints,
+   not disassembly: the run-ahead cancel leak was found with it (run_ahead_cancel.py). */
+#ifdef BH_TRACE
+extern FILE *bh_trace_fp;
+extern int bh_trace_on;
+extern unsigned bh_watch_lo[8], bh_watch_hi[8];
+extern int bh_n_watch;
+#define HTR(...) do { if (bh_trace_fp && bh_trace_on) fprintf(bh_trace_fp, __VA_ARGS__); } while (0)
+#else
+#define HTR(...) do { } while (0)
+#endif
+
 #define CLOCK_HZ 6144000.0
 #define PLAYING_MAX_S 1.0              /* longer than any phoneme the firmware loads (bh_busy) */
 #define UNANSWERED_S 1.0               /* bh_busy's host timeout policy: a request given to the firmware and
@@ -53,6 +68,7 @@ struct bl_host {
     int n_held_bytes, cap_held_bytes;
     double *pace;                  /* lane 1 (bh_pace): the schedule of the next run-ahead utterance */
     int n_pace;
+    int ar_hold;                   /* bh_cancel of a run-ahead capture: A/R not requesting over the first ^X slice */
 };
 
 /* the tests' log of writes (bh_writes), at the chip's time now */
@@ -95,6 +111,8 @@ static int request(const bl_host *h)
 /* a write of the unit's, applied to the chip now, with the host's bookkeeping */
 static void chip_write(bl_host *h, int reg, int val)
 {
+    HTR("PLAY t=%.6f cyc=%llu r%d=%02X ra=%d/%d ri=%d nw=%d\n", ssi263_time(h->chip), (unsigned long long)bl_cycles(h->unit),
+        reg, val, h->ra.active, h->ra.capturing, h->ra.ri, h->ra.nw);
     ssi263_write(h->chip, reg, val);
     if (h->idle)
         idle_events(h, reg, val);
@@ -116,9 +134,10 @@ static void events(bl_host *h)
         if (ev[i].type == 'W') {
             /* run ahead: into the script, played later -- and after a failed allocation, lost with the capture (its
                error, RA_ERROR), never applied out of order */
-            if (h->ra.active && (h->ra.capturing || h->ra.end == RA_END_ALLOC))
+            if (h->ra.active && (h->ra.capturing || h->ra.end == RA_END_ALLOC)) {
+                HTR("CAP w%d seg=%d r%d=%02X\n", h->ra.nw, h->ra.nack - 1, ev[i].a, ev[i].b);
                 ra_write_reg(&h->ra, ev[i].a, ev[i].b);
-            else
+            } else
                 chip_write(h, ev[i].a, ev[i].b);
         } else {
             unsigned char b = ev[i].a;
@@ -130,6 +149,8 @@ static void events(bl_host *h)
             if (h->n_tx < h->cap_tx)
                 h->tx[h->n_tx++] = b;
             if (b == 0x06) {
+                HTR("ECHO t=%.6f echo_f=%d->%d sent_f=%d stale=%d\n", ssi263_time(h->chip), h->echo_f, h->echo_f + 1,
+                    h->sent_f, h->stale_f);
                 h->echo_f += 1;
                 h->say_time = ssi263_time(h->chip);        /* progress: patience counts from here */
                 if (h->stale_f > 0)
@@ -146,8 +167,9 @@ static void events(bl_host *h)
 
 static void set_ar(bl_host *h)
 {
-    int r = request(h);
+    int r = h->ar_hold ? 0 : request(h);
     if (r != h->ar) {
+        HTR("LAR t=%.6f %d\n", ssi263_time(h->chip), r);
         h->ar = r;
         if (r)
             h->ar_time = ssi263_time(h->chip);             /* when the firmware was given the request (bh_busy) */
@@ -199,6 +221,13 @@ static void ra_cb_apply(void *ctx, int reg, int val)
     chip_write((bl_host *)ctx, reg, val);
 }
 
+static int ra_cb_idle(void *ctx)
+{
+    bl_probe p;
+    bl_probe_get(((bl_host *)ctx)->unit, &p);
+    return p.sleeping || p.halted;                         /* the Z180 waits for an interrupt (SLP or HALT) */
+}
+
 static void ra_cb_opened(void *ctx, int seg, int how)
 {
     bl_host *h = (bl_host *)ctx;
@@ -246,6 +275,7 @@ BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip,
         b.more = ra_cb_more;
         b.apply = ra_cb_apply;
         b.opened = ra_cb_opened;
+        b.idle = ra_cb_idle;
         b.clock_hz = CLOCK_HZ;
         ra_init(&h->ra, &b);
     }
@@ -291,6 +321,8 @@ static void send_now(bl_host *h, const unsigned char *data, int n)
 
 static void say_now(bl_host *h, const unsigned char *data, int n)
 {
+    HTR("SAY t=%.6f cyc=%llu n=%d ra_on=%d sent=%d echo=%d req=%d\n", ssi263_time(h->chip),
+        (unsigned long long)bl_cycles(h->unit), n, h->ra_on, h->sent_f, h->echo_f, request(h));
     h->say_time = ssi263_time(h->chip);
     h->preparing = 1;
     h->stale_f = h->sent_f - h->echo_f > 0 ? h->sent_f - h->echo_f : 0;   /* echoes still due from earlier sends */
@@ -475,17 +507,33 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
 {
     int holding;
     double t = 0.0;
+    HTR("CANCEL t=%.6f cyc=%llu ra active=%d capturing=%d nw=%d ri=%d nack=%d seg=%d pending=%d end=%d req=%d "
+        "sent=%d echo=%d stale=%d held=%d\n", ssi263_time(h->chip), (unsigned long long)bl_cycles(h->unit),
+        h->ra.active, h->ra.capturing, h->ra.nw, h->ra.ri, h->ra.nack, h->ra.seg, h->ra.pending, h->ra.end,
+        request(h), h->sent_f, h->echo_f, h->stale_f, h->n_held);
     h->n_held = h->n_held_bytes = 0;                       /* held input: dropped, as the unit's unread input is */
     h->ra.stop_trailing = 0;
-    if (h->ra.active && ra_flush(&h->ra)) {                /* run ahead, only idle writes left (content checked): */
-        h->ar = request(h);                                /* applied at once, the chip as the unit left it */
-    } else if (h->ra.active) {                             /* ... speech still to come: the script not yet played */
-        ra_abort(&h->ra);                                  /* is dropped; the unit, ahead, is cut as usual, in */
-        h->ar = -1;                                        /* lockstep (it cannot take back what it did ahead) */
-    }
-    h->ra.outcome = h->ra.outcome == RA_CANCELLED ? RA_CANCELLED : RA_IDLE;
     h->sent_f -= bl_drop(h->unit);                         /* _cmd("D"): drop what the unit has not taken yet */
     events(h);
+    if (h->ra.active && ra_flush(&h->ra)) {                /* run ahead, only idle writes left (content checked): */
+        h->ar = request(h);                                /* applied at once, the chip as the unit left it */
+    } else if (h->ra.active) {                             /* ... speech still to come: */
+        /* The cancel meets the unit at the capture's frontier, not where the listener is.  Two things made the
+           Braille Lite lead the next utterance with cancelled text there (nvda/tools/run_ahead_state.py, its sweep):
+           the capture had parked the CPU mid-routine -- ra_settle lets it run on to a wait for an interrupt, as a
+           lockstep unit mostly is when ^X comes -- and the chip's request, given at once, had the unit load the
+           next phoneme of the dropped script and resume its text work before its ^X was handled.  So its A/R stays
+           not requesting over the first ^X slice: that request belongs to the script being dropped.  Then the
+           script not yet played is dropped; the unit, ahead, is cut as usual, in lockstep (it cannot take back
+           what it did ahead: its ^F echoes, its reading) */
+        ra_settle(&h->ra);
+        HTR("SETTLE cyc=%llu settled=%d dropped=%d\n", (unsigned long long)bl_cycles(h->unit), h->ra.settled,
+            h->ra.dropped);
+        ra_abort(&h->ra);
+        h->ar = -1;
+        h->ar_hold = h->ra.brk != RA_BRK_SETTLE;           /* the control puts both back */
+    }
+    h->ra.outcome = h->ra.outcome == RA_CANCELLED ? RA_CANCELLED : RA_IDLE;
     holding = bh_owed(h) == 0;                             /* decided after the drop (see blazie.py) */
     h->preparing = 0;
     if (cut < 0.0)
@@ -496,10 +544,14 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
         bl_urgent(h->unit, 0x18);                          /* _cmd("U 18") */
         events(h);
         t += bh_skip(h, cut);
+        h->ar_hold = 0;
         if (t >= 0.04 && ssi263_time(h->chip) - h->last_speech > quiet
                 && (bh_owed(h) <= 0 || t >= 1.0))
             break;
     }
+    h->ar_hold = 0;
+    HTR("CANCEL END t=%.6f cyc=%llu echo %d -> %d (holding %d) sent=%d\n", ssi263_time(h->chip),
+        (unsigned long long)bl_cycles(h->unit), h->echo_f, holding ? h->sent_f - 1 : h->sent_f, holding, h->sent_f);
     h->echo_f = holding ? h->sent_f - 1 : h->sent_f;
     return t;
 }
@@ -709,6 +761,8 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "run_ahead_break")) return h->ra.brk;
     if (!strcmp(name, "run_ahead_played")) return h->ra.ri;
     if (!strcmp(name, "run_ahead_captured")) return h->ra.nw;
+    if (!strcmp(name, "run_ahead_settled")) return h->ra.settled;
+    if (!strcmp(name, "run_ahead_dropped")) return h->ra.dropped;
     if (!strcmp(name, "held")) return h->n_held;
     if (!strcmp(name, "log_ar")) return h->log_ar;
     if (!strcmp(name, "port_a0")) return bl_port_a0(h->unit);
@@ -727,6 +781,22 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
         h->ra_on = v != 0;                                 /* utterance playing ends as it would (bh_cancel stops) */
     else if (!strcmp(name, "run_ahead_break")) h->ra.brk = v;   /* the tests' controls only (run_ahead.h RA_BRK_*) */
     else if (!strcmp(name, "log_ar")) h->log_ar = v != 0;
+#ifdef BH_TRACE
+    else if (!strcmp(name, "trace")) {
+        if (!bh_trace_fp && v > 0)
+            bh_trace_fp = fopen("bh_trace.txt", "w");     /* in the working directory */
+        bh_trace_on = v > 0;
+        if (bh_trace_fp)
+            fflush(bh_trace_fp);
+        if (v < 0 && bh_trace_fp) {
+            fclose(bh_trace_fp);
+            bh_trace_fp = NULL;
+        }
+    } else if (!strcmp(name, "trace_mark"))
+        HTR("MARK %d t=%.6f cyc=%llu\n", v, ssi263_time(h->chip), (unsigned long long)bl_cycles(h->unit));
+    else if (!strcmp(name, "watch_lo") && bh_n_watch < 8) bh_watch_lo[bh_n_watch] = (unsigned)v;
+    else if (!strcmp(name, "watch_hi") && bh_n_watch < 8) bh_watch_hi[bh_n_watch++] = (unsigned)v;
+#endif
 }
 
 BL_API int bh_script(const bl_host *h, const void **writes)
