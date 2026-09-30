@@ -64,7 +64,8 @@ or the `Z180EMU` key in `paths.local`, or `third_party/z180emu`). It writes the 
 `app/src/main/jniLibs/<abi>/` and everything else the APK carries to `build/android/assets/` at the repository root
 -- the licences and, for z180emu's GPL, the complete source. None of that is committed. A developer build may carry
 the firmware, by asking: `SSI263_ANDROID_BUNDLE_FIRMWARE=1` (with `SSI263_FIRMWARE`, default `firmware/blazie`, the
-Spanish unit there or in `spanish/`); never distribute one. `check_apk_no_firmware.py` looks inside an APK (and the
+Spanish unit there or in `spanish/`); never distribute one. Gradle then needs `-Pssi263BundleFirmware=1` too: without
+it, staged firmware stops the build (a leftover once rode into a plain `assembleDebug`). `check_apk_no_firmware.py` looks inside an APK (and the
 source archive in it) for a ROM image and a unit's state by content and firmware or state files by name;
 `--control <BL2ENG.BNS> <apk>` adds the firmware under a bland name and must fail, as must `--control
 <bl2_2003_warm.state> <apk>`.

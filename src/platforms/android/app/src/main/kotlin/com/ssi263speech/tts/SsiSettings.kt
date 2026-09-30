@@ -11,7 +11,9 @@ object SsiSettings {
     const val RATE = "rate"
     const val PITCH = "pitch"
     const val TONE = "tone"
-    const val VOLUME = "volume"
+    const val VOLUME = "engine_volume"        // 0.7: 0-200, default DEFAULT_VOLUME (a new key: the old 0-100 default was quieter)
+    const val DEFAULT_VOLUME = 150           // +3.5 dB over the desktop level (100): the loudest of 67 lines measured at -1.4 dBFS
+    const val MAX_VOLUME = 200
     const val SHORT_PAUSES = "short_pauses"
     const val INFLECTION = "inflection"
     const val WHINE = "whine"
@@ -25,7 +27,7 @@ object SsiSettings {
         SsiData.protectedContext(ctx).getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /** Read together once per utterance. */
-    data class Snapshot(val rate: Int = 50, val pitch: Int = 50, val tone: Int = 7, val volume: Int = 100,
+    data class Snapshot(val rate: Int = 50, val pitch: Int = 50, val tone: Int = 7, val volume: Int = DEFAULT_VOLUME,
                         val shortPauses: Boolean = true, val inflection: Boolean = true, val whine: Int = 0,
                         val sampleRate: Int = 22050, val voice: Int = SsiNative.ENGLISH,
                         val overrideVoice: Boolean = true)
@@ -36,7 +38,7 @@ object SsiSettings {
             p.getInt(RATE, 50).coerceIn(0, 100),
             p.getInt(PITCH, 50).coerceIn(0, 100),
             p.getInt(TONE, 7).coerceIn(0, 26),
-            p.getInt(VOLUME, 100).coerceIn(0, 100),
+            p.getInt(VOLUME, DEFAULT_VOLUME).coerceIn(0, MAX_VOLUME),
             p.getBoolean(SHORT_PAUSES, true),
             p.getBoolean(INFLECTION, true),
             p.getInt(WHINE, 0).coerceIn(0, 2),

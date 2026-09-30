@@ -229,7 +229,7 @@ CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail
 CHECKS.append(check("open channel CONTROL (idle audio left queued, must fail)", [PY, "tail_latency.py"],
                     env={"TAIL_LATENCY_BREAK": "queued"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel .*B \+ 40 ms", r"^ok +B whine off",
-                                r"^tail latency: 1 FAILED$"]))
+                                r"^tail latency: [12] FAILED$"]))   # D may fail too: the queue delays it as well
 # ... and while the last speech's onDone is still due (Astra, Reply 109): NVDA's player calls it only from feed/sync on
 # the feeding thread, so the wait must service it (an empty feed) and a cancel must end it; the plain wait put back
 # stalled ~0.5 s, even after a cancel -- D and E must fail
@@ -356,6 +356,13 @@ if os.path.isfile(ANDROID_TEST):
 # releases on the list taken, and the states made from the firmware alone = the listed ones, byte for byte and in
 # speech; one control holds the wrong chord at the English warm reset and must differ in the state and in every
 # English case, the other drops the list and must take the unknown releases
+# the Android engine's default volume (Tomi: under TalkBack's sounds at the desktop level): louder, never clipping
+VOLUME_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_volume_headroom.py")
+if os.path.isfile(VOLUME_TEST):
+    CHECKS.append(check("Android engine: default volume, headroom kept", [PY, VOLUME_TEST]))
+    CHECKS.append(check("Android engine: volume CONTROL (250 percent clips, must fail)", [PY, VOLUME_TEST],
+                        env={"SSI263_VOLUME_TEST_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^volume 250: .* clipped samples -- FAILED", r"^volume headroom: FAILED$"]))
 IMPORT_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_import_native.py")
 if os.path.isfile(IMPORT_TEST):
     CHECKS.append(check("Android import: known firmware only, states made on the device", [PY, IMPORT_TEST]))

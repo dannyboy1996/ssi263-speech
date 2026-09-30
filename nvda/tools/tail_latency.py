@@ -126,7 +126,7 @@ def heard_after(t_speak, k0):
     t_end = time.time() + 10
     while time.time() < t_end:
         for ps, n, ci in list(timeline[k0:]):
-            if not n:
+            if not n or ci >= len(d._player.chunks):      # its audio not stored yet (a feed in progress)
                 continue
             y = d._player.chunks[ci]
             k = np.nonzero(np.abs(y) > 0.01)[0]

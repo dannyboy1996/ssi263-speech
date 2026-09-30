@@ -483,8 +483,13 @@ class SettingsActivity : Activity() {
         ui.slider(root, "Tone", 26, s.tone, { if (it == 7) "7, factory" else "$it" }) { put(SsiSettings.TONE, it) }
 
         root.addView(ui.heading("Volume"))
-        root.addView(ui.body("The engine's own level. Android's accessibility or media volume still applies."))
-        ui.slider(root, "Engine volume", 100, s.volume, { "$it percent" }) { put(SsiSettings.VOLUME, it) }
+        root.addView(ui.body("The engine's own level; Android's accessibility or media volume still applies. " +
+                "100 percent is the desktop voices' level; the default, 150, sits beside TalkBack's own sounds. " +
+                "Above about 150 the loudest syllables can clip."))
+        ui.slider(root, "Engine volume", SsiSettings.MAX_VOLUME, s.volume,
+                { if (it == SsiSettings.DEFAULT_VOLUME) "$it percent, default" else "$it percent" }) {
+            put(SsiSettings.VOLUME, it)
+        }
 
         root.addView(ui.heading("The unit"))
         ui.checkBox(root, "Voice inflection", s.inflection) { put(SsiSettings.INFLECTION, it) }

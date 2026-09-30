@@ -22,6 +22,15 @@ val verifyNativeBuild = tasks.register("verifyNativeBuild") {
                             "source/ssi263-speech-source.tgz")) {
             check(File(stagedAssets, name).isFile) { "build/android/assets/$name is missing: run `sh build_android.sh`" }
         }
+        // A developer build's staged firmware must not ride into an APK unasked: Gradle packs whatever is staged, so
+        // a leftover of SSI263_ANDROID_BUNDLE_FIRMWARE=1 went into a plain assembleDebug (0.7).  Ask with
+        // -Pssi263BundleFirmware=1, or re-stage with `sh build_android.sh`.
+        val staged = File(stagedAssets, "firmware").listFiles()?.filter { it.isFile }.orEmpty()
+        check(staged.isEmpty() || project.hasProperty("ssi263BundleFirmware")) {
+            "build/android/assets/firmware holds ${staged.map { it.name }}: a developer build's firmware. " +
+                "Re-stage with `sh build_android.sh`, or bundle it on purpose with -Pssi263BundleFirmware=1 " +
+                "(never a release)"
+        }
     }
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyNativeBuild) }
