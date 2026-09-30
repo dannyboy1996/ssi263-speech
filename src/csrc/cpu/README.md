@@ -37,8 +37,8 @@ The cores never know which board they are in.
 | `i86_mame_machine.cpp` | **Generated; do not edit.** MAME's 8086: the inline helpers, the cycle tables, reset, an interrupt's entry (with the INT seam), the input lines, execute_run's own opcodes and every other instruction. |
 | `i86_mame.hpp` | Our class around it: one class with the member names MAME's code expects (from `i86.h`) and small stand-ins for the framework (the bus, the INTA vector, no coprocessor, no wait states). |
 | `i86_mame.cpp` | **Our step driver** (the contract's phases, following execute_run) and the `cpu.h` functions (`i86_*`, with `i86_regs_set`, `i86_next_pc` and `i86_aliased` for a host that stands in for DOS). It includes `i86_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
-| `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (36): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT (3 + 5n, interrupted), prefixes, REP, the trap flag, the alias counter, T-states (Intel's 8086 rows, even and odd addresses), I/O, FLAGS, forward progress. |
-| `i86_controls.py` | Its must-fail controls (64): each rule undone in a scratch copy, exactly its tests must fail. |
+| `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (42): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT (3 + 5n, interrupted; the prefixed WAIT's reproducer), prefixes, REP, the trap flag, the alias counter, T-states (Intel's 8086 rows, even and odd addresses; LOOPNE, TEST r/m,imm), IMUL's and MUL's CF/OF, I/O, FLAGS, forward progress. |
+| `i86_controls.py` | Its must-fail controls (75): each rule undone in a scratch copy, exactly its tests must fail. |
 | `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios; write values and times, audio, registers, FLAGS (by its stated policy), host log, INIT memory and snapshots must all match (with must-fail controls). |
 | `census_i86_accent.py` | Which x86 SPKEMS.DVC needs: every block it runs under Unicorn, disassembled (needs capstone). |
 
@@ -201,4 +201,10 @@ counted with a scratch-instrumented build, not in the tree):
   address 4 added once per actual transfer; WAIT is 3 + 5n (entry 3, a 5-T recheck a step); the trap stays 50, the
   sources' disagreement (51 in AP-67) recorded, not resolved. After these too, every write is identical in value and
   time on 64- and 32-bit Python.
+- **Reply 110** (CONTRACT.md 4): IMUL's CF and OF, byte and word, now Intel's (set when the signed product does not
+  fit the source's width; MAME tested AH/DX nonzero, MUL's rule); LOOPNE taken 19, TEST r,imm 5 and m,imm 11 + EA
+  (TEST AL/AX,imm keeps its 4). None of these is in the census above (no IMUL, TEST, LOOPNE or WAIT among its 48
+  mnemonics), which is why 323,705 FLAGS samples never showed IMUL's divergence; every write is still identical in
+  value and time. A prefixed WAIT restarts at its WAIT byte without the prefix: recorded by a reproducer
+  (`wait_prefixed`), not changed.
 - **Known limits (MAME's, kept):** MUL/DIV are one figure (Intel's lowest), and the undefined flags are MAME's.

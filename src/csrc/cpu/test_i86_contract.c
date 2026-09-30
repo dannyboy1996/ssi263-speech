@@ -29,6 +29,9 @@
  *                  the entry 3 then a 5-T recheck a step with IP held, the recheck that finds TEST active ending it
  *                  (MAME ends the slice) (6)
  *   wait_interrupt an INTR between rechecks pushes the WAIT's address; after IRET the WAIT is entered again, 3 (4, 6)
+ *   wait_prefixed  A REPRODUCER of today's behaviour, not a hardware claim (Reply 110): ES: WAIT pays 2 + 3, then
+ *                  rechecks at the 9Bh byte without its prefix; an INTR between rechecks pushes the WAIT's address,
+ *                  not the prefix's; after IRET it is entered again without the prefix, 3 (4)
  *   prefix_atomic  a segment override and its instruction are one step: no boundary, no interrupt between (1)
  *   rep_iteration  CS: REP MOVSB is one iteration per step; an INTR between iterations pushes the first prefix's
  *                  IP, and after IRET the copy resumes with the override intact; the first pass 2 + 9 + 17 T, a
@@ -60,6 +63,15 @@
  *                  popped or pushed at an odd SP (RETF and CALL far: two) (4)
  *   word_memory_counts DIV/IDIV/MUL/IMUL m16 150/171/124/134 + EA, LES/LDS 16 + EA (2-54, 2-55, 2-61, 2-59); + 4 a
  *                  word at an odd address (LES/LDS: two) (4)
+ *   after Astra's Reply 110:
+ *   test_imm_counts TEST r8/r16,imm 5 and TEST m8/m16,imm 11 + EA (2-67/PDF 90; MAME 4 and 10 + EA) at an even and
+ *                  an odd BX (a word + 4, a byte never); TEST AL/AX,imm stay 4, CMP r,imm 4 and CMP m,imm 10 + EA (4)
+ *   loopne_counts  LOOPNE taken 19 (2-60/PDF 83; MAME 17), not taken 5 with CX run out and with ZF set; LOOP 17/5 and
+ *                  LOOPE 18/6 unchanged
+ *   imul_flags_byte, imul_flags_word  IMUL's CF = OF = 1 exactly when the signed product does not fit the source's
+ *                  width (2-37/PDF 60; MAME: AH/DX nonzero): Astra's five cases, the edges and negative overflow,
+ *                  register and memory, the product checked too; AF/PF/SF/ZF (undefined) not asserted
+ *   mul_flags      MUL, unchanged: CF = OF = the upper half nonzero, byte and word, register and memory
  *   forward_progress Astra's probe (Reply 104): INT 21h vectored at itself, i86_run(1) returns after one step --
  *                  and so do an intercepted INT 21h in a loop, AAM 0 vectored at itself, a REP before NOP, REP
  *                  MOVSB with CX = 0.  Guarded: a run past 1000 boundaries has its instruction overwritten with a
@@ -649,6 +661,41 @@ static void t_wait_interrupt(void)
     free_machine(m);
 }
 
+/* A REPRODUCER, NOT A HARDWARE CLAIM (Astra, Reply 110): a WAIT with a segment prefix, as this core runs it today --
+   upstream's rule, which puts IP back one byte, on the WAIT and not on its prefix.  The first step pays the prefix and
+   the entry (2 + 3) and leaves IP on the 9Bh byte, so every recheck starts there without the prefix, an INTR between
+   rechecks pushes the WAIT's address (not the prefix's, unlike a REP string instruction: rep_iteration), and after
+   IRET the WAIT is entered again without it (3, not 2 + 3).  What the real 8086 keeps of a prefix across a WAIT's
+   rechecks and an interrupt is NOT established, so this pins the current behaviour and changes nothing: a future
+   change to it must change this test on evidence.  The Accent-mini's driver has no prefixed WAIT (CONTRACT.md 4) */
+static void t_wait_prefixed(void)
+{
+    machine *m = new_machine(F_IF | 0x0002);
+    char d[400];
+    int t[6], i, ok;
+    db(m, 2, 0x26, 0x9B); db(m, 1, NOP);        /* 10000 ES: WAIT; 10002 NOP */
+    set_vec(m, 0x40, 0x4000, 0x0040); org(m, 0x40040); db(m, 1, IRET);
+    i86_set_irq(m->cpu, I86_TEST, 0);
+    at(m, 2, I86_INTR, 1);                      /* raised at the first recheck's boundary */
+    at(m, 3, I86_INTR, 0);
+    for (i = 0; i < 5; i++) t[i] = i86_step(m->cpu);
+    i86_set_irq(m->cpu, I86_TEST, 1);
+    t[5] = i86_step(m->cpu);
+    i86_step(m->cpu);
+    /* 1 ES: + the entry 2 + 3 at 10000, 2 a recheck 5 at 10001, 3 INTR 61 + the handler's IRET 24 (pushed IP 0001),
+       4 the WAIT entered again at 10001 without its prefix 3, 5 a recheck 5, 6 the recheck that finds TEST active 5,
+       7 the NOP at 10002 */
+    ok = t[0] == 2 + 3 && t[1] == 5 && t[2] == 61 + 24 && t[3] == 3 && t[4] == 5 && t[5] == 5
+         && m->pcs[0] == 0x10000 && m->pcs[1] == 0x10001 && m->pcs[2] == 0x40040 && m->pcs[3] == 0x10001
+         && m->pcs[4] == 0x10001 && m->pcs[5] == 0x10001 && m->pcs[6] == 0x10002 && word(m, STACK_TOP - 6) == 0x0001;
+    sprintf(d, "CURRENT behaviour, documented (the 8086's prefix retention not established): steps %d %d at %05X "
+            "%05X, the INTR + IRET %d (stacked IP %04X), again %d %d %d at %05X, then %05X (as today: 5 5 at 10000 "
+            "10001, 85 (0001), 3 5 5 at 10001 -- the prefix not re-executed, then 10002)", t[0], t[1], m->pcs[0],
+            m->pcs[1], t[2], word(m, STACK_TOP - 6), t[3], t[4], t[5], m->pcs[3], m->pcs[6]);
+    report("wait_prefixed", ok, d);
+    free_machine(m);
+}
+
 static void t_prefix_atomic(void)
 {
     machine *m = new_machine(F_IF | 0x0002);
@@ -1111,6 +1158,165 @@ static void t_word_memory_counts(void)
     report("word_memory_counts", ok, d);
 }
 
+/* ---- after Astra's Reply 110 ----------------------------------------------------------------------------------- */
+
+/* TEST r/m,imm: Intel's register,immediate 5 and memory,immediate 11 + EA (printed 2-67/PDF 90; MAME 4 and 10 + EA,
+   the ALU's rows), byte and word, at an even and an odd BX: a word operand at an odd address + 4, a byte never.  The
+   rows these share upstream stay: TEST AL/AX,imm (A8/A9) 4 (2-67), CMP r8,imm 4 and CMP mem,imm 10 + EA (2-51/PDF 74).
+   [BX]: EA 5 */
+static void t_test_imm_counts(void)
+{
+    static const char *const names[9] = { "TEST BL,imm", "TEST BX,imm", "TEST b[BX],imm", "TEST w[BX],imm",
+                                          "TEST AL,imm", "TEST AX,imm", "CMP BL,imm", "CMP b[BX],imm",
+                                          "CMP w[BX],imm" };
+    static const int want[2][9] = { { 5, 5, 11 + 5, 11 + 5, 4, 4, 4, 10 + 5, 10 + 5 },          /* BX even */
+                                    { 5, 5, 11 + 5, 11 + 5 + 4, 4, 4, 4, 10 + 5, 10 + 5 + 4 } }; /* BX odd */
+    char d[700];
+    int k, i, ok = 1, pos = 0;
+    for (k = 0; k < 2; k++) {
+        machine *m = new_machine(0x0002);
+        i86_regs r;
+        int t[9];
+        regs(m, &r); r.bx = (uint16_t)(0x0010 + k); r.ax = 0x00F0; i86_regs_set(m->cpu, &r);
+        m->mem[0x30010 + k] = 0x0F; m->mem[0x30011 + k] = 0xF0;
+        db(m, 3, 0xF6, 0xC3, 0x01);              /* TEST BL,01h */
+        db(m, 4, 0xF7, 0xC3, 0x01, 0x00);        /* TEST BX,0001h */
+        db(m, 3, 0xF6, 0x07, 0x0F);              /* TEST byte [BX],0Fh */
+        db(m, 4, 0xF7, 0x07, 0x00, 0xF0);        /* TEST word [BX],F000h */
+        db(m, 2, 0xA8, 0xF0);                    /* TEST AL,F0h */
+        db(m, 3, 0xA9, 0xF0, 0x00);              /* TEST AX,00F0h */
+        db(m, 3, 0x80, 0xFB, 0x10);              /* CMP BL,10h */
+        db(m, 3, 0x80, 0x3F, 0x0F);              /* CMP byte [BX],0Fh */
+        db(m, 4, 0x81, 0x3F, 0x0F, 0xF0);        /* CMP word [BX],F00Fh */
+        db(m, 1, NOP);
+        for (i = 0; i < 9; i++) t[i] = i86_step(m->cpu);
+        regs(m, &r);
+        pos += sprintf(d + pos, "%s", k ? "; BX odd: " : "BX even: ");
+        ok &= counts_line(d + pos, names, t, want[k], 9) && r.ip == 0x001D && r.bx == (uint16_t)(0x0010 + k)
+              && m->mem[0x30010 + k] == 0x0F && m->mem[0x30011 + k] == 0xF0;   /* TEST and CMP write nothing */
+        pos += (int)strlen(d + pos);
+        free_machine(m);
+    }
+    report("test_imm_counts", ok, d);
+}
+
+/* LOOPNE: "19 or 5" (printed 2-60/PDF 83; MAME LOOP's 17 taken), not taken both ways -- CX run down to 0, and ZF set
+   with CX left nonzero; LOOP 17/5 and LOOPE 18/6 (same page) stay */
+static void t_loopne_counts(void)
+{
+    static const char *const names[9] = { "LOOPNE taken", "LOOPNE taken", "LOOPNE CX=0", "LOOPNE ZF=1",
+                                          "LOOP taken", "LOOP CX=0", "LOOPE taken", "LOOPE CX=0", "LOOPE ZF=0" };
+    static const int want[9] = { 19, 19, 5, 5, 17, 5, 18, 6, 6 };
+    machine *m = new_machine(0x0002);
+    i86_regs r;
+    char d[500];
+    int t[9], ok;
+    regs(m, &r); r.cx = 3; i86_regs_set(m->cpu, &r);
+    db(m, 2, 0xE0, 0xFE);                        /* 10000 LOOPNE 10000 */
+    db(m, 2, 0xE0, 0xFE);                        /* 10002 LOOPNE 10002 */
+    db(m, 2, 0xE2, 0xFE);                        /* 10004 LOOP 10004 */
+    db(m, 2, 0xE1, 0xFE);                        /* 10006 LOOPE 10006 */
+    db(m, 2, 0xE1, 0xFE);                        /* 10008 LOOPE 10008 */
+    t[0] = i86_step(m->cpu); t[1] = i86_step(m->cpu); t[2] = i86_step(m->cpu);   /* CX 2, 1, 0 */
+    ok = m->pcs[1] == 0x10000 && m->pcs[2] == 0x10000;
+    regs(m, &r); ok &= r.cx == 0 && r.ip == 2; r.cx = 5; r.flags = 0x0042; i86_regs_set(m->cpu, &r);
+    t[3] = i86_step(m->cpu);                     /* ZF set: falls through, CX 4 */
+    regs(m, &r); ok &= r.cx == 4 && r.ip == 4; r.cx = 2; r.flags = 0x0002; i86_regs_set(m->cpu, &r);
+    t[4] = i86_step(m->cpu); t[5] = i86_step(m->cpu);
+    regs(m, &r); ok &= r.cx == 0 && r.ip == 6; r.cx = 2; r.flags = 0x0042; i86_regs_set(m->cpu, &r);
+    t[6] = i86_step(m->cpu); t[7] = i86_step(m->cpu);
+    regs(m, &r); ok &= r.cx == 0 && r.ip == 8; r.cx = 2; r.flags = 0x0002; i86_regs_set(m->cpu, &r);
+    t[8] = i86_step(m->cpu);                     /* ZF clear: falls through */
+    regs(m, &r); ok &= r.cx == 1 && r.ip == 10;
+    ok &= counts_line(d, names, t, want, 9);
+    report("loopne_counts", ok, d);
+    free_machine(m);
+}
+
+/* MUL/IMUL of AL/AX by BL/BX (ModRM C3 + /n) or by [BX] (07 + /n), one machine a case; FLAGS start with CF and OF the
+   opposite of the case's expected value, so an instruction that left them alone fails too */
+static void mul_case(int op, int ext, int mem, uint16_t a, uint16_t b, int expect, i86_regs *out)
+{
+    machine *m = new_machine(expect ? 0x0002 : (0x0002 | F_OF | 0x0001));
+    i86_regs r;
+    regs(m, &r); r.ax = a; r.dx = 0x5A5A; r.bx = mem ? 0x0010 : b; i86_regs_set(m->cpu, &r);
+    m->mem[0x30010] = (uint8_t)b; m->mem[0x30011] = (uint8_t)(b >> 8);
+    db(m, 2, op, mem ? (ext << 3) | 0x07 : 0xC0 | (ext << 3) | 3);
+    i86_step(m->cpu);
+    regs(m, out);
+    free_machine(m);
+}
+
+/* IMUL's CF and OF (Intel, printed 2-37/PDF 60): set exactly when the upper half is not the sign extension of the
+   lower, i.e. the signed product does not fit the source's width.  Astra's probe (Reply 110) -- -1 x 1, the largest
+   positive x 2, the most negative x 1, the most negative x -1, 2 x 3 -- and around the edges: the largest positive x 1,
+   the most negative reached exactly from below (fits), one past it (-129 / -32769: negative overflow), a larger
+   negative overflow.  Register and memory operands; the product (AX, DX) checked with the flags.  AF, PF, SF and ZF
+   are undefined after IMUL (the same page) and not asserted */
+static void imul_flags(int word)
+{
+    static const int16_t a8[9] = { -1, 127, -128, -128, 2, 127, -64, -43, 100 };
+    static const int16_t b8[9] = { 1, 2, 1, -1, 3, 1, 2, 3, -2 };
+    static const int32_t a16[9] = { -1, 32767, -32768, -32768, 2, 32767, 16384, -10923, 200 };
+    static const int32_t b16[9] = { 1, 2, 1, -1, 3, 1, -2, 3, -200 };
+    static const int want[9] = { 0, 1, 0, 1, 0, 0, 0, 1, 1 };  /* products: -1, 254, -128, 128, 6, 127, -128, -129, -200
+                                                                 (word: ..., 65534, ..., 32768, ..., -32768, -32769,
+                                                                 -40000) */
+    char d[2000];
+    int k, mem, ok = 1, pos = 0;
+    for (mem = 0; mem < 2; mem++)
+        for (k = 0; k < 9; k++) {
+            i86_regs r;
+            int32_t a = word ? a16[k] : a8[k], b = word ? b16[k] : b8[k], p = a * b;
+            int cf, of, prod_ok;
+            mul_case(word ? 0xF7 : 0xF6, 5, mem, (uint16_t)a, (uint16_t)b, want[k], &r);
+            cf = r.flags & 0x0001 ? 1 : 0;
+            of = r.flags & F_OF ? 1 : 0;
+            prod_ok = word ? r.ax == (uint16_t)p && r.dx == (uint16_t)((uint32_t)p >> 16)
+                           : r.ax == (uint16_t)p && r.dx == 0x5A5A;
+            if (cf != want[k] || of != want[k] || !prod_ok) {
+                ok = 0;
+                pos += sprintf(d + pos, "%s %ld x %ld: CF %d OF %d (want %d), DX:AX %04X:%04X; ", mem ? "[BX]" : "reg",
+                               (long)a, (long)b, cf, of, want[k], r.dx, r.ax);
+            }
+        }
+    sprintf(d + pos, "%d cases x (reg, [BX]): CF = OF = 1 exactly when the signed product does not fit %s",
+            9, word ? "16 bits" : "8 bits");
+    report(word ? "imul_flags_word" : "imul_flags_byte", ok, d);
+}
+static void t_imul_flags_byte(void) { imul_flags(0); }
+static void t_imul_flags_word(void) { imul_flags(1); }
+
+/* MUL, not changed: CF = OF = 1 exactly when the upper half (AH, DX) is nonzero (printed 2-37/PDF 60) */
+static void t_mul_flags(void)
+{
+    static const uint16_t a[2][5] = { { 0xFF, 0x80, 0x10, 2, 0xFF }, { 0xFFFF, 0x8000, 0x0100, 2, 0xFFFF } };
+    static const uint16_t b[2][5] = { { 0x01, 0x02, 0x10, 3, 0xFF }, { 0x0001, 0x0002, 0x0100, 3, 0xFFFF } };
+    static const int want[5] = { 0, 1, 1, 0, 1 };
+    char d[2000];
+    int w, k, mem, ok = 1, pos = 0;
+    for (w = 0; w < 2; w++)
+        for (mem = 0; mem < 2; mem++)
+            for (k = 0; k < 5; k++) {
+                i86_regs r;
+                uint32_t p = (uint32_t)a[w][k] * b[w][k];
+                int cf, of, prod_ok;
+                mul_case(w ? 0xF7 : 0xF6, 4, mem, a[w][k], b[w][k], want[k], &r);
+                cf = r.flags & 0x0001 ? 1 : 0;
+                of = r.flags & F_OF ? 1 : 0;
+                prod_ok = w ? r.ax == (uint16_t)p && r.dx == (uint16_t)(p >> 16)
+                            : r.ax == (uint16_t)p && r.dx == 0x5A5A;
+                if (cf != want[k] || of != want[k] || !prod_ok) {
+                    ok = 0;
+                    pos += sprintf(d + pos, "MUL %s %s %04X x %04X: CF %d OF %d (want %d), DX:AX %04X:%04X; ",
+                                   w ? "r/m16" : "r/m8", mem ? "[BX]" : "reg", a[w][k], b[w][k], cf, of, want[k],
+                                   r.dx, r.ax);
+                }
+            }
+    sprintf(d + pos, "5 cases x (byte, word) x (reg, [BX]): CF = OF = the upper half nonzero");
+    report("mul_flags", ok, d);
+}
+
 /* Astra's probe (Reply 104, i86_zero_probe.c) and its relatives: i86_run(1) must return after one step */
 static machine *progress_machine(int with_seam, int claim)
 {
@@ -1219,6 +1425,7 @@ int main(void)
     t_halt_masked();
     t_wait();
     t_wait_interrupt();
+    t_wait_prefixed();
     t_prefix_atomic();
     t_rep_iteration();
     t_trap();
@@ -1236,6 +1443,11 @@ int main(void)
     t_port_counts();
     t_return_counts();
     t_word_memory_counts();
+    t_test_imm_counts();
+    t_loopne_counts();
+    t_imul_flags_byte();
+    t_imul_flags_word();
+    t_mul_flags();
     t_forward_progress();
     t_step_cost_floor();
     printf("%s\n", failures ? "FAILED" : "all passed");
