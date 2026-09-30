@@ -24,8 +24,13 @@ PY37 = os.path.join(WIN7, "py37", "python.exe")
 LIMIT = 240          # seconds, per check
 
 
-def check(name, argv, env=None, cwd=HERE, ok=None, expect_fail=False):
-    return dict(name=name, argv=argv, env=env or {}, cwd=cwd, ok=ok, expect_fail=expect_fail)
+def check(name, argv, env=None, cwd=HERE, ok=None, expect_fail=False, fail_marks=(), fail_codes=(1,)):
+    """A must-fail control (expect_fail) names the failure it must show (after Astra, Reply 97): an exit code from
+    fail_codes AND every regex in fail_marks found in its output (the intended diagnostic, and the completed
+    inventory where it runs several cases).  A crash, a silent exit, an empty output or a timeout is not that."""
+    assert not expect_fail or fail_marks, "a must-fail control needs fail_marks: %s" % name
+    return dict(name=name, argv=argv, env=env or {}, cwd=cwd, ok=ok, expect_fail=expect_fail,
+                fail_marks=tuple(fail_marks), fail_codes=tuple(fail_codes))
 
 
 CHECKS = []
@@ -47,6 +52,8 @@ for synth in ("speakout", "accent"):
 CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must be caught)", [PY, "complete_fuzz_control.py", "150"]))
 # the control's own guard: fake children that crash, mis-summarise, under-cover or hang must never count as a catch
 CHECKS.append(check("complete_fuzz CONTROL guard", [PY, "complete_fuzz_control_guard.py"]))
+# and this runner's own must-fail judgement: silent exits, native crashes, tracebacks, missing marks never count
+CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
@@ -102,7 +109,8 @@ if os.path.isfile(MAME_LIVE):
     CHECKS.append(check("MAME Z180 core: spoken values CONTROL (one value flipped, must fail)",
                         [PY, "bns_equiv.py", MAME_LIVE, "--values-only",
                          "--against=" + os.path.join(HERE, "golden", "blazie_en.txt")],
-                        env={"BNS_EQUIV_FLIP": "1"}, expect_fail=True))
+                        env={"BNS_EQUIV_FLIP": "1"}, expect_fail=True,
+                        fail_marks=[r"^write values DIFFER from blazie_en\.txt at write \d+ of"]))
     CHECKS.append(check("MAME Z180 core: two units in one process", [os.path.join(LIB, "test_bl_board_mame.exe"),
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
@@ -116,7 +124,8 @@ ANDROID_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "plat
 if os.path.isfile(ANDROID_TEST):
     CHECKS.append(check("Android engine: native part as bl.dll", [PY, ANDROID_TEST]))
     CHECKS.append(check("Android engine CONTROL (rate dropped, must fail)", [PY, ANDROID_TEST],
-                        env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True))
+                        env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAILED: 4 case\(s\) differ$", r"^ok +desktop +spanish "]))
 # MAME's 8085 core (the Accent SA's, src/csrc/cpu/i8085_mame.cpp; not yet in a board): CONTRACT.md's clauses
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
@@ -127,13 +136,15 @@ WHEEL_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "python", "tes
 if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
     CHECKS.append(check("Python wheel (64-bit)", [PY, WHEEL_TEST, "--build", ENG]))
     CHECKS.append(check("Python wheel CONTROL (rate 70, must fail)", [PY, WHEEL_TEST, "--build", ENG],
-                        env={"WHEEL_TEST_BREAK": "1"}, expect_fail=True))
+                        env={"WHEEL_TEST_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^ok +the chip alone:", r"^FAIL +the Braille Lite:", r"^wheel: 1 FAILED$"]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail
 CHECKS.append(check("keep the channel open", [PY, "keep_open_test.py"]))
 CHECKS.append(check("keep the channel open CONTROL (off, must fail)", [PY, "keep_open_test.py"],
-                    env={"KEEP_OPEN_BREAK": "1"}, expect_fail=True))
+                    env={"KEEP_OPEN_BREAK": "1"}, expect_fail=True,
+                    fail_marks=[r"^FAIL A hiss, keep open:", r"^ok +F speech interrupting", r"^keep open: 1 FAILED$"]))
 # ... and with every fed sample silent, each audio check must reject it (Astra, Reply 95: missing sound passed)
 CHECKS.append(check("keep the channel open CONTROL (mute, every audio check fails)", [PY, "keep_open_test.py"],
                     env={"KEEP_OPEN_BREAK": "mute"}))
@@ -142,17 +153,20 @@ CHECKS.append(check("keep the channel open CONTROL (mute, every audio check fail
 # and its control (the C side with packing flipped) must fail
 CHECKS.append(check("bl_voice = the NVDA driver, byte for byte", [PY, "voice_equiv.py"]))
 CHECKS.append(check("bl_voice CONTROL (packing flipped, must fail)", [PY, "voice_equiv.py"],
-                    env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True))
+                    env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True,
+                    fail_marks=[r"^DIFF ", r"^[0-9] of 10 utterances byte-identical to the NVDA driver$"]))
 # bl_voice's text path (currencies, clean-up, lines, encoding) against the driver's, on random texts; and its control
 CHECKS.append(check("bl_voice text = the driver's, 5000 random texts", [PY, "voice_text_equiv.py", "5000", "1"]))
 CHECKS.append(check("bl_voice text CONTROL (no currencies, must fail)", [PY, "voice_text_equiv.py", "2000", "1"],
-                    env={"VOICE_TEXT_BREAK": "1"}, expect_fail=True))
+                    env={"VOICE_TEXT_BREAK": "1"}, expect_fail=True,
+                    fail_marks=[r"^DIFF ", r"^(?!2000 )\d+ of 2000 texts give the unit the same bytes"]))
 # other currencies than the dollar reach every unit as words (a listener: "£2.63" was read "2.63")
 CHECKS.append(check("currency rule", [PY, "currency_test.py", "rules"]))
 for w in ("blazie", "speakout", "accent"):
     CHECKS.append(check("currency %s: the unit is sent pounds and pence" % w, [PY, "currency_test.py", w]))
 CHECKS.append(check("currency CONTROL (rule off, must fail)", [PY, "currency_test.py", "speakout"],
-                    env={"CURRENCY_OFF": "1"}, expect_fail=True))
+                    env={"CURRENCY_OFF": "1"}, expect_fail=True,
+                    fail_marks=[r"^speakout: the unit was sent .*: FAILED$"]))
 CHECKS.append(check("cp850 table", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie",
                                                      "gen_cp850.py"), "--check"]))
 GEN_DEFAULTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "gen_chip_defaults.py")
@@ -162,9 +176,24 @@ if os.path.isfile(PY37):
     CHECKS.append(check("chip defaults header (Python 3.7, 32-bit)", [PY37, GEN_DEFAULTS, "--check"]))
 
 
+def judge_control(c, code, out, timed_out):
+    """(passed, why) for a must-fail control: it passes only by failing the way it names (check's docstring)."""
+    if timed_out:
+        return False, "control TIMED OUT"
+    if "Traceback (most recent call last)" in out:
+        return False, "control CRASHED instead of failing"
+    if code not in c["fail_codes"]:
+        return False, "control exit %d, not its expected %s" % (code, "/".join(map(str, c["fail_codes"])))
+    missing = [m for m in c["fail_marks"] if not re.search(m, out, re.M)]
+    if missing:
+        return False, "control's own failure not shown (missing %s)" % missing[0]
+    return True, ""
+
+
 def run(c):
     env = dict(os.environ, PYTHON_COLORS="0", **c["env"])
     t0 = time.perf_counter()
+    timed_out, code = False, None
     try:
         p = subprocess.run(c["argv"], cwd=c["cwd"], env=env, capture_output=True, text=True, timeout=LIMIT,
                            encoding="utf-8", errors="replace")
@@ -172,13 +201,9 @@ def run(c):
         passed = (c["ok"](out) if c["ok"] else code == 0)
         why = "" if passed else "exit %d" % code
     except subprocess.TimeoutExpired:
-        out, passed, why = "", False, "TIMEOUT after %d s" % LIMIT
+        out, passed, why, timed_out = "", False, "TIMEOUT after %d s" % LIMIT, True
     if c["expect_fail"]:
-        # a control must fail as a test fails, not by crashing: a traceback (a build that broke, a race on a shared
-        # file) proves nothing about the bug it guards
-        crashed = "Traceback (most recent call last)" in out
-        passed, why = ((not passed and "TIMEOUT" not in why and not crashed),
-                       "control CRASHED instead of failing" if crashed else ("" if not passed else "control did NOT fail"))
+        passed, why = judge_control(c, code, out, timed_out)
     last = [ln for ln in out.splitlines() if ln.strip() and not ln.startswith("LOG")][-1:] or [""]
     first_bad = [ln.strip() for ln in out.splitlines() if re.search(r"ended with|died|Error|FAILED|began with", ln)][:1]
     if not passed and first_bad:
@@ -186,13 +211,18 @@ def run(c):
     return c["name"], passed, time.perf_counter() - t0, why, last[0][:90]
 
 
-t0 = time.perf_counter()
-with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-    results = list(pool.map(run, CHECKS))
-bad = 0
-for name, passed, secs, why, last in results:
-    bad += not passed
-    print("%-4s %-52s %5.0f s  %s" % ("ok" if passed else "FAIL", name, secs, (why or last)[:200]))
-print("%d of %d checks passed in %.0f s on %d cores" % (len(results) - bad, len(results), time.perf_counter() - t0,
-                                                        os.cpu_count() or 0))
-sys.exit(1 if bad else 0)
+def main():
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        results = list(pool.map(run, CHECKS))
+    bad = 0
+    for name, passed, secs, why, last in results:
+        bad += not passed
+        print("%-4s %-52s %5.0f s  %s" % ("ok" if passed else "FAIL", name, secs, (why or last)[:200]))
+    print("%d of %d checks passed in %.0f s on %d cores" % (len(results) - bad, len(results), time.perf_counter() - t0,
+                                                            os.cpu_count() or 0))
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":          # importable: run_tests_guard.py tests run() and judge_control()
+    sys.exit(main())
