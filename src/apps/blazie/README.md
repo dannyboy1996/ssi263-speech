@@ -10,11 +10,12 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | --- | --- |
 | `chords.h`, `chords.c` | A braille chord from separate key presses: sent when the last key of the chord comes up. Portable. |
 | `emu_unit.h`, `emu_unit.c` | One unit running in real time: create from firmware + state, render 16-bit PCM, take chords. Portable. |
-| `main_win.c` | The Windows shell: the window, the menu (unit, idle channel sound, help), the keyboard, waveOut. |
+| `main_win.c` | The Windows shell: the window, the menu (unit, idle channel, keep open, pop and tick, sample rate, help), the keyboard, waveOut. |
 | `tns_keymap_win.c`, `.h` | A Windows key to the Type 'n Speak's key code (measured on the running firmware). |
-| `build_app.py` | Builds `blazie_emu.exe` and the two test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
+| `build_app.py` | Builds `blazie_emu.exe` and the three test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
+| `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
 
 ## Keys
 
@@ -32,9 +33,24 @@ menu, as moving a display would be; still to be confirmed on the unit).
 
 ## Settings
 
-Settings > Idle channel (hiss, whine or silent) and Settings > Sample rate (11025 to 48000 Hz; the unit restarts at
-the new rate with its memory kept). The unit's own speech settings -- rate, pitch, inflection, volume -- are set on
-the unit, with its own keys, as on the real one.
+Settings > Sample rate (11025 to 48000 Hz; the unit restarts at the new rate with its memory kept). The unit's own
+speech settings -- rate, pitch, inflection, volume -- are set on the unit, with its own keys, as on the real one.
+
+The Braille Lite's idle channel, as Tomi's unit sounds (measured: `../../hosts/blazie_idle.py`, `tools/idle_sounds.py`;
+the model: `../../csrc/blazie/bl_idle.c`). In `blazie_emu.ini`, section `[sound]`:
+
+| Setting | Menu | Choices |
+| --- | --- | --- |
+| `idle` | Idle channel | `unit` (the default: the hiss at even volumes, the whine at odd, as the unit), `hiss`, `whine`, `off` |
+| `keep_open` | Keep the channel open | `off` (silent as soon as speech ends: heard only under speech and 0.3 s after), `until` (the default: until the unit clicks it off, ~10 s after speech), `always` (never stops) |
+| `pop_click` | The pop ... the click ... | `1` (the default): the pop when a line opens the channel after the click-off, ~0.26 s before its first phoneme, and the click at the click-off; heard with `until` only |
+| `tick` | The 10 Hz tick | `1` (the default): the firmware timer's faint tick, every 100 ms while the channel is heard |
+
+The idle noise has the same level at every unit volume, as on the unit: at volume 1 it is 29 dB under the speech, at
+volume 15 50 dB under. The pop and the click are as loud at every volume too, and much louder than the speech at low
+volumes (the recordings: +0.87 and -0.53 of full scale; at volume 1 the speech's loud vowels are at -29.5 dBFS). They
+are the unit's line out as the line-in recorded it; on the unit's own headphones they decay faster. The screen-reader
+drivers keep their own hiss and whine (no noise floor, no pop, click or tick).
 
 ## Firmware
 

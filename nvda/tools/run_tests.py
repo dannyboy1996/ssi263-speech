@@ -110,6 +110,26 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
     CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
+    # its idle channel against Tomi's unit (src/csrc/blazie/bl_idle.c, src/hosts/blazie_idle.py): the noise's level at
+    # every volume, keep open off/until/always, the pop after a click-off and none before, the click, the 10 Hz tick;
+    # each control puts one bug back and must fail on exactly the checks that see it
+    IDLE = [os.path.join(EMU, "test_idle.exe"), os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]
+    CHECKS.append(check("Blazie emulator: the idle channel against the unit", IDLE))
+    for brk, marks in (
+            ("old-level", [r"^FAIL hiss level at volume 6 +-6\d\.\d dB", r"^idle sounds: 3 FAILED$"]),
+            ("follow-volume", [r"^FAIL hiss the same at volume 1 and 15 ", r"^ok +hiss level at volume 6 ",
+                               r"^idle sounds: 1 FAILED$"]),
+            ("until", [r"^FAIL always: open 12 s after speech ", r"^FAIL off: silent after speech ",
+                       r"^idle sounds: 2 FAILED$"]),
+            ("no-pop", [r"^FAIL pop on reopening after the click-off ", r"^FAIL click at the click-off ",
+                        r"^idle sounds: 2 FAILED$"]),
+            ("pop-every-line", [r"^FAIL no pop on reopening before the click-off ", r"^idle sounds: 1 FAILED$"]),
+            ("no-tick", [r"^FAIL the 10 Hz tick while open, none after +folded at 99\.98 ms: 0\.0 x",
+                         r"^idle sounds: 1 FAILED$"]),
+            ("tick-after-off", [r"^FAIL the 10 Hz tick while open, none after .*after the click-off -\d",
+                                r"^idle sounds: 1 FAILED$"])):
+        CHECKS.append(check("Blazie emulator: idle channel CONTROL (%s, must fail)" % brk, IDLE + ["--break=" + brk],
+                            expect_fail=True, fail_marks=marks))
     # the Type 'n Speak from cold (firmware/blazie/tns/, when the builder has it): its reset to defaults, its
     # question heard, y answered, its memory kept
     TNS_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie", "tns")
@@ -237,6 +257,9 @@ for w in ("blazie", "speakout", "accent"):
 CHECKS.append(check("currency CONTROL (rule off, must fail)", [PY, "currency_test.py", "speakout"],
                     env={"CURRENCY_OFF": "1"}, expect_fail=True,
                     fail_marks=[r"^speakout: the unit was sent .*: FAILED$"]))
+CHECKS.append(check("idle channel table (bl_idle_table.h = blazie_idle.py)",
+                    [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie", "gen_idle.py"),
+                     "--check"]))
 CHECKS.append(check("cp850 table", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie",
                                                      "gen_cp850.py"), "--check"]))
 GEN_DEFAULTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "gen_chip_defaults.py")

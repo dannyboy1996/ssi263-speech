@@ -3,6 +3,7 @@
   blazie_emu.exe   the app (one static program: the chip, the board with z180emu, the host, the shell)
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
+  test_idle.exe    the idle channel against Tomi's unit (its board built with bl_idle.c's test hooks)
 
 w64devkit gcc, x64 (paths.local W64DEVKIT), z180emu from third_party/z180emu.  The firmware is NOT copied: a release
 puts firmware\\ beside the program; run from the source tree, the program finds firmware/blazie/ itself.
