@@ -248,10 +248,10 @@ static void t_reset_vector(void)
     m->log_reads = 1;
     v40_step(m->cpu);
     m->log_reads = 0;
-    sprintf(d, "PS:IP %04X:%04X, IE %d, pc %05X; first boundary %05X, first read %05X; then pc %05X (want FFFF:0000, "
-            "0, FFFF0, FFFF0, FFFF0, 00400)", r.ps, r.ip, (r.psw >> 9) & 1, pc0, m->pcs[0], m->reads[0],
-            v40_pc(m->cpu));
     v40_step(m->cpu);
+    sprintf(d, "PS:IP %04X:%04X, IE %d, pc %05X; first boundary %05X, first read %05X; second boundary %05X (want "
+            "FFFF:0000, 0, FFFF0, FFFF0, FFFF0, 00400)", r.ps, r.ip, (r.psw >> 9) & 1, pc0, m->pcs[0], m->reads[0],
+            m->pcs[1]);
     report("reset_vector", r.ps == 0xFFFF && r.ip == 0 && !(r.psw & 0x200) && pc0 == 0xFFFF0 && m->pcs[0] == 0xFFFF0
                            && m->reads[0] == 0xFFFF0 && m->pcs[1] == CODE, d);
     free_machine(m);
