@@ -34,6 +34,12 @@ int emu_key(emu_unit *u, int key);
    1 on success */
 int emu_save(const emu_unit *u, const char *path);
 void emu_set_whine(emu_unit *u, int whine);
+/* The Braille Lite's idle channel as the unit sounds (../../csrc/blazie/bl_idle.h), in place of emu_set_whine's:
+   sound 0 none, 1 hiss, 2 whine, 3 as the unit (the hiss at even volumes, the whine at odd), at the measured level,
+   the same at every volume; keep_open 0 only under speech, 1 until the unit clicks off, 2 always; pop_click: the pop
+   when the channel opens and the click when it is clicked off; tick: the 10 Hz tick while the channel is heard.
+   0 if out of memory.  No effect on the Type 'n Speak. */
+int emu_set_idle(emu_unit *u, int sound, int keep_open, int pop_click, int tick);
 /* 0-100: the output gain (the unit's own volume keys still work on top of it) */
 void emu_set_volume(emu_unit *u, int volume);
 

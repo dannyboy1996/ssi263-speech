@@ -58,6 +58,14 @@ def main():
     subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_emu_unit.exe"),
                     os.path.join(HERE, "test_emu_unit.c")] + [o for o in objs if not o.endswith(("main_win.c.o", "tns_keymap_win.c.o"))]
                    + ["-lm"], env=env, check=True)
+    # the idle channel's sounds against the unit's (run_tests passes the firmware); its board built with the test hooks
+    # its must-fail controls use (bl_idle.c, BLI_TEST_HOOKS)
+    hooks = os.path.join(obj, "bl_unity_hooks.o")
+    subprocess.run([gcc] + BOARD + zinc + ["-DBLI_TEST_HOOKS", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"), "-o", hooks],
+                   env=env, check=True)
+    subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_idle.exe"), os.path.join(HERE, "test_idle.c"), hooks]
+                   + [o for o in objs if o.endswith(("ssi263.c.o", "ssi263dsp.c.o", "bl_host.c.o"))] + ["-lm"],
+                   env=env, check=True)
     print("built %s" % OUT)
 
 

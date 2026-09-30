@@ -142,6 +142,12 @@ def master_session():
     return os.path.join(external("RECORDINGS"), "sessions", "MASTER")
 
 
+def sweep_session(name):
+    """One sweep session's folder (master.wav, utterances.jsonl), e.g. W03_whine_grid.  Sweep sessions are not
+    MASTER lines: no hold-out applies to them."""
+    return os.path.join(external("RECORDINGS"), "sessions", name)
+
+
 def archive_audio(name):
     """One file from the folder of other real-unit recordings."""
     return os.path.join(external("ARCHIVE_AUDIO"), name)

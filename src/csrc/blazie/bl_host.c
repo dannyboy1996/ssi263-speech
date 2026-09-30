@@ -39,7 +39,23 @@ struct bl_host {
     int log_on;
     bh_write *wl;
     int n_wl, cap_wl;
+    bl_idle *idle;                 /* the emulator's idle-channel sounds (bh_set_idle); NULL: off */
+    int idle_power;                /* the channel's power (port A0 bit 1) as last told to it */
 };
+
+/* the idle model hears every chip write and the channel's power, at the sample the block has reached */
+static void idle_events(bl_host *h, int reg, int val)
+{
+    if (reg >= 0)
+        bl_idle_write(h->idle, h->n_buf, reg, val);
+    else {
+        int p = (bl_port_a0(h->unit) >> 1) & 1;
+        if (p != h->idle_power) {
+            h->idle_power = p;
+            bl_idle_power(h->idle, h->n_buf, p);
+        }
+    }
+}
 
 static int request(const bl_host *h)
 {
@@ -55,6 +71,8 @@ static void events(bl_host *h)
         if (ev[i].type == 'W') {
             int reg = ev[i].a, val = ev[i].b;
             ssi263_write(h->chip, reg, val);
+            if (h->idle)
+                idle_events(h, reg, val);
             if (h->log_on) {
                 if (h->n_wl == h->cap_wl) {
                     int cap = h->cap_wl ? h->cap_wl * 2 : 1024;
@@ -94,6 +112,8 @@ static void events(bl_host *h)
         }
     }
     bl_clear_events(h->unit);
+    if (h->idle)
+        idle_events(h, -1, 0);
 }
 
 static void set_ar(bl_host *h)
@@ -156,6 +176,7 @@ BL_API void bh_destroy(bl_host *h)
     if (!h)
         return;
     bl_destroy(h->unit);
+    bl_idle_free(h->idle);
     free(h->tx);
     free(h->buf);
     free(h->wl);
@@ -357,6 +378,8 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
 {
     double t = 0.0;
     h->n_buf = 0;
+    if (h->idle)
+        bl_idle_begin(h->idle);
     while (t < seconds) {
         double before, st, dt, speed;
         long n, got;
@@ -382,10 +405,28 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
     }
     if (h->board_on && h->n_buf)
         ssi_onepole(h->buf, h->n_buf, h->b0, h->b1, h->a1, h->board_state);
-    if (h->whine)
+    if (h->idle)
+        bl_idle_render(h->idle, h->buf, h->n_buf);         /* in place of the whine below */
+    else if (h->whine)
         add_whine(h, h->buf, h->n_buf);
     *audio = h->buf;
     return h->n_buf;
+}
+
+BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o)
+{
+    if (!o) {
+        bl_idle_free(h->idle);
+        h->idle = NULL;
+        return 1;
+    }
+    if (h->idle) {
+        bl_idle_set(h->idle, o);
+        return 1;
+    }
+    h->idle_power = (bl_port_a0(h->unit) >> 1) & 1;
+    h->idle = bl_idle_new(h->out_rate, o, h->idle_power, ssi263_reg(h->chip, 3), ssi263_reg(h->chip, 4));
+    return h->idle != NULL;
 }
 
 BL_API void bh_set_whine(bl_host *h, int mode)

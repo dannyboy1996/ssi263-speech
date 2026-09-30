@@ -43,6 +43,7 @@ struct bl_unit {
     int n_live_keys;
     int batt_level, batt_bit, batt_fresh;    /* the battery gauge's serial A/D converter (bl_battery) */
     unsigned char port_e0;
+    unsigned char port_a0;
     unsigned site_release;
     uint32_t instr_pc;
     bl_event *ev;
@@ -142,6 +143,8 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     int p = Port & 0xFF;
     if (p == 0xE0)
         u->port_e0 = V;
+    if (p == 0xA0)
+        u->port_a0 = V;                      /* bit 1: the speech channel's power (bl_port_a0) */
     if (p >= 0xC0 && p <= 0xC4) {
         int reg = p - 0xC0;
         unsigned long long cyc = z180_cycles(u->cpu);
@@ -431,6 +434,11 @@ void bl_hold(bl_unit *u, int chord)
 unsigned long long bl_cycles(const bl_unit *u)
 {
     return z180_cycles(u->cpu);
+}
+
+int bl_port_a0(const bl_unit *u)
+{
+    return u->port_a0;
 }
 
 int bl_events(const bl_unit *u, const bl_event **events)

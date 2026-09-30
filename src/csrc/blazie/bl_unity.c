@@ -9,7 +9,11 @@
  *
  * The core's diagnostics (logerror = printf in z80common.h, e.g. "TRDR rd") go nowhere: the adapter silences them,
  * since a library must never write to a stdout that may be a protocol pipe.
+ *
+ * The board's idle-channel sounds (bl_idle.c, which bl_host.c drives for the emulator) come along here, so every build
+ * that links the board has them; before the core, like the board.
  */
 #include "bl_board.c"
 #include "flash29.c"
+#include "bl_idle.c"
 #include "../cpu/z180_legacy.c"
