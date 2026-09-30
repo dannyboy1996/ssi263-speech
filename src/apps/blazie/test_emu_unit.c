@@ -114,6 +114,25 @@ int main(int argc, char **argv)
         remove(path);
         free(buf);
     }
+    if (g_kind == EMU_BRAILLE_LITE) {   /* the status menu's % (dots 146) reads the battery gauge; then the unit must
+                                           still answer (without the gauge it waited forever) */
+        char err[256];
+        emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+        int n = 18 * RATE, i, block = RATE / 50;
+        short *buf = (short *)calloc((size_t)n, sizeof(short));
+        double after;
+        for (i = 0; i < n; i += block) {
+            if (i == 8 * RATE) emu_key(u, 0x4C);         /* 34-chord: the status menu */
+            if (i == 11 * RATE) emu_key(u, 0x29);        /* %: the battery */
+            if (i == 15 * RATE) emu_key(u, 0x51);        /* e-chord: leave the menu */
+            emu_render(u, buf + i, block);
+        }
+        after = rms(buf + 15 * RATE, 3 * RATE);
+        snprintf(d, sizeof d, "rms %.4f after leaving the menu (silent if the unit hung on the battery gauge)", after);
+        check("status menu %", after > 0.01, d);
+        free(buf);
+        emu_destroy(u);
+    }
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

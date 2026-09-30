@@ -41,6 +41,7 @@ struct bl_unit {
     int n_keys, next_key, key_latched, hold_chord;
     unsigned char live_keys[16];             /* bl_key: chords pressed live, delivered one per boundary when free */
     int n_live_keys;
+    int batt_level, batt_bit, batt_fresh;    /* the battery gauge's serial A/D converter (bl_battery) */
     unsigned char port_e0;
     unsigned site_release;
     uint32_t instr_pc;
@@ -106,6 +107,21 @@ static uint8_t io_read(void *ctx, uint16_t Port)
     if (p >= 0xC0 && p <= 0xC4)
         return u->ssi_ar ? u->ssi_ready_value : (unsigned char)(u->ssi_ready_value ^ 0x80);
     v = p == 0x40 ? 0x00 : 0xFF;
+    /* The battery gauge (status menu, %): a serial A/D converter, found by running the firmware.  Each read of B0h
+       clocks it; the first read of 81h after the clock shows bit 3 low (the firmware waits for that), later reads
+       carry the next data bit in bit 3, least significant first, 8 bits.  Without it bit 3 stayed high and the unit
+       waited forever. */
+    if (p == 0xB0 && u->batt_level >= 0) {
+        u->batt_bit = (u->batt_bit + 1) & 7;
+        u->batt_fresh = 1;
+    }
+    if (p == 0x81 && u->batt_level >= 0) {
+        if (u->batt_fresh)
+            v &= (unsigned char)~0x08;
+        else if (!((u->batt_level >> ((u->batt_bit + 7) & 7)) & 1))
+            v &= (unsigned char)~0x08;
+        u->batt_fresh = 0;
+    }
     if (p == 0x40 && u->hold_chord >= 0) {
         if (u->instr_pc == u->site_release || u->instr_pc == u->site_release + 8)
             u->hold_chord = -1;              /* the firmware now waits for release */
@@ -253,6 +269,7 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
     u->ssi_ready_value = 0x80;
     u->ssi_ar = 1;
     u->urgent = -1;
+    u->batt_level = -1;                      /* no battery gauge unless asked for (bl_battery) */
     u->hold_chord = -1;
     for (i = 0; i < n_keys && i < MAX_KEYS; i++) {
         u->key_at[i] = key_at[i];
@@ -389,6 +406,13 @@ int bl_save_state(const bl_unit *u, const char *path)
         return 0;
     ok = fwrite(u->ram + 0x40000, 1, 0x40000, s) == 0x40000 && fwrite(u->fflash, 1, 0x80000, s) == 0x80000;
     return fclose(s) == 0 && ok;
+}
+
+void bl_battery(bl_unit *u, int level)
+{
+    u->batt_level = level;
+    u->batt_bit = 7;
+    u->batt_fresh = 0;
 }
 
 int bl_key(bl_unit *u, int chord)

@@ -22,6 +22,7 @@
 #define BOOT_INSTR 100000ULL        /* the stand-in boot before the chip takes over A/R: short, so the greeting is heard */
 #define STEP_S 0.0005               /* the host's lockstep */
 #define CLOCK_HZ 6144000.0
+#define BATTERY_LEVEL 128           /* the gauge's raw reading: "100 percent", not charging (255: charging) */
 
 void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state);   /* ssi263dsp.c */
 
@@ -64,6 +65,7 @@ emu_unit *emu_create(int kind, const char *firmware, const char *state, double o
                             errlen);
         if (!u->host) { ssi263_free(u->chip); free(u); return NULL; }
         bh_set_whine(u->host, whine);
+        bh_battery(u->host, BATTERY_LEVEL);   /* the status menu's % reads the gauge (without it: frozen) */
     }
     u->out_rate = out_rate;
     u->gain = MAKEUP;

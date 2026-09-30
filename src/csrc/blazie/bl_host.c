@@ -445,3 +445,8 @@ int bh_save_state(const bl_host *h, const char *path)
 {
     return bl_save_state(h->unit, path);
 }
+
+void bh_battery(bl_host *h, int level)
+{
+    bl_battery(h->unit, level);
+}
