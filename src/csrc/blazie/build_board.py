@@ -108,6 +108,9 @@ def main():
     for exe, main_c in (("bl_live.exe", "bl_live.c"), ("test_bl_board.exe", "test_bl_board.c")):
         subprocess.run([gcc] + FLAGS + inc + ["-o", os.path.join(OUT, exe), os.path.join(HERE, "bl_unity.c"),
                                                os.path.join(HERE, main_c)], env=env, check=True)
+    # run_ahead.h's contract on a synthetic board and chip (no firmware): test_run_ahead.c includes run_ahead.c
+    subprocess.run([gcc] + FLAGS + ["-Wall", "-I" + HERE, "-o", os.path.join(OUT, "test_run_ahead.exe"),
+                                    os.path.join(HERE, "test_run_ahead.c")], env=env, check=True)
     # the legacy path's exceptions (CONTRACT.md 3) on z180emu: ../cpu/test_z180_legacy.c
     cpu = os.path.join(os.path.dirname(HERE), "cpu")
     subprocess.run([gcc] + FLAGS + inc + ["-I" + cpu, "-w", "-o", os.path.join(OUT, "test_z180_legacy.exe"),
