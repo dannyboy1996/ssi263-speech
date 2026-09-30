@@ -119,16 +119,50 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   - PSW bits 1, 3 and 5 are "X: Undefined" (the PUSH PSW listing): the cores may differ there, and MAME keeps its
     undocumented V and K flags in them.
 
+**8086 (MAME's i8086, the pinned revision; documented as it behaves, not yet decided against Intel's manual):**
+- **Reset**: CS:IP = FFFF:0000 (linear FFFF0h), DS = ES = SS = 0, FLAGS F002h (IF and TF off; the 8086's bits 12-15
+  read 1); a pending NMI edge is dropped, a held INTR is sampled again.
+- **Order at A**: a pending NMI, else INTR when IF is set -- neither while the interrupt shadow is active (5). Both
+  are *vectored*: FLAGS is pushed, IF and TF cleared, the vector read (INTR: `irq_ack(ctx, I86_INTR, 0)`, one byte,
+  the 8259's second INTA; NMI: 2), then CS and IP pushed -- the IP where execution resumes -- and CS:IP loaded from
+  the table. INTR is a level (dropped before acceptance, it is not taken); NMI an edge. A halted core leaves HALT.
+  A halted core stops A there; otherwise the **single-step trap** comes next: armed by POPF or IRET with TF set, it
+  is taken (INT 1) at the second boundary after, i.e. after one more instruction, never while the shadow is active
+  (so MOV SS delays it by one instruction). An INTR and the trap can both be taken at one A (MAME's order).
+- **Acceptance charge**: 0 T-states -- MAME never charges an interrupt's entry (its table's EXCEPTION entry, 51, is
+  unused). INT n is 0 T, INT 3 2 T, INTO taken 2 T, IRET 44 T (32 + its POPF). Intel gives 51, 52, 53 and 24:
+  **open**, to be decided from the manual as the 8085's acceptance was.
+- **INT n / INT 3 / INTO / divide error and the host (`cpu_bus.intercept`)**: raised by the instruction, at E, and
+  offered to `intercept(ctx, vector, kind)` first -- kind `I86_INT_SOFTWARE`, or `I86_INT_EXCEPTION` for a divide
+  error -- with CS:IP already past the instruction (the 8086 pushes that address for a divide error too). Nonzero:
+  the host serviced it; nothing is pushed and the instruction ends there, with the registers the host set through
+  `i86_regs_set`. Zero or no callback: the core pushes and vectors. NMI, INTR and the trap are never offered (they
+  happen at A). This is the seam a DOS/BIOS/EMS stand-in needs (the Accent-mini host), the equivalent of Unicorn's
+  interrupt hook.
+- **Prefixes**: a segment override and the instruction it modifies are ONE step (MAME runs the prefix as its own
+  loop turn but never dispatches an interrupt between them); the saved PC is the first prefix's. LOCK is MAME's own
+  step and opens a one-instruction shadow.
+- **REP string instructions**: one iteration per step. An interrupt is sampled between iterations; the pushed IP is
+  the first prefix's, so the instruction resumes with all its prefixes (MAME; the real 8086 keeps only one). Each
+  iteration re-fetches and re-charges its prefixes (CS: REP MOVSB: 2 + 2 + 18 = 22 T per iteration; Intel 17 per
+  repetition plus 9).
+- **HLT** charges 2 T (CHANGED: MAME ends its slice instead); the slots are in 6.
+
 ## 5. EI
 
 After EI, the next step's acceptance skips the **maskable** interrupts, so the instruction after EI runs first
 **(chip)**. TRAP and NMI are not delayed.
+
+8086: the shadow (`m_no_interrupt`) follows STI, POP SS, MOV sreg (any segment register, MAME) and LOCK; it holds
+off NMI as well as INTR and the single-step trap for the one instruction after, and counts down at C.
 
 ## 6. HALT and SLP
 
 A halted core does one **slot** per step, separate from the HLT instruction's own execution cost:
 - Z180: 3 T-states **(legacy, kept as model)**.
 - 8085: 4 T-states **(model, proposed)**.
+- 8086: 2 T-states **(model)**; the HLT has completed, so `i86_pc()` and the address an acceptance pushes are both
+  the byte after it. A WAIT that waits (TEST low) is likewise a 3-T slot per step with IP held.
 
 Interrupt arrival is tested at both slot edges.
 
@@ -192,7 +226,14 @@ opcode fetch already happens before the charge), not by a constant. Before migra
   interleaved in one thread must behave as each alone (a required test; `test_bl_board.c` does it today for the
   board).
 - **Re-entry.** A callback may call `*_cycles`, `*_steps`, `*_pc`, `*_regs_get` and `*_set_irq`, but not `*_step`,
-  `*_run`, `*_reset` or `*_destroy`.
+  `*_run`, `*_reset` or `*_destroy`. The 8086's `intercept` may also call `i86_regs_set` (its whole purpose).
+- **x86 only** (a host standing in for DOS writes the machine's registers): `i86_regs_set` between steps or from
+  `intercept` (FLAGS bits 12-15 are forced to 1; setting TF does not arm the trap); `i86_next_pc` (CS * 16 + IP now,
+  for a run-until test); `i86_aliased` (opcodes whose meaning differs on the 80186 and later: a program needing a
+  later CPU shows there).
+- **Memory** (8086): 20-bit linear addresses; a word is two byte accesses, low first, at consecutive linear addresses
+  (so a word at offset FFFFh does not wrap inside its segment: MAME's); a word port access is two byte accesses, the
+  port then port + 1 (the 8088's bus).
 - **`*_destroy`** frees everything the core allocated.
 
 ## 10. How a core is accepted
@@ -248,6 +289,18 @@ next step's A, not inside SIM's step), `sim_r75`, `rst_levels`; `intr_rst`, `int
 2; 18 T), `intr_nop` (nothing pushed, 4 T), `intr_jcc`, `intr_twice` (the byte index restarts), `intr_halt`;
 `sid_sod`.
 
+**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 18 must-fail
+controls, each undoing one rule of the driver, a named change of the extraction or an upstream rule, are
+`i86_controls.py`): `zero_budget`, `reset` (FFFF:0000, F002h, a pending NMI dropped, a held INTR sampled again),
+`two_cores`; `intr_vector` (the three pushes, IF/TF cleared, one `irq_ack` byte 0, a 0-T acceptance, `i86_pc()`
+at the pushes), `intr_masked`, `intr_level`, `sti_shadow`, `ss_shadow` (MOV SS and POP SS), `nmi_edge`;
+`int_iret` (0 T and 44 T, MAME's), `intercept` (IP past the INT, nothing pushed, the host's AX kept; a declined
+vector vectored), `intercept_kinds` (INTO, INT 3, the divide error with IP past the DIV), `hw_not_offered`; `halt`
+(2 T, 2-T slots, the pushed address after the HLT), `halt_masked`, `wait`; `prefix_atomic` (15 T, as Intel),
+`rep_iteration`; `trap`, `trap_ss`; `aliased`; `tstates` (MOV r16,imm 4, OUT/IN DX 8, CLI/STI 2, JMP short 15:
+MAME = Intel); `io` (a word port access is two bytes); `flags`. Against Unicorn on the Accent-mini's driver:
+`compare_i86_accent.py` (README.md).
+
 **The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
 first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
 it at the next call), `legacy_burst` (a 100-cycle call from the DMA start: one boundary, 17 bytes, 102 cycles),
@@ -278,6 +331,9 @@ Acceptance per core:
 - **MAME's 8085 (corrected path)**: per-step traces against the Python core at normalised phases, each difference
   decided from Intel's documentation (4); the 8080/8085 exercisers; the interrupt, flag and timing tests; the
   captured Accent SA reference (8).
+- **MAME's 8086 (corrected path)**: the phase tests above; then the Accent-mini's driver against Unicorn, every chip
+  write's value identical and every time difference explained (none so far); the open timing questions of 4 decided
+  from Intel's manual; then a listen.
 
 The behavioural specification comes from the manufacturers' manuals. Observations of today's cores are labelled
 **(legacy)** and are kept as regression facts, not as the definition of correct.
@@ -286,7 +342,7 @@ The behavioural specification comes from the manufacturers' manuals. Observation
 
 - `cpu.h` and this contract: MIT.
 - The z180emu adapter links a GPL-2.0-or-later core, so any build containing it is GPL.
-- MAME's Z180 and 8085 files keep their BSD-3-Clause notices, each extracted dependency with its own actual notice
+- MAME's Z180, 8085 and 8086 files keep their BSD-3-Clause notices, each extracted dependency with its own actual notice
   and the upstream revision pinned.
 - **Our dependency policy** for store builds (iOS): no GPL components, so neither z180emu nor Unicorn; MIT and BSD
   components with their notices kept; no firmware shipped (it is imported from Files). This is our policy. Apple's

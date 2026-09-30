@@ -25,6 +25,14 @@ The cores never know which board they are in.
 | `i8085_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (the runner guard is `contract_controls.py`'s). |
 | `test_i8085_cpm.c` | Runs a CP/M 8080/8085 test program (TST8080, 8080PRE, 8080EXM, CPUTEST; GPL, not in the repo) on the 8085 core. |
 | `trace_i8085.py` | The 8085 core against the Python one (`src/hosts/i8085.py`) on the Accent SA firmware's boot: per-step registers at the boundary, the first differences by class. |
+| `mame_i86/` | Where MAME's 8086 comes from: `PINNED.txt` (the upstream revision, the files' hashes) and the licence text (BSD-3-Clause; Carl). Nothing of it is copied unchanged. |
+| `extract_i86_machine.py` | Generates `i86_mame_machine.cpp` from MAME's `i86.cpp` and `i86inline.h` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
+| `i86_mame_machine.cpp` | **Generated; do not edit.** MAME's 8086: the inline helpers, the cycle tables, reset, an interrupt's entry (with the INT seam), the input lines, execute_run's own opcodes and every other instruction. |
+| `i86_mame.hpp` | Our class around it: one class with the member names MAME's code expects (from `i86.h`) and small stand-ins for the framework (the bus, the INTA vector, no coprocessor, no wait states). |
+| `i86_mame.cpp` | **Our step driver** (the contract's phases, following execute_run) and the `cpu.h` functions (`i86_*`, with `i86_regs_set`, `i86_next_pc` and `i86_aliased` for a host that stands in for DOS). It includes `i86_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
+| `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (24): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT, prefixes, REP, the trap flag, the alias counter, T-states, I/O, FLAGS. |
+| `i86_controls.py` | Its must-fail controls (18): each rule undone in a scratch copy, exactly its tests must fail. |
+| `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios, every chip write compared. |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
 `test_bl_board_mame.exe`, beside the legacy ones) and `../../../build_linux.sh` (`test_bl_board_mame`). Gated in
@@ -34,6 +42,11 @@ The shipped libraries still use the legacy core.
 
 MAME's 8085 (the Accent SA's CPU, to replace `src/hosts/i8085.py`) is built the same way: `test_i8085_contract.exe`
 by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated; no board runs it yet.
+
+MAME's 8086 (the Accent-mini's PC, to replace Unicorn under `src/hosts/accent.py`) likewise: `test_i86_contract.exe`
+and `x64/`, `x86/pc86.dll` (`../pc86`) by `build_board.py`, `test_i86_contract` and `libpc86.so` by `build_linux.sh`.
+Gated: the contract tests, `compare_i86_accent.py --quick` with its control, and driver_sim on the built add-on with
+`SSI263_ACCENT_CORE=mame`. Opt-in only: Unicorn stays the default.
 
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.
@@ -73,3 +86,35 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
   the reset value on. `--control` (an 11-T acceptance) must be reported, and is. With `--trap-after-ei 1` (a
   TRAP raised right after an EI) the cores part: the MAME core takes TRAP at once (CONTRACT.md 5), the Python
   core runs the next instruction first.
+
+## The MAME 8086 against Unicorn (first comparison, 2026-09-30)
+
+- **Which CPU.** An instruction census of SPKEMS.DVC under Unicorn (a block hook, every distinct block disassembled;
+  INIT, boot, eight texts with numbers and punctuation, rate/pitch/volume/voice commands, a cancel mid-sentence:
+  3,761 distinct blocks, 5,471 chip writes, some 180 million instructions) found 48 mnemonics, all 8086: no 0Fh,
+  60h-6Fh, C0h/C1h, C8h/C9h, no operand-size, address-size, FS or GS prefix; the only prefixes CS:, ES: and REP.
+  PUSHF/POPF only save and restore IF around critical sections (no CPU-type test). So MAME's `i8086` (the 8088 is
+  the same code on a narrower bus): the lowest core, and the PC the card was sold for. The core counts every opcode
+  whose meaning differs on the 80186 and later (`i86_aliased`) and `pc86.py` stops on one: none in 625 million steps
+  of `compare_i86_accent.py`.
+- **The writes** (`compare_i86_accent.py`, full run): INIT 17, the demo dialogue 13,317, settings 2,823, seeded
+  cancels 1,447, the add-on's snapshot path 687 -- every value AND every time identical, the audio identical, the
+  registers and the host's log identical; INIT's snapshots (registers, chip writes, card and EMS state) identical;
+  64- and 32-bit Python. Memory after INIT differs in 4 bytes: FLAGS images on the stack, bits 12-15 set on the
+  8086 (F2h) and clear on Unicorn (02h, a 386 in real mode) -- never read back as data.
+- **Timing, classified.** Both CPUs are driven the host's way, `cpu_ips` (5 million) instructions per second of chip
+  time in slices, so a write's time can move only where the two count instructions differently and a slice ends in
+  between. The known cases: (1) a REP string instruction with CX = n: Unicorn counts n + 1 (a last pass that finds
+  CX = 0), MAME n. The driver's only REP is the REPE CMPSB of its EMS check, inside INIT's single unsliced call: no
+  effect. (2) LOCK is its own step on MAME (unused by the driver). None occurred. What the coupling hides: MAME
+  charges this driver 14-15 T-states per instruction, so 5 million instructions a second is a 74 MHz 8086; a
+  4.77 MHz PC would run about 320,000. Coupling by T-states instead is a decision for Tomi and Astra, not made here.
+- **complete_fuzz on the MAME core** (`COMPLETE_FUZZ_SYNTH=accent`, SIM_SPEED=10) reports 1-4 incomplete utterances
+  per 150 steps where Unicorn reports none. Not the CPU: the driver's calls recorded from such a run and replayed on
+  both CPUs give the live run's 29,518 writes exactly, on either; Unicorn slowed by 25% (a sleep after each run/say)
+  fails the same way; with the fuzz's 0.5 s wait after "done" made 1.5 s, the MAME core passes every seed. The
+  utterances finish, later than the check looks: `pc86.dll` is about 1.2 times slower than Unicorn's JIT on this
+  driver, and the fuzz's margin is host-speed dependent. Not gated on the MAME core for that reason.
+- **Known limits (MAME's, kept):** an interrupt's entry costs 0 T (INT n 0 T, an INTR/NMI acceptance 0 T; Intel
+  gives 51 for INT n); IRET is 44 T (32 + its POPF; Intel 24); a REP MOVSB iteration 22 T (Intel 17 a repetition);
+  NOP 2 T (Intel 3). The undefined flags are MAME's.

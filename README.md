@@ -86,7 +86,7 @@ The README in each folder says which files, with their checksums.
 |---|---|
 | `src/ssi263/` | The chip. `chip.py` is the reference, `params.py` holds every uncertain constant tagged by its source, `native.py` is the same chip in C behind the same interface |
 | `src/csrc/` | The chip in C99, `build_native.py`, and the pinned Unicorn 2.1.4 source with its patches (see `UNICORN-ARM-FIX.md`) |
-| `src/hosts/` | The firmware hosts: `speakout.py`, `blazie.py`, `accent.py`, `accent_sa.py` with `i8085.py`, and `ucmini.py` |
+| `src/hosts/` | The firmware hosts: `speakout.py`, `blazie.py`, `accent.py`, `accent_sa.py` with `i8085.py`, and `ucmini.py` (Unicorn); `pc86.py` runs the Accent-mini on MAME's 8086 instead (opt-in, `SSI263_ACCENT_CORE=mame`; `src/csrc/pc86/`) |
 | `src/data/rom_bits.csv` | The phoneme ROM |
 | `src/HOLDOUT.md` | The hold-out rules, and a log of every change to the chip and every look at the hold-out |
 | `docs/` | The documentation (see above) |
