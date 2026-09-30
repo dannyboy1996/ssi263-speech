@@ -223,13 +223,20 @@ CHECKS.append(check("open channel: new speech not queued behind it", [PY, "tail_
 CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail_latency.py"],
                     env={"TAIL_LATENCY_BREAK": "1"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel ", r"^ok +B whine off",
-                                r"^tail latency: 1 FAILED$"]))
+                                r"^tail latency: [12] FAILED$"]))
 # Tomi (0.7 test build): with keep open, a follow-up utterance paused longer -- the idle audio still queued (up to
 # IDLE_AHEAD_S and a block) played before it; now dropped once the last speech has played (the player's onDone)
 CHECKS.append(check("open channel CONTROL (idle audio left queued, must fail)", [PY, "tail_latency.py"],
                     env={"TAIL_LATENCY_BREAK": "queued"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel .*B \+ 40 ms", r"^ok +B whine off",
                                 r"^tail latency: 1 FAILED$"]))
+# ... and while the last speech's onDone is still due (Astra, Reply 109): NVDA's player calls it only from feed/sync on
+# the feeding thread, so the wait must service it (an empty feed) and a cancel must end it; the plain wait put back
+# stalled ~0.5 s, even after a cancel -- D and E must fail
+CHECKS.append(check("open channel CONTROL (plain wait on the last onDone, must fail)", [PY, "tail_latency.py"],
+                    env={"TAIL_LATENCY_BREAK": "plainwait"}, expect_fail=True,
+                    fail_marks=[r"^ok +A whine on", r"^FAIL D next speech while the last onDone is due",
+                                r"^FAIL E cancel inside that wait", r"^tail latency: 2 FAILED$"]))
 # ... and the opt-in "run ahead" mode (src/csrc/blazie/run_ahead.h) against today's lockstep through bl.dll: every
 # register value identical over sessions with cancels and a rate change, and say() to first sound in chip time (at most
 # 100 ms run ahead, 300 ms in lockstep); its controls: one value flipped must be caught, and the mode left off must fail

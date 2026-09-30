@@ -48,6 +48,8 @@ BLOCK_S = 0.03
 # player, so new speech drops at most this much of it.
 IDLE_AHEAD_S = 0.12
 TAIL_KEEP_QUEUED = False           # True: new speech waits behind the idle audio already queued (0.7 draft; a test's control)
+TAIL_PLAIN_WAIT = False            # True: wait for the last speech's onDone without servicing callbacks (a test's control)
+PLAYED_POLL_S = 0.005              # while waiting for it: how often an empty feed lets the player fire what is due
 # The click when the firmware clicks the open channel off (Tomi, 0.7: with keep open only): Tomi's unit's, measured
 # (blazie_idle.CLICK, the emulator's too).  Its audible part is the first ~0.1 s; the rest is a slow drift (the 0.49 s
 # decay), faded out by CLICK_S so that speech coming just then does not wait behind it.
@@ -666,14 +668,33 @@ class SynthDriver(SynthDriver):
                 if clicked and not NO_CLICK:
                     self._feed(unit.chip.dsp.pcm16(_click(rate), gain), rate)
                 self._player.idle()      # clicked off (or the driver stopping)
-            elif fed and played is not None and not TAIL_KEEP_QUEUED and \
-                    played.wait(max(0.0, self._play_end - _now()) + 0.5) and not self._cancelFlag.is_set():
+            elif fed and played is not None and not TAIL_KEEP_QUEUED and self._await_played(played):
                 self._player.stop()      # new speech: only idle audio is left in the player
                 self._play_end = 0.0
         except Exception:
             pass
         if self._cancelFlag.is_set() or self._queue.empty():
             self._play_end = 0.0
+
+    def _await_played(self, played):
+        """True once the last utterance's own onDone has come (`played`); False on a cancel, the driver stopping, or a
+        timeout -- never an invented "played".  NVDA's WASAPI player calls onDone only from feed() and sync() on the
+        feeding thread (nvdaHelper/local/wasapi.cpp: maybeFireCallback), and this thread feeds nothing while it
+        waits, so it services them itself: an empty feed fires the ones due, and adds nothing (Astra, Reply 109:
+        a plain wait on the event let the done go undelivered for its whole timeout, ~0.57 s, even after a cancel)."""
+        deadline = time.perf_counter() + max(0.0, self._play_end - _now()) + 0.5
+        while not played.is_set():
+            if self._cancelFlag.is_set() or self._stopped or time.perf_counter() > deadline:
+                return False
+            if TAIL_PLAIN_WAIT:
+                played.wait(max(0.0, deadline - time.perf_counter()))    # the Reply 109 bug (a test's control)
+                continue
+            try:
+                self._player.feed(b"")
+            except Exception:
+                return False
+            played.wait(PLAYED_POLL_S)
+        return not self._cancelFlag.is_set()
 
     def _switch_rate(self):
         """A new sample rate or inflection setting: a rebooted unit (and, for a new rate, a new player, since the
