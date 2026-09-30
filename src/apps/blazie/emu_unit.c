@@ -38,6 +38,10 @@ struct emu_unit {
     double out_rate, gain;
     const double *pend;             /* rendered but not yet handed out */
     int n_pend;
+    int quick;                      /* emu_set_quick */
+    int hurry;                      /* a key taken, no spoken phoneme loaded since: the CPU at EMU_QUICK_TURBO */
+    double hurry_from;              /* chip time of that key */
+    int tns_r3;                     /* the Type 'n Speak's R3 as written (a load with bit 7 clear is a phoneme) */
 };
 
 emu_unit *emu_create(int kind, const char *firmware, const char *state, double out_rate, int whine, char *err,
@@ -93,8 +97,13 @@ static void tns_events_to_chip(emu_unit *u)
     const bl_event *ev;
     int n = tns_events(u->tns, &ev), i;
     for (i = 0; i < n; i++)
-        if (ev[i].type == 'W')
+        if (ev[i].type == 'W') {
             ssi263_write(u->chip, ev[i].a, ev[i].b);
+            if (ev[i].a == 3)
+                u->tns_r3 = ev[i].b;
+            else if (ev[i].a == 0 && !(u->tns_r3 & 0x80) && (ev[i].b & 0x3F))
+                u->hurry = 0;       /* a spoken phoneme (PA is code 00): quick response ends */
+        }
     tns_clear_events(u->tns);
 }
 
@@ -126,7 +135,7 @@ static int tns_render(emu_unit *u, double seconds, const double **out)
         dt = ssi263_time(u->chip) - before;
         if (dt < 1e-5)
             dt = 1e-5;
-        cyc = (unsigned long long)(CLOCK_HZ * dt);
+        cyc = (unsigned long long)(CLOCK_HZ * dt * (u->hurry ? EMU_QUICK_TURBO : 1.0));
         tns_run(u->tns, cyc ? cyc : 1);
         tns_events_to_chip(u);
         t += dt;
@@ -137,12 +146,28 @@ static int tns_render(emu_unit *u, double seconds, const double **out)
     return n_buf;
 }
 
+/* quick response ends at the first spoken phoneme (bl_host clears `preparing` there; the Type 'n Speak's lockstep
+   clears hurry) or after EMU_QUICK_LIMIT_S: a key that brings no speech must not leave the unit fast */
+static void hurry_check(emu_unit *u)
+{
+    if (!u->hurry)
+        return;
+    if (u->host && !bh_get_int(u->host, "preparing"))
+        u->hurry = 0;
+    else if (ssi263_time(u->chip) - u->hurry_from > EMU_QUICK_LIMIT_S) {
+        u->hurry = 0;
+        if (u->host)
+            bh_set_int(u->host, "preparing", 0);
+    }
+}
+
 void emu_render(emu_unit *u, short *out, int n)
 {
     while (n > 0) {
         int k;
         if (!u->n_pend) {
             double sec = (double)n / u->out_rate;
+            hurry_check(u);
             u->n_pend = u->tns ? tns_render(u, sec, &u->pend) : bh_run(u->host, sec, STEP_S, &u->pend);
             if (u->host)
                 bh_clear_tx(u->host);   /* unplugged, what the unit sends goes nowhere (plugged, it never lands here) */
@@ -163,7 +188,30 @@ void emu_render(emu_unit *u, short *out, int n)
 
 int emu_key(emu_unit *u, int key)
 {
+    if (u->quick && (u->host || (key & 0x80))) {   /* a chord, or a Type 'n Speak key going down */
+        u->hurry = 1;
+        u->hurry_from = ssi263_time(u->chip);
+        if (u->host) {
+            bh_set_double(u->host, "turbo", EMU_QUICK_TURBO);
+            bh_set_int(u->host, "preparing", 1);     /* bl_host: the CPU at `turbo` until a spoken phoneme loads */
+        }
+    }
     return u->tns ? tns_key(u->tns, key) : bh_key(u->host, key);
+}
+
+void emu_set_quick(emu_unit *u, int on)
+{
+    u->quick = on != 0;
+    if (!u->quick && u->hurry) {
+        u->hurry = 0;
+        if (u->host)
+            bh_set_int(u->host, "preparing", 0);
+    }
+}
+
+double emu_time(const emu_unit *u)
+{
+    return ssi263_time(u->chip);
 }
 
 int emu_save(const emu_unit *u, const char *path)

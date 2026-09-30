@@ -6,8 +6,10 @@
  *   menu and Alt+F4 closes it.
  *   Type 'n Speak: the whole keyboard is the unit's (tns_keymap_win.c) -- Alt and F10 included -- except F11, which
  *   opens this program's menu.
- * Sound: waveOut, four blocks of 20 ms, each rendered by the unit when the card gives one back -- the card's clock
- * paces the unit.  Settings: blazie_emu.ini beside the program.  Settings > Serial port plugs the unit's serial port
+ * Sound: waveOut, four blocks of 10 ms ([sound] block_ms, 5-20), each rendered by the unit when the card gives one
+ * back -- the card's clock paces the unit.  A key reaches the unit at the next block rendered, which plays behind the
+ * blocks already queued: four blocks of 20 ms (0.6.0) made that 60-80 ms, 10 ms blocks make it 30-40.
+ * Settings: blazie_emu.ini beside the program.  Settings > Serial port plugs the unit's serial port
  * into a COM port (serial_win.c), for WinDisk, PCDISK or a terminal on the other end.
  *
  * Firmware: firmware\ beside the program (a release carries it), or firmware_dir= in the settings.
@@ -25,9 +27,10 @@
 #define RATE_MAX 48000
 #define BLOCK_MAX (RATE_MAX / 50)
 #define NBLOCKS 4
+#define BLOCK_MS_DEFAULT 10
 
 enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
-       ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK,
+       ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK, ID_QUICK = 218,
        ID_RATE = 220,
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
@@ -55,6 +58,8 @@ static HWAVEOUT g_wave;
 static WAVEHDR g_hdr[NBLOCKS];
 static short g_buf[NBLOCKS][BLOCK_MAX];
 static int g_rate = 44100;               /* the sound card's rate; the unit renders at it */
+static int g_block_ms = BLOCK_MS_DEFAULT;
+static int g_quick;                      /* quick key response (emu_set_quick): off, as the real unit */
 static const int RATES[] = {11025, 16000, 22050, 32000, 44100, 48000};
 #define N_RATES ((int)(sizeof RATES / sizeof RATES[0]))
 static HANDLE g_wave_event, g_thread;
@@ -171,6 +176,7 @@ static int start_unit(int kind)
     if (g_link)
         emu_serial_attach(u, 1);            /* the new unit takes the old one's place on the COM port */
     emu_set_idle(u, g_whine, g_keep_open, g_popclick, g_tick);
+    emu_set_quick(u, g_quick);
     EnterCriticalSection(&g_lock);
     emu_destroy(g_unit);
     g_unit = u;
@@ -195,7 +201,7 @@ static DWORD WINAPI audio_thread(LPVOID arg)
                 continue;
             EnterCriticalSection(&g_lock);
             if (g_unit)
-                emu_render(g_unit, g_buf[i], g_rate / 50);
+                emu_render(g_unit, g_buf[i], g_rate * g_block_ms / 1000);
             else
                 memset(g_buf[i], 0, sizeof g_buf[i]);
             com_kick(g_link);               /* the unit ran: its serial bytes may be waiting, both ways */
@@ -224,7 +230,7 @@ static int open_audio(void)
     for (i = 0; i < NBLOCKS; i++) {
         memset(&g_hdr[i], 0, sizeof g_hdr[i]);
         g_hdr[i].lpData = (LPSTR)g_buf[i];
-        g_hdr[i].dwBufferLength = (DWORD)(sizeof(short) * (g_rate / 50));
+        g_hdr[i].dwBufferLength = (DWORD)(sizeof(short) * (g_rate * g_block_ms / 1000));
         waveOutPrepareHeader(g_wave, &g_hdr[i], sizeof(WAVEHDR));
         g_hdr[i].dwFlags |= WHDR_DONE;     /* all free: the thread fills them */
     }
@@ -400,6 +406,8 @@ static HMENU make_menu(void)
     AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
     AppendMenuA(sound, MF_STRING, ID_POPCLICK, "The &pop when the channel opens, the click when it clicks off");
     AppendMenuA(sound, MF_STRING, ID_TICK, "The 10 Hz &tick of the open channel");
+    AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(sound, MF_STRING, ID_QUICK, "&Quick key response (faster than the real unit)");
     AppendMenuA(help, MF_STRING, ID_KEYS, "&Keys");
     AppendMenuA(help, MF_STRING, ID_ABOUT, "&About");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)unit, "&Firmware");
@@ -534,6 +542,15 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_POPCLICK: g_popclick = !g_popclick; apply_idle(); return 0;
         case ID_TICK: g_tick = !g_tick; apply_idle(); return 0;
         case ID_SERIAL_NONE: set_serial("", 0); return 0;
+        case ID_QUICK:
+            g_quick = !g_quick;
+            EnterCriticalSection(&g_lock);
+            if (g_unit)
+                emu_set_quick(g_unit, g_quick);
+            LeaveCriticalSection(&g_lock);
+            CheckMenuItem(GetMenu(w), ID_QUICK, MF_BYCOMMAND | (g_quick ? MF_CHECKED : MF_UNCHECKED));
+            WritePrivateProfileStringA("unit", "quick_keys", g_quick ? "1" : "0", g_ini);
+            return 0;
         default:
             if (LOWORD(wp) >= ID_RATE && LOWORD(wp) < ID_RATE + N_RATES) {
                 set_rate(RATES[LOWORD(wp) - ID_RATE]);
@@ -634,6 +651,11 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     SetTimer(g_wnd, 1, 60000, NULL);
     load_idle();
     apply_idle();
+    g_block_ms = GetPrivateProfileIntA("sound", "block_ms", BLOCK_MS_DEFAULT, g_ini);
+    if (g_block_ms < 5 || g_block_ms > 20)
+        g_block_ms = BLOCK_MS_DEFAULT;
+    g_quick = GetPrivateProfileIntA("unit", "quick_keys", 0, g_ini) != 0;
+    CheckMenuItem(GetMenu(g_wnd), ID_QUICK, MF_BYCOMMAND | (g_quick ? MF_CHECKED : MF_UNCHECKED));
     {
         int k, r = GetPrivateProfileIntA("sound", "rate", 44100, g_ini);
         for (k = 0; k < N_RATES; k++)

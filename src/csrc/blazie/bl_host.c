@@ -9,6 +9,7 @@
 #include "bl_board.h"
 #include "bl_host.h"
 #include "bl_whine_table.h"
+#include "run_ahead.c"             /* the run-ahead mode (bh_set_int "run_ahead"): one translation unit */
 
 #define CLOCK_HZ 6144000.0
 #define PLAYING_MAX_S 1.0              /* longer than any phoneme the firmware loads (bh_busy) */
@@ -41,6 +42,8 @@ struct bl_host {
     int n_wl, cap_wl;
     bl_idle *idle;                 /* the emulator's idle-channel sounds (bh_set_idle); NULL: off */
     int idle_power;                /* the channel's power (port A0 bit 1) as last told to it */
+    run_ahead ra;                  /* the unit run ahead of the chip (run_ahead.h); off unless ra_on */
+    int ra_on;
 };
 
 /* the idle model hears every chip write and the channel's power, at the sample the block has reached */
@@ -62,6 +65,33 @@ static int request(const bl_host *h)
     return ssi263_request(h->chip) ? 1 : 0;
 }
 
+/* a write of the unit's, applied to the chip now, with the host's bookkeeping */
+static void chip_write(bl_host *h, int reg, int val)
+{
+    ssi263_write(h->chip, reg, val);
+    if (h->idle)
+        idle_events(h, reg, val);
+    if (h->log_on) {
+        if (h->n_wl == h->cap_wl) {
+            int cap = h->cap_wl ? h->cap_wl * 2 : 1024;
+            bh_write *w = (bh_write *)realloc(h->wl, (size_t)cap * sizeof(bh_write));
+            if (w) { h->wl = w; h->cap_wl = cap; }
+        }
+        if (h->n_wl < h->cap_wl) {
+            h->wl[h->n_wl].t = ssi263_time(h->chip);
+            h->wl[h->n_wl].reg = reg;
+            h->wl[h->n_wl].val = val;
+            h->n_wl++;
+        }
+    }
+    if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80))
+        h->last_load = ssi263_time(h->chip);        /* any phoneme, PA included (bh_busy) */
+    if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80) && (val & 0x3F)) {
+        h->last_speech = ssi263_time(h->chip);      /* PA (code 00) is not speech */
+        h->preparing = 0;
+    }
+}
+
 /* Python's _cmd(): the unit's events since the last call, applied in order */
 static void events(bl_host *h)
 {
@@ -69,29 +99,10 @@ static void events(bl_host *h)
     int n = bl_events(h->unit, &ev), i;
     for (i = 0; i < n; i++) {
         if (ev[i].type == 'W') {
-            int reg = ev[i].a, val = ev[i].b;
-            ssi263_write(h->chip, reg, val);
-            if (h->idle)
-                idle_events(h, reg, val);
-            if (h->log_on) {
-                if (h->n_wl == h->cap_wl) {
-                    int cap = h->cap_wl ? h->cap_wl * 2 : 1024;
-                    bh_write *w = (bh_write *)realloc(h->wl, (size_t)cap * sizeof(bh_write));
-                    if (w) { h->wl = w; h->cap_wl = cap; }
-                }
-                if (h->n_wl < h->cap_wl) {
-                    h->wl[h->n_wl].t = ssi263_time(h->chip);
-                    h->wl[h->n_wl].reg = reg;
-                    h->wl[h->n_wl].val = val;
-                    h->n_wl++;
-                }
-            }
-            if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80))
-                h->last_load = ssi263_time(h->chip);        /* any phoneme, PA included (bh_busy) */
-            if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80) && (val & 0x3F)) {
-                h->last_speech = ssi263_time(h->chip);      /* PA (code 00) is not speech */
-                h->preparing = 0;
-            }
+            if (h->ra.capturing)
+                ra_write_reg(&h->ra, ev[i].a, ev[i].b);    /* run ahead: into the script, played later */
+            else
+                chip_write(h, ev[i].a, ev[i].b);
         } else {
             unsigned char b = ev[i].a;
             if (h->n_tx == h->cap_tx) {
@@ -137,6 +148,36 @@ static void run_cpu(bl_host *h, double cycles_f)
     events(h);
 }
 
+/* ---- the board as run_ahead.h sees it -------------------------------------------------------------------------- */
+static void ra_cb_run(void *ctx, unsigned long long cycles)
+{
+    bl_host *h = (bl_host *)ctx;
+    bl_run(h->unit, cycles);
+    events(h);                                             /* its writes go to ra_write_reg while capturing */
+}
+
+static unsigned long long ra_cb_cycles(void *ctx)
+{
+    return bl_cycles(((bl_host *)ctx)->unit);
+}
+
+static void ra_cb_set_ar(void *ctx, int requesting)
+{
+    bl_host *h = (bl_host *)ctx;
+    bl_set_ar(h->unit, requesting);
+    events(h);
+}
+
+static int ra_cb_more(void *ctx)
+{
+    return bh_owed((bl_host *)ctx) > 0;                    /* a line's ^F echo still owed: it is not all spoken */
+}
+
+static void ra_cb_apply(void *ctx, int reg, int val)
+{
+    chip_write((bl_host *)ctx, reg, val);
+}
+
 BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip, double out_rate, double board_hz,
                           const unsigned long long *key_at, const unsigned char *key_val, int n_keys,
                           unsigned long long boot_instr, int log_writes, char *err, int errlen)
@@ -168,6 +209,17 @@ BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip,
     events(h);
     bl_live(h->unit);                                      /* _cmd("LIVE") */
     events(h);
+    {
+        ra_board b;
+        b.ctx = h;
+        b.run = ra_cb_run;
+        b.cycles = ra_cb_cycles;
+        b.set_ar = ra_cb_set_ar;
+        b.more = ra_cb_more;
+        b.apply = ra_cb_apply;
+        b.clock_hz = CLOCK_HZ;
+        ra_init(&h->ra, &b);
+    }
     return h;
 }
 
@@ -177,6 +229,7 @@ BL_API void bh_destroy(bl_host *h)
         return;
     bl_destroy(h->unit);
     bl_idle_free(h->idle);
+    ra_free(&h->ra);
     free(h->tx);
     free(h->buf);
     free(h->wl);
@@ -211,6 +264,13 @@ BL_API void bh_say(bl_host *h, const unsigned char *data, int n)
     h->say_time = ssi263_time(h->chip);
     h->preparing = 1;
     h->stale_f = h->sent_f - h->echo_f > 0 ? h->sent_f - h->echo_f : 0;   /* echoes still due from earlier sends */
+    if (h->ra_on) {                                        /* run ahead: captured from here, played in bh_run */
+        if (h->ra.active)
+            ra_flush(&h->ra);                              /* the last utterance's trailing silence */
+        h->preparing = 0;
+        h->ar = request(h);
+        ra_start(&h->ra, ssi263_reg(h->chip, 3), h->ar);
+    }
     bh_send(h, data, n);
 }
 
@@ -223,6 +283,8 @@ BL_API int bh_busy(const bl_host *h, double quiet, double patience)
 {
     double now = ssi263_time(h->chip);
     double since = h->say_time > h->last_speech ? h->say_time : h->last_speech;   /* max(say_time, last_speech) */
+    if (h->ra.active || h->ra.finished)                    /* run ahead: done when the last spoken phoneme has ended */
+        return ra_sounding(&h->ra, h->chip) && (h->ra.capturing || now - h->last_load < PLAYING_MAX_S);
     if ((now - h->last_speech) < quiet)
         return 1;
     /* the firmware is still inside an utterance while the chip plays a phoneme it loaded -- when speech has loaded
@@ -259,6 +321,14 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
 {
     int holding;
     double t = 0.0;
+    if (h->ra.active && !ra_sounding(&h->ra, h->chip)) {  /* run ahead, after the end: its trailing silence applied */
+        ra_flush(&h->ra);
+        h->ar = request(h);
+    } else if (h->ra.active) {                             /* ... mid-utterance: the script not yet played is */
+        ra_abort(&h->ra);                                  /* dropped; the unit, ahead, is cut as usual, in lockstep */
+        h->ar = -1;
+    }
+    h->ra.finished = 0;
     h->sent_f -= bl_drop(h->unit);                         /* _cmd("D"): drop what the unit has not taken yet */
     events(h);
     holding = bh_owed(h) == 0;                             /* decided after the drop (see blazie.py) */
@@ -380,6 +450,11 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
     h->n_buf = 0;
     if (h->idle)
         bl_idle_begin(h->idle);
+    if (h->ra.active && reserve(h, (int)(seconds * h->out_rate) + 64)) {
+        h->n_buf = (int)ra_play(&h->ra, h->chip, h->out_rate, seconds, h->buf, &t);
+        if (!h->ra.active)
+            h->ar = request(h);   /* the unit's line stays as the capture left it (raised); no second edge */
+    }
     while (t < seconds) {
         double before, st, dt, speed;
         long n, got;
@@ -448,6 +523,7 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "turbo_between_lines")) return h->turbo_between_lines;
     if (!strcmp(name, "ar")) return h->ar;
     if (!strcmp(name, "log_writes")) return h->log_on;
+    if (!strcmp(name, "run_ahead")) return h->ra_on;
     return 0;
 }
 
@@ -459,6 +535,18 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
     else if (!strcmp(name, "preparing")) h->preparing = v;
     else if (!strcmp(name, "turbo_between_lines")) h->turbo_between_lines = v;
     else if (!strcmp(name, "log_writes")) h->log_on = v != 0;
+    else if (!strcmp(name, "run_ahead")) {                 /* off by default (run_ahead.h); off drops a script */
+        h->ra_on = v != 0;
+        if (!h->ra_on && h->ra.active && !ra_sounding(&h->ra, h->chip)) {
+            ra_flush(&h->ra);                              /* only its trailing silence left: applied now */
+            h->ar = request(h);
+        } else if (!h->ra_on && h->ra.active) {
+            ra_abort(&h->ra);
+            h->ar = -1;
+        }
+        if (!h->ra_on)
+            h->ra.finished = 0;
+    }
 }
 
 BL_API double bh_get_double(const bl_host *h, const char *name)
