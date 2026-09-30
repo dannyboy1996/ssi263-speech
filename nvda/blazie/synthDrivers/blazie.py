@@ -249,6 +249,7 @@ class SynthDriver(SynthDriver):
         self._infl = self._want_infl = True                # likewise to _want_infl
         self._whine = self._want_whine = "off"
         self._keep_open = True
+        self._play_end = 0.0             # when the listener will have heard everything fed (_feed); 0: nothing queued
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -311,6 +312,7 @@ class SynthDriver(SynthDriver):
             self._player.stop()
         except Exception:
             pass
+        self._play_end = 0.0
         while True:
             try:
                 self._queue.get_nowait()
@@ -550,6 +552,7 @@ class SynthDriver(SynthDriver):
                     self._player.stop()
                 except Exception:
                     pass
+                self._play_end = 0.0
             elif self._tail_wanted():
                 # done once the speech has played (the tail's audio follows it), then the open channel
                 try:
@@ -563,6 +566,20 @@ class SynthDriver(SynthDriver):
             else:
                 synthDoneSpeaking.notify(synth=self)
         self._close_units()
+
+    def _feed(self, pcm, rate):
+        """Feed audio, keeping the time the listener will have heard all of it (a device plays from the first feed,
+        in real time, each block after the one before): the idle tail paces itself on that."""
+        now = _now()
+        self._play_end = max(now, self._play_end) + len(pcm) / 2.0 / rate
+        self._player.feed(pcm)
+
+    def _tail_ahead(self, fed, start):
+        """How far the fed audio runs ahead of the listener.  Counted from what has been heard, the speech's own
+        unplayed audio included: counted from the tail's start (0.6.0), the idle audio queued in front of new speech
+        that came without a cancel grew by the speech still playing (387 ms against 20 ms without the tail,
+        tools/tail_latency.py)."""
+        return self._play_end - _now()
 
     def _tail_wanted(self):
         return self._keep_open and self._whine != "off" and self._queue.empty() and not self._cancelFlag.is_set()
@@ -584,15 +601,16 @@ class SynthDriver(SynthDriver):
         while not self._stopped and self._queue.empty() and not self._cancelFlag.is_set():
             if unit.chip.regs[3] == 0:
                 break                    # clicked off: the firmware's own end of the open channel
-            ahead = fed - (_now() - start)
+            ahead = self._tail_ahead(fed, start)
             if ahead > IDLE_AHEAD_S:
-                self._wake.wait(ahead - IDLE_AHEAD_S / 2)
+                # the speech may still be playing: look again soon (the clock may be a test's, sped up)
+                self._wake.wait(min(ahead - IDLE_AHEAD_S / 2, 0.02))
                 self._wake.clear()
                 continue
             y = unit.run(BLOCK_S)
             fed += len(y) / rate
             if len(y) and self._queue.empty() and not self._cancelFlag.is_set():
-                self._player.feed(unit.chip.dsp.pcm16(y, gain))
+                self._feed(unit.chip.dsp.pcm16(y, gain), rate)
         try:
             if self._cancelFlag.is_set():
                 self._player.stop()
@@ -600,6 +618,8 @@ class SynthDriver(SynthDriver):
                 self._player.idle()      # clicked off (or the driver stopping)
         except Exception:
             pass
+        if self._cancelFlag.is_set() or self._queue.empty():
+            self._play_end = 0.0
 
     def _switch_rate(self):
         """A new sample rate or inflection setting: a rebooted unit (and, for a new rate, a new player, since the
@@ -693,7 +713,7 @@ class SynthDriver(SynthDriver):
                     self._lead = not found
                 if len(y) and not self._cancelFlag.is_set():
                     pcm = unit.chip.dsp.pcm16(y, gain)
-                    self._player.feed(pcm)
+                    self._feed(pcm, unit.chip.out_rate)
                 if self._snap_until_speech and unit.last_speech >= t_start:
                     # the first phoneme is set up; a leftover snap would flatten a glide later
                     unit.chip.snap_pitch = False

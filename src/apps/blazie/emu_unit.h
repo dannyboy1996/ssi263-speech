@@ -37,4 +37,16 @@ void emu_set_whine(emu_unit *u, int whine);
 /* 0-100: the output gain (the unit's own volume keys still work on top of it) */
 void emu_set_volume(emu_unit *u, int volume);
 
+/* Quick key response (off by default; not the real unit's pace).  After a key the firmware works for a while before
+   it speaks: after any chord in the Braille Lite's main menu, ~240 ms of CPU time with the chip's request left
+   unanswered, speech at 280 ms; after a Type 'n Speak key, speech at 240 ms (measured in emulated time: 6.144 MHz, the
+   clock the unit's own serial divisor and 10 Hz timer give).  On, the CPU runs EMU_QUICK_TURBO times faster from a
+   key until the firmware loads its first spoken phoneme (or EMU_QUICK_LIMIT_S of chip time passes): the words come
+   sooner, the phonemes themselves play as before. */
+#define EMU_QUICK_TURBO 8.0
+#define EMU_QUICK_LIMIT_S 1.0
+void emu_set_quick(emu_unit *u, int on);
+/* chip time in seconds (tests) */
+double emu_time(const emu_unit *u);
+
 #endif

@@ -68,6 +68,47 @@ static void check(const char *name, int ok, const char *detail)
     failures += !ok;
 }
 
+/* chip ms from a key at 8 s (the greeting over; the Type 'n Speak 12 s) to the first audible sample, in the app's 10 ms blocks; -1: none in
+   1.5 s.  TEST_EMU_QUICK_BREAK=1 never switches quick response on (the control: the quick check must fail). */
+static double key_latency(const char *fw, const char *st, int quick)
+{
+    char err[256];
+    emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+    int block = RATE / 100, i, j;
+    short buf[RATE / 100];
+    double t0 = -1, found = -1;
+    int at = g_kind == EMU_TYPE_N_SPEAK ? 1200 : 800;   /* the Type 'n Speak's answers to y, y are over by 12 s */
+    if (!u) {
+        printf("FAIL create: %s\n", err);
+        exit(1);
+    }
+    if (quick && !getenv("TEST_EMU_QUICK_BREAK"))
+        emu_set_quick(u, 1);
+    for (i = 0; i < at + 150 && found < 0; i++) {
+        if (i == at) {
+            t0 = emu_time(u);
+            if (g_kind == EMU_TYPE_N_SPEAK) {
+                emu_key(u, 0x94);           /* a down */
+                emu_key(u, 0x14);           /* a up */
+            } else
+                emu_key(u, 0x01);
+        }
+        if (g_kind == EMU_TYPE_N_SPEAK && (i == 300 || i == 600)) {   /* the cold start's question: y, y */
+            emu_key(u, 0xBD);
+            emu_key(u, 0x3D);
+        }
+        emu_render(u, buf, block);
+        if (t0 >= 0)
+            for (j = 0; j < block; j++)
+                if (buf[j] > 200 || buf[j] < -200) {
+                    found = (emu_time(u) - (double)(block - j) / RATE - t0) * 1000.0;
+                    break;
+                }
+    }
+    emu_destroy(u);
+    return found;
+}
+
 int main(int argc, char **argv)
 {
     char d[200];
@@ -90,6 +131,15 @@ int main(int argc, char **argv)
     check("a chord is answered", with_key > 0.01 && without < 0.002, d);
     snprintf(d, sizeof d, "10 s of unit in %.2f s (%.1fx real time)", secs, 10.0 / secs);
     check("faster than real time", secs < 5.0, d);
+    {   /* key to first sound, in chip time: the firmware's own pace (the English Braille Lite ~283 ms, the Spanish
+           ~107, the Type 'n Speak ~242: the unit's work before it speaks), which the host must not lengthen; and with
+           quick key response the words come sooner */
+        double slow = key_latency(fw, st, 0), fast = key_latency(fw, st, 1);
+        snprintf(d, sizeof d, "key to first sound %.1f ms of chip time (at most 320: the firmware's own)", slow);
+        check("key latency", slow > 0 && slow <= 320.0, d);
+        snprintf(d, sizeof d, "key to first sound %.1f ms with quick key response, %.1f ms without", fast, slow);
+        check("quick key response", fast > 0 && fast <= 100.0 && fast < slow, d);
+    }
     {   /* switched off and on: the saved memory is the state format, and the unit boots from it and speaks */
         char err[256], path[] = "test_emu_unit.saved.state";
         emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);

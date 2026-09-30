@@ -36,6 +36,15 @@ Settings > Idle channel (hiss, whine or silent) and Settings > Sample rate (1102
 the new rate with its memory kept). The unit's own speech settings -- rate, pitch, inflection, volume -- are set on
 the unit, with its own keys, as on the real one.
 
+Settings > Quick key response (off by default): after a key the firmware works before it speaks -- speech 283 ms after
+a chord in the English Braille Lite's main menu, 107 ms in the Spanish one, 243 ms after a Type 'n Speak key (chip time,
+test_emu_unit's "key latency"), the unit's own pace at its 6.144 MHz clock.  On, the CPU runs 8 times faster from a key
+until the first spoken phoneme loads: 56, 83 and 51 ms.  The phonemes and every register value are unchanged; only the
+wait before the first one is shorter than on the real unit.
+
+Sound: four blocks of 10 ms (`[sound] block_ms` in `blazie_emu.ini`, 5-20).  A key's speech plays behind the blocks
+already queued, so 20 ms blocks (0.6.0) added 60-80 ms; 10 ms blocks add 30-40.  Raise it if the sound breaks up.
+
 ## Firmware
 
 Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.BNS` + `bl2_2003_warm.state`,

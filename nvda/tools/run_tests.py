@@ -117,6 +117,20 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
         if os.path.isfile(os.path.join(TNS_DIR, name)):
             CHECKS.append(check("Blazie emulator: Type 'n Speak %s, headless" % name[3:6],
                                 [os.path.join(EMU, "test_emu_unit.exe"), "tns", os.path.join(TNS_DIR, name), "-"]))
+# head-of-speech latency (Tomi, 2026-09-30: "it feels like a virtual machine"), in emulated time where it can be: the
+# emulator's key-to-sound (inside the headless checks above: "key latency", and "quick key response", the opt-in), with
+# its control (quick response never switched on must fail); and the Braille Lite driver's open channel, which must not
+# queue the speech still playing as idle audio in front of new speech, with its control (0.6.0's pacing put back)
+if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
+    CHECKS.append(check("Blazie emulator: quick key response CONTROL (never on, must fail)",
+                        [os.path.join(EMU, "test_emu_unit.exe"), "bl", os.path.join(ENG, "BL2ENG.BNS"),
+                         os.path.join(ENG, "bl2_2003_warm.state")], env={"TEST_EMU_QUICK_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^ok +key latency ", r"^FAIL quick key response +key to first sound", r"^FAILED$"]))
+CHECKS.append(check("open channel: new speech not queued behind it", [PY, "tail_latency.py"]))
+CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail_latency.py"],
+                    env={"TAIL_LATENCY_BREAK": "1"}, expect_fail=True,
+                    fail_marks=[r"^FAIL A whine on, keep open, no cancel ", r"^ok +B whine off",
+                                r"^tail latency: 1 FAILED$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
