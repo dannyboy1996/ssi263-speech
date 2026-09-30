@@ -25,6 +25,8 @@ Cells from the W03 session's late part are left out: from ~78 min the volume-1 a
     python tools/idle_sounds.py measure            per-volume table (and caches the per-cell numbers)
     python tools/idle_sounds.py drift              the anchor cells over the session
     python tools/idle_sounds.py fit                the model's numbers for src/hosts/blazie_idle.py
+    python tools/idle_sounds.py emulated           the emulated unit measured the same way (needs the built bl.dll and
+                                                   firmware/blazie): speech by volume, click-off time, the drivers' hiss
     python tools/idle_sounds.py excerpt V T OUT    a real-unit excerpt: volume V tone T, the line, its idle, the
                                                    click-off and the next line's pop (for listening)
 """
