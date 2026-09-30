@@ -143,7 +143,10 @@ void v40_regs_get(const v40 *c, v40_regs *out);
 /* ---- x86 real mode (Intel 8086/8088: the Accent-mini's PC, running Aicom's SPKEMS.DVC) ---------------------------- */
 typedef struct i86 i86;
 
-enum { I86_INTR, I86_NMI, I86_TEST };              /* INTR a level (vector from irq_ack byte 0); NMI an edge; TEST */
+enum { I86_INTR, I86_NMI, I86_TEST };              /* INTR a level (vector from irq_ack byte 0); NMI an edge; TEST
+                                                      LOGICAL: asserted = active = the TEST pin electrically LOW,
+                                                      WAIT passes; not asserted = pin HIGH, WAIT waits (3 + 5n).
+                                                      Asserted in a new core, kept over reset (CONTRACT.md 4) */
 enum { I86_INT_SOFTWARE, I86_INT_EXCEPTION };      /* cpu_bus.intercept's kind */
 
 typedef struct {

@@ -2,7 +2,7 @@
 (i86_mame.cpp), a named change of the extraction, or an upstream rule the contract relies on (i86_mame_machine.cpp)
 -- in a temporary copy, and exactly that rule's tests must then fail.  Proves the tests see what they claim to (the
 repo's rule for any fix claim).  The runner guard (exit code, summary line, the full test inventory) is
-contract_controls.py's.  Not in run_tests: some forty C++ builds (in parallel) take a minute or two.
+contract_controls.py's.  Not in run_tests: some sixty C++ builds (in parallel) take a few minutes.
 
     python src/csrc/cpu/i86_controls.py
 """
@@ -54,8 +54,27 @@ VARIANTS = {
         ["divide_error", "int_costs", "intercept", "intercept_kinds"]),
     "HLT's T-states": (
         GEN, "\t\t\tCLK(HLT);   // CHANGED", "\t\t\tm_icount = 0;   // (undone)", ["halt", "step_cost_floor"]),
-    "WAIT's slot": (
-        GEN, "\t\t\t\tCLK(WAIT);   // CHANGED", "\t\t\t\tm_icount = 0;   // (undone)", ["wait"]),
+    # WAIT, Intel's 3 + 5n (Astra, Reply 106)
+    "WAIT: 3 on entry, 5 a recheck (the substitution, upstream's code back)": (
+        GEN, "\t\t\twait_clk();   // CHANGED: 3 T on entry, 5 for each recheck (Intel's 3 + 5n; upstream charged 3, "
+             "or ended the slice)\n\t\t\tif (m_test_state == 0)\n\t\t\t\twait_hold();   // CHANGED: TEST inactive: IP "
+             "back on the WAIT, the next step rechecks (upstream ended the slice)",
+        "\t\t\tif (m_test_state == 0)\n\t\t\t{\n\t\t\t\tm_icount = 0;\n\t\t\t\tm_ip--;\n\t\t\t}\n\t\t\telse\n"
+        "\t\t\t\tCLK(WAIT);", ["wait", "wait_interrupt"]),
+    "WAIT's entry 3 (not a flat 5)": (
+        HPP, "        m_icount -= m_wait_continue ? (int)I86_WAIT_RECHECK_T : m_timing[WAIT];",
+        "        m_icount -= (int)I86_WAIT_RECHECK_T;", ["wait", "wait_interrupt"]),
+    "WAIT's recheck 5 (not the entry's 3 again)": (
+        HPP, "        m_icount -= m_wait_continue ? (int)I86_WAIT_RECHECK_T : m_timing[WAIT];",
+        "        m_icount -= m_timing[WAIT];", ["wait", "wait_interrupt"]),
+    "WAIT holds IP while TEST is inactive": (
+        HPP, "        m_ip--;                           // upstream's: IP back on the WAIT\n", "",
+        ["wait", "wait_interrupt"]),
+    "a recheck recognised": (
+        DRV, "    m_wait_continue = m_wait_pending && start == m_wait_at;", "    m_wait_continue = false;",
+        ["wait", "wait_interrupt"]),
+    "an interrupted WAIT is entered again": (
+        DRV, "    m_wait_pending = false;\n", "", ["wait_interrupt"]),
     # upstream rules the contract states
     "MOV sreg shadow": (
         GEN, "\t\t\tm_no_interrupt = 1; // Disable IRQ after load segment register.", "", ["ss_shadow", "trap_ss"]),
@@ -79,11 +98,11 @@ VARIANTS = {
     "INT 3 52": (GEN, "\t\t52,51, 4,53, /* INTs */", "\t\t 2,51, 4,53, /* INTs */", ["int_costs"]),
     "INTO taken 53": (GEN, "\t\t52,51, 4,53, /* INTs */", "\t\t52,51, 4, 2, /* INTs */", ["int_costs"]),
     "IRET 24": (GEN, "\t51,24,          /* exception, IRET */", "\t51,32,          /* exception, IRET */",
-                ["int_iret", "odd_word", "rep_iteration"]),
+                ["int_iret", "odd_word", "rep_iteration", "wait_interrupt"]),
     "IRET charges no POPF": (GEN, "\t\t\tm_icount += m_timing[POPF];   // CHANGED", "\t\t\t//",
-                             ["int_iret", "odd_word", "rep_iteration"]),
-    "NOP 3": (GEN, "\t\t2,24, 2, 3, 3,11,   /* misc */", "\t\t2,24, 2, 2, 3,11,   /* misc */",
-              ["accept_costs", "rep_counts", "tstates"]),
+                             ["int_iret", "odd_word", "rep_iteration", "wait_interrupt"]),
+    "NOP 3": (GEN, "\t\t2,16, 2, 3, 3,11,   /* misc */", "\t\t2,16, 2, 2, 3,11,   /* misc */",
+              ["accept_costs", "rep_counts", "tstates", "wait", "wait_interrupt"]),
     "LOCK 2": (GEN, "\t\t\tCLK(OVERRIDE);   // CHANGED: LOCK", "\t\t\tCLK(NOP);   // (undone) LOCK", ["tstates"]),
     "ESC 2 or 8 + EA": (GEN, "\t\t\t\tm_icount -= (m_modrm < 0xc0) ? 8 : 2;   // CHANGED: ESC",
                         "\t\t\t\tCLK(NOP);   // (undone) ESC", ["tstates"]),
@@ -104,10 +123,39 @@ VARIANTS = {
                              ["rep_counts", "rep_iteration"]),
     "the continuation recognised": (DRV, "    if (m_rep_ran && m_ip == m_prev_ip) {", "    if (0) {",
                                     ["rep_counts", "rep_iteration"]),
-    "INTR 61": (DRV, "            m_icount -= I86_INTR_T;\n", "", ["accept_costs", "intr_vector", "rep_iteration"]),
+    "INTR 61": (DRV, "            m_icount -= I86_INTR_T;\n", "",
+                ["accept_costs", "intr_vector", "rep_iteration", "wait_interrupt"]),
     "NMI 50": (DRV, "            m_icount -= I86_NMI_T;\n", "", ["accept_costs"]),
     "the trap 50": (DRV, "            m_icount -= I86_TRAP_T;\n", "", ["accept_costs"]),
-    "odd word 4": (HPP, "if (addr & 1) m_icount -= I86_ODD_WORD_T;", "(void)addr;", ["odd_word"]),
+    "odd word 4": (HPP, "if (addr & 1) m_icount -= I86_ODD_WORD_T;", "(void)addr;",
+                   ["odd_word", "port_counts", "return_counts", "stack_counts", "word_memory_counts"]),
+    # the 8086's own rows (Astra, Reply 106): each number put back to upstream's 8088-flavoured one alone
+    "PUSH r16 11": (GEN, "\t11,16,10,10,    /* pushes */", "\t15,16,10,10,    /* pushes */", ["stack_counts"]),
+    "PUSH mem 16": (GEN, "\t11,16,10,10,    /* pushes */", "\t11,24,10,10,    /* pushes */", ["stack_counts"]),
+    "PUSH sreg 10": (GEN, "\t11,16,10,10,    /* pushes */", "\t11,16,14,10,    /* pushes */", ["stack_counts"]),
+    "PUSHF 10": (GEN, "\t11,16,10,10,    /* pushes */", "\t11,16,10,14,    /* pushes */", ["stack_counts"]),
+    "POP r16 8": (GEN, "\t 8,17, 8, 8,    /* pops */", "\t12,17, 8, 8,    /* pops */", ["stack_counts"]),
+    "POP mem 17": (GEN, "\t 8,17, 8, 8,    /* pops */", "\t 8,25, 8, 8,    /* pops */", ["stack_counts"]),
+    "POP sreg 8": (GEN, "\t 8,17, 8, 8,    /* pops */", "\t 8,17,12, 8,    /* pops */", ["stack_counts"]),
+    "POPF 8": (GEN, "\t 8,17, 8, 8,    /* pops */", "\t 8,17, 8,12,    /* pops */", ["stack_counts"]),
+    "IN AX,imm8 10": (GEN, "\t10,10, 8, 8,    /* port reads */", "\t10,14, 8, 8,    /* port reads */",
+                      ["port_counts"]),
+    "IN AX,DX 8": (GEN, "\t10,10, 8, 8,    /* port reads */", "\t10,10, 8,12,    /* port reads */",
+                   ["port_counts"]),
+    "OUT imm8,AX 10": (GEN, "\t10,10, 8, 8,    /* port writes */", "\t10,14, 8, 8,    /* port writes */",
+                       ["port_counts"]),
+    "OUT DX,AX 8": (GEN, "\t10,10, 8, 8,    /* port writes */", "\t10,10, 8,12,    /* port writes */",
+                    ["odd_word", "port_counts"]),
+    "RET 8": (GEN, "\t 8,18,12,17,    /* returns */", "\t20,18,12,17,    /* returns */", ["return_counts"]),
+    "RETF 18": (GEN, "\t 8,18,12,17,    /* returns */", "\t 8,32,12,17,    /* returns */", ["return_counts"]),
+    "RET n 12": (GEN, "\t 8,18,12,17,    /* returns */", "\t 8,18,24,17,    /* returns */", ["return_counts"]),
+    "RETF n 17": (GEN, "\t 8,18,12,17,    /* returns */", "\t 8,18,12,31,    /* returns */", ["return_counts"]),
+    "LDS/LES 16": (GEN, "\t\t2,16, 2, 3, 3,11,   /* misc */", "\t\t2,24, 2, 3, 3,11,   /* misc */",
+                   ["word_memory_counts"]),
+    "MUL m16 124": (GEN, "\t70,118,76,124,  /* MUL */", "\t70,118,76,128,  /* MUL */", ["word_memory_counts"]),
+    "IMUL m16 134": (GEN, "\t80,128,86,134,  /* IMUL */", "\t80,128,86,138,  /* IMUL */", ["word_memory_counts"]),
+    "DIV m16 150": (GEN, "\t80,144,86,150,  /* DIV */", "\t80,144,86,154,  /* DIV */", ["word_memory_counts"]),
+    "IDIV m16 171": (GEN, "\t101,165,107,171,/* IDIV */", "\t101,165,107,175,/* IDIV */", ["word_memory_counts"]),
 }
 
 CXX = ["-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti"]

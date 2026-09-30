@@ -59,7 +59,8 @@ Which tests already exist and which are still to write is listed in 10.
 
 ## 4. Interrupts
 
-Lines are set with `*_set_irq(line, asserted)` and sampled at A.
+Lines are set with `*_set_irq(line, asserted)` and sampled at A. `asserted` is the line's logical state, not its
+pin level: an active-low pin asserted is electrically low (the 8086's TEST, below).
 
 **Z180 (chip, except where marked):**
 - TRAP, raised by an undefined opcode, comes first. It is not an acceptance at A: it is found at E, at the
@@ -133,9 +134,14 @@ documented as it behaves):**
 - **Clock counts, decided from Intel's manual** (after Astra, Reply 104: *The 8086 Family User's Manual*, Oct 1979,
   9800722-03, Table 2-21, cited as printed page / PDF page; each is a named change of the extraction or of the
   driver, with its own must-fail control) **(chip)** except where marked:
+  - **One CPU: the virtual 8086** (Astra, Reply 106). Every row is the 8086's; no 8088 row is mixed in (a future 8088
+    needs its own bus, queue and timing model, not selected rows of this table). The host's coupling is unchanged:
+    5 million instructions a second is a compatibility policy (10), and these counts move no write.
   - **Interrupt entry, by kind.** An INTR acceptance 61 T (7 transfers, the two INTA cycles included; 2-56/PDF 79),
-    NMI 50 (2-60/PDF 83), the single-step trap 50 (2-66/PDF 89; the manual's AP-67, printed A-28/PDF 332, says 51
-    -- the table is followed), charged at B. INT n 51, INT 3 52, INTO 53 taken and 4 not (2-56/PDF 79), charged
+    NMI 50 (2-60/PDF 83), the single-step trap 50, charged at B. **The trap's figure is a model choice, the sources
+    disagree:** 50 in Table 2-21 (2-66/PDF 89) and in the 1985 *iAPX 86/88, 186/188 User's Manual* (210912-001),
+    Table 1-42 (printed 1-121/PDF 137); 51 in the 1979 manual's AP-67 (printed A-28/PDF 332). Nothing here measured
+    it; the disagreement is recorded, not resolved. INT n 51, INT 3 52, INTO 53 taken and 4 not (2-56/PDF 79), charged
     with the instruction at F. IRET 24, its FLAGS restore included (2-56/PDF 79). The divide error (DIV, IDIV, AAM
     0): the instruction's own charge (MAME's: DIV r8 80, AAM 0 none) plus an entry of 51 **(model)**: the manual
     gives no figure; like INT n it runs no INTA cycles (printed 2-25/PDF 48), so INT n's 51. MAME charged 0 for
@@ -156,12 +162,31 @@ documented as it behaves):**
     clocks for each 16-bit word transfer with an odd address", every page of the table): an INT's three pushes at
     an odd SP add 12, IRET's pops likewise. MAME modelled none. Instruction fetches are not transfers (the queue).
   - NOP 3 (2-62/PDF 85; MAME 2); ESC 2 with a register, 8 + EA with memory (2-54/PDF 77; MAME 2 + EA).
-  - **Open, MAME's rows kept**: the stack and word-port rows are Intel's 8086 figure plus the 4 per word transfer
-    the table's footnote gives for the 8088 (PUSH r16 15, POP r16 12, PUSHF 14, POPF 12, IN/OUT AX 14 and 12;
-    Intel's 8086: 11, 8, 10, 8, 10 and 8, printed 2-55 to 2-63), so at an odd address they count that 4 twice;
-    the returns match neither CPU (RET 20, RET n 24, RETF 32, RETF n 31; Intel's 8086: 8, 12, 18, 17, printed
-    2-64/PDF 87); WAIT's slot is 3 (Intel 3 + 5n); MUL/DIV are one figure, not Intel's ranges. Which CPU the
-    Accent-mini's PC was (8086 or 8088) is not settled.
+  - **The stack, word-port, return, LDS/LES and word MUL/DIV rows: the 8086's** (Reply 106). MAME's had the 8088's
+    4 per word transfer built in (so at an odd address the 4 was counted twice) and its returns matched neither CPU.
+    Now: PUSH r16 11, PUSH mem 16 + EA, PUSH sreg 10, PUSHF 10 (2-63/PDF 86; MAME 15, 24, 14, 14); POP r16 8, POP
+    mem 17 + EA, POP sreg 8 (2-62/PDF 85), POPF 8 (2-63/PDF 86; MAME 12, 25, 12, 12); IN AX 10 (imm8) and 8 (DX), as
+    the byte forms (2-55/PDF 78; MAME 14, 12); OUT likewise (2-62/PDF 85); RET 8, RET n 12, RETF 18, RETF n 17
+    (near/far, without/with the stack adjustment, 2-64/PDF 87; MAME 20, 24, 32, 31); LDS/LES 16 + EA (2-59/PDF 82;
+    MAME 24); MUL, IMUL, DIV, IDIV m16 124, 134, 150, 171 + EA (2-61/PDF 84, 2-55/PDF 78, 2-54/PDF 77, 2-55/PDF 78;
+    MAME 128, 138, 154, 175). The odd-address 4 is then added once per actual word transfer: a PUSH/POP at an odd SP
+    once, RETF/RETF n and CALL far twice, PUSH/POP of an odd memory operand at an odd SP twice, LDS/LES at an odd
+    address twice, a word IN/OUT at an odd port once, a byte never. Each is a named change of the extraction.
+  - **WAIT: 3 + 5n** (2-67/PDF 90; Reply 106). Entering the instruction costs 3 and tests TEST: active, the WAIT is
+    done in 3 (n = 0). Inactive, IP stays on the WAIT and each following step is one recheck, 5 T ("retests the
+    TEST line at five-clock intervals", 2-18/PDF 41), the recheck that finds TEST active ending it: 3 + 5n in n + 1
+    steps. An interrupt is accepted between rechecks ("after any ... wait test cycle", 2-24/PDF 47), pushing the
+    WAIT's address; after its handler the WAIT is entered again, 3 **(model**: "the WAIT instruction is again fetched
+    prior to servicing the interrupt", the 1985 manual's 1.7.8, printed 1-122/PDF 138**)**. A recheck is a step that
+    follows, with nothing between, the step that left the same WAIT waiting (as a REP continuation). MAME charged 3
+    on entry and ended its slice while waiting.
+  - **TEST, logical and electrical.** `i86_set_irq(cpu, I86_TEST, asserted)` takes the LOGICAL state: `asserted`
+    = 1 means TEST active, which on the pin (TEST-bar, active low) is the electrical LOW level ("If the TEST input is
+    LOW execution continues, otherwise the processor waits", the 8086 data sheet, printed B-9/PDF 552); 0 means
+    inactive, the pin HIGH, and a WAIT waits. A new core's TEST is asserted; `i86_reset` leaves it as it is (an
+    input line, like INTR).
+  - MUL/DIV are one figure each, the lowest of Intel's data-dependent ranges. Which physical PC drove the card
+    (8086 or 8088) is not established and need not be: the core is a named virtual 8086.
 - **Forward progress**: every step costs at least 2 T-states -- every path charges an entry of Intel's table, the
   smallest being 2 -- an intercepted interrupt and a HALT or WAIT slot included, so `i86_run(budget)` always
   returns. Before these counts an INT n (0 T), AAM 0 (0 T) and a REP before a non-string instruction (0 T) could
@@ -200,7 +225,8 @@ A halted core does one **slot** per step, separate from the HLT instruction's ow
 - Z180: 3 T-states **(legacy, kept as model)**.
 - 8085: 4 T-states **(model, proposed)**.
 - 8086: 2 T-states **(model)**; the HLT has completed, so `i86_pc()` and the address an acceptance pushes are both
-  the byte after it. A WAIT that waits (TEST low) is likewise a 3-T slot per step with IP held.
+  the byte after it. A WAIT that waits (TEST not asserted: the pin HIGH) is not a HALT slot: its entry is 3 T and
+  each later step a 5-T recheck with IP held, Intel's 3 + 5n (4).
 
 Interrupt arrival is tested at both slot edges.
 
@@ -332,21 +358,27 @@ next step's A, not inside SIM's step), `sim_r75`, `rst_levels`; `intr_rst`, `int
 2; 18 T), `intr_nop` (nothing pushed, 4 T), `intr_jcc`, `intr_twice` (the byte index restarts), `intr_halt`;
 `sid_sod`.
 
-**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 39 must-fail
+**Written for the MAME 8086 core** (`test_i86_contract.c`, in run_tests and the Linux gate; its 64 must-fail
 controls, each undoing one rule of the driver, a named change of the extraction or an upstream rule, are
 `i86_controls.py`): `zero_budget`, `reset` (FFFF:0000, F002h, a pending NMI dropped, a held INTR sampled again),
 `two_cores`; `intr_vector` (the three pushes, IF/TF cleared, one `irq_ack` byte 0, a 61-T acceptance, `i86_pc()`
 at the pushes), `intr_masked`, `intr_level`, `sti_shadow`, `ss_shadow` (MOV SS and POP SS), `nmi_edge`;
 `int_iret` (51 T and 24 T, Intel's), `intercept` (IP past the INT, nothing pushed, the host's AX kept; a declined
 vector vectored), `intercept_kinds` (INTO, INT 3, the divide error with IP past the DIV), `hw_not_offered`; `halt`
-(2 T, 2-T slots, the pushed address after the HLT), `halt_masked`, `wait`; `prefix_atomic` (15 T, as Intel),
+(2 T, 2-T slots, the pushed address after the HLT), `halt_masked`, `wait` (3 when TEST is asserted; 3, 5, 5, 5
+waiting: 3 + 5n), `wait_interrupt` (an INTR between rechecks pushes the WAIT's address; entered again after IRET,
+3); `prefix_atomic` (15 T, as Intel),
 `rep_iteration` (28, 17, the resumed pass 28); `trap`, `trap_ss`; `aliased`; `tstates` (MOV r16,imm 4, OUT/IN DX
 8, CLI/STI 2, JMP short 15: MAME = Intel; NOP 3, LOCK 2, ESC 2 and 8 + EA: Intel's); `io` (a word port access is
 two bytes); `flags`; after Astra's Reply 104: `int_costs` (51, 52, 4 and 53, the same when intercepted),
 `accept_costs` (INTR 61, NMI 50, the trap 50), `divide_error` (DIV r8 80 + 51, AAM 0 51, the same when
 intercepted), `rep_counts` (9 + n for each string form, CX = 0, a REP before NOP), `odd_word` (+4 per word
-transfer: MOV, MOVSW, INT's pushes, IRET's pops, a word port), `forward_progress`, `step_cost_floor`. Against
-Unicorn on the Accent-mini's driver: `compare_i86_accent.py` (README.md).
+transfer: MOV, MOVSW, INT's pushes, IRET's pops, a word port), `forward_progress`, `step_cost_floor`; after
+Reply 106, each at even AND odd addresses with both counts absolute (an odd-minus-even check alone passes a wrong
+base): `stack_counts` (PUSH/POP r16, sreg, mem, PUSHF/POPF; SP odd, and SP and the operand odd), `port_counts` (IN/OUT
+AL and AX, imm8 and DX, even and odd ports), `return_counts` (RET, RET n, RETF, RETF n, CALL near and far),
+`word_memory_counts` (DIV, IDIV, MUL, IMUL m16, LES, LDS). Against Unicorn on the Accent-mini's driver:
+`compare_i86_accent.py` (README.md).
 
 **The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
 first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
@@ -379,9 +411,11 @@ Acceptance per core:
   decided from Intel's documentation (4); the 8080/8085 exercisers; the interrupt, flag and timing tests; the
   captured Accent SA reference (8).
 - **MAME's 8086 (corrected path)**: the phase tests above; then the Accent-mini's driver against Unicorn, every chip
-  write's value AND time identical, the audio, registers, host log and INIT snapshots identical, memory after INIT
-  identical but for the listed FLAGS images (`compare_i86_accent.py` fails the run on any of them); the timing
-  questions of 4 decided from Intel's manual (done for the entries named there; the 8088-flavoured rows open);
+  write's value AND time identical, the audio, registers, host log and INIT snapshots identical, FLAGS by its
+  stated policy (bits 0-11 equal at every software interrupt, OUT and the end; bits 12-15 masked but required to be
+  the recorded 0h on Unicorn and Fh on MAME; Reply 106), memory after INIT identical but for the listed FLAGS images
+  (`compare_i86_accent.py` fails the run on any of them); the timing questions of 4 decided from Intel's manual (the
+  8088-flavoured rows replaced by the 8086's, Reply 106);
   then a listen. The host couples the CPU to chip time by **steps** (`cpu_ips` instructions per chip second), a
   compatibility policy kept from Unicorn, not a clock: the T-states are counted beside it (`i86_cycles`) and do not
   move a write.

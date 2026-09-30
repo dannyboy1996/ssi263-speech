@@ -81,6 +81,8 @@ public:
         m_alias_op = 0;
         m_rep_ran = m_rep_continue = m_rep_pending = false;
         m_rep_at = 0;
+        m_wait_continue = m_wait_pending = false;
+        m_wait_at = 0;
         init_tables();            // the constructor's body (generated file)
     }
 
@@ -97,14 +99,20 @@ public:
     void execute_op(uint8_t op);          // the generated file: execute_run's own opcodes, then common_op
     void init_tables();                   // the generated file: the constructor's body
 
-    // ---- clock counts from Intel's manual (Astra, Reply 104; CONTRACT.md 4).  The 8086 Family User's Manual,
-    // Oct 1979, Table 2-21, as printed page / PDF page.  Upstream charges none of these.
+    // ---- clock counts from Intel's manual (Astra, Replies 104 and 106; CONTRACT.md 4).  The 8086 Family User's
+    // Manual, Oct 1979, Table 2-21, as printed page / PDF page.  Upstream charges none of these.
     enum {
         I86_INTR_T = 61,                  // INTR acceptance, 7 transfers with the two INTA cycles (2-56/PDF 79)
         I86_NMI_T = 50,                   // NMI (2-60/PDF 83)
-        I86_TRAP_T = 50,                  // SINGLE STEP (2-66/PDF 89; AP-67, printed A-28/PDF 332, says 51)
-        I86_ODD_WORD_T = 4                // "For the 8086, add four clocks for each 16-bit word transfer with an
-    };                                    //  odd address" (every page of the table)
+        I86_TRAP_T = 50,                  // SINGLE STEP: 50 in Table 2-21 (2-66/PDF 89) and in the 1985 iAPX
+                                          // 86/88, 186/188 User's Manual's Table 1-42 (printed 1-121/PDF 137);
+                                          // the 1979 manual's AP-67 (printed A-28/PDF 332) says 51.  The sources
+                                          // disagree and nothing here measured it: 50 is a model choice, NOT a
+                                          // resolved figure (Astra, Reply 106)
+        I86_ODD_WORD_T = 4,               // "For the 8086, add four clocks for each 16-bit word transfer with an
+                                          //  odd address" (every page of the table)
+        I86_WAIT_RECHECK_T = 5            // WAIT: each recheck of TEST after the entry's 3 (3 + 5n, 2-67/PDF 90;
+    };                                    //  "retests the TEST line at five-clock intervals", 2-18/PDF 41)
 
     // A word transfer at an odd address: 4 more T-states (the 8086's bus does it as two cycles).  Every memory and
     // port word access goes through read_word/write_word/read_port_word/write_port_word below; instruction fetches
@@ -131,6 +139,28 @@ public:
     {
         m_icount += m_timing[one];        // the pass charged the plain instruction's entry (i_movsb and the like) ...
         m_icount -= m_timing[count];      // ... a repetition costs the table's count instead
+    }
+
+    // WAIT (Astra, Reply 106): Intel's 3 + 5n.  One step is the entry or one recheck: the entry costs WAIT's row, 3
+    // (2-67/PDF 90), and tests TEST at once -- active, the WAIT is done in 3 (n = 0); inactive, IP goes back on the
+    // WAIT and each following step is a recheck of 5 that tests TEST again, ending the WAIT when it is active.  An
+    // interrupt is accepted between rechecks ("after any ... wait test cycle", 2-24/PDF 47) and pushes the WAIT's
+    // address; after its handler the WAIT is entered again: 3 (a model: "the WAIT instruction is again fetched prior
+    // to servicing the interrupt", the 1985 iAPX 86/88 manual's 1.7.8, printed 1-122/PDF 138).  Which step is a
+    // recheck: the one right after a step that left this WAIT waiting, with nothing between (as the REP
+    // continuation).
+    bool m_wait_continue;                 // this step's WAIT is a recheck of the one the previous step left waiting
+    bool m_wait_pending;                  // the previous step left a WAIT waiting at m_wait_at
+    uint32_t m_wait_at;
+    void wait_clk()
+    {
+        m_icount -= m_wait_continue ? (int)I86_WAIT_RECHECK_T : m_timing[WAIT];
+    }
+    void wait_hold()
+    {
+        m_ip--;                           // upstream's: IP back on the WAIT
+        m_wait_pending = true;
+        m_wait_at = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
     }
 
     // ---- the framework's calls, answered ----

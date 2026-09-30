@@ -34,8 +34,9 @@
 // whose vector pointed at itself kept i86_run(1) looping for ever (Astra, Reply 104).
 //
 // Differences from MAME, each deliberate (the generated file marks those made there 'CHANGED'):
-//   - HLT charges its own 2 T-states; a halted core does 2-T slots (MAME ends the slice).  A WAIT that waits is a
-//     slot of WAIT's 3 T-states (MAME ends the slice).
+//   - HLT charges its own 2 T-states; a halted core does 2-T slots (MAME ends the slice).  A WAIT is Intel's 3 + 5n
+//     (Astra, Reply 106): its entry 3 T, then a recheck of 5 T a step while TEST is inactive, IP held on it; an
+//     interrupt between rechecks pushes the WAIT's address and it is entered again (3) after (MAME ends the slice).
 //   - The INT seam (bus->intercept) in interrupt(), for interrupts raised by the instruction at E only.
 //   - Every NMI rising edge counts (MAME ignores one at machine time 0).
 //   - The `JMP $` cycle skip (i_jmp_d8's m_icount %= 12) never fires: a step starts with no cycles left.
@@ -44,11 +45,14 @@
 //     entry 51 (a model: no figure in the manual); INTR 61, NMI 50, the trap 50 (MAME 0); REP string forms 9 + n
 //     (MOVS 17, CMPS 22, SCAS 15, LODS 13, STOS 10); a REP before a non-string instruction 2; NOP 3, LOCK 2, ESC 2 or
 //     8 + EA; 4 more for every word transfer at an odd address (MAME: none).
-// Known limits (MAME's, kept): the table's stack and word-port rows are Intel's 8086 figure plus the 8088's 4 per
-// word transfer (PUSH r16 15, POP r16 12, PUSHF 14, POPF 12, IN AX,DX 12 -- Intel's 8086: 11, 8, 10, 8, 8), so at an
-// odd address they count that 4 twice, and its returns match neither CPU (RET 20, Intel 8) -- open, CONTRACT.md 4;
-// MAME's undefined-flag results (e.g. OF after a rotate by CL is left alone); a word access at FFFFh wraps
-// linearly, not inside the segment.
+//   - One CPU, the 8086 (Astra, Reply 106): MAME's 8088-flavoured rows (its stack, word-port, LDS/LES and word
+//     MUL/DIV rows had the 8088's 4 per word transfer built in) and its returns (matching neither CPU) are Intel's
+//     8086 figures: PUSH r16 11, PUSH mem 16 + EA, PUSH sreg 10, PUSHF 10, POP r16 8, POP mem 17 + EA, POP sreg 8,
+//     POPF 8, IN/OUT AX 10 (imm8) and 8 (DX), RET 8, RET n 12, RETF 18, RETF n 17, LDS/LES 16 + EA, MUL/IMUL/DIV/IDIV
+//     m16 124/134/150/171 + EA; the odd-address 4 is then added once per actual word transfer.
+// Known limits (MAME's, kept): MAME's undefined-flag results (e.g. OF after a rotate by CL is left alone); MUL/DIV
+// are one figure, Intel's lowest, not its data-dependent ranges; a word access at FFFFh wraps linearly, not inside
+// the segment.
 #include "i86_mame_machine.cpp"
 
 #include <new>
@@ -106,6 +110,8 @@ int i8086_common_cpu_device::drv_instruction()
     uint32_t start = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
     m_rep_continue = m_rep_pending && start == m_rep_at;   // the REP the previous step left, and nothing between:
     m_rep_pending = m_rep_ran = false;    // after an acceptance this step's instruction is the handler's
+    m_wait_continue = m_wait_pending && start == m_wait_at;   // likewise a WAIT left waiting: this step rechecks
+    m_wait_pending = false;
     m_in_instruction = true;
     for (;;) {
         uint32_t at = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
@@ -186,6 +192,7 @@ void i86_reset(i86 *c)
     c->dev->device_reset();
     c->dev->m_in_instruction = false;
     c->dev->m_rep_pending = false;
+    c->dev->m_wait_pending = false;
     c->cycles = c->steps = 0;
     c->pc = i86_linear(*c->dev);
 }

@@ -326,10 +326,10 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
 
 # MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
 # clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
-# both CPUs, every promised invariant identical -- write values and times, audio, registers, host log, memory after
-# INIT but for its allow-list, INIT snapshots (cpu/compare_i86_accent.py) -- with a must-fail control per invariant,
-# each perturbing exactly one of them and showing its own FAIL line beside the others' ok (Astra, Reply 104); and the
-# built add-on on it (SSI263_ACCENT_CORE=mame)
+# both CPUs, every promised invariant identical -- write values and times, audio, registers, FLAGS by its policy
+# (Reply 106), host log, memory after INIT but for its allow-list, INIT snapshots (cpu/compare_i86_accent.py) -- with
+# a must-fail control per invariant, each perturbing exactly one of them and showing its own FAIL line beside the
+# others' ok (Astra, Reply 104); and the built add-on on it (SSI263_ACCENT_CORE=mame)
 if os.path.isfile(os.path.join(LIB, "test_i86_contract.exe")):
     CHECKS.append(check("MAME 8086 core: CPU contract tests", [os.path.join(LIB, "test_i86_contract.exe")]))
 PC86 = os.path.join(LIB, "x64", "pc86.dll")
@@ -343,6 +343,7 @@ if os.path.isfile(PC86):
                                     r"^FAIL state +write values DIFFER at write \d+ of", r"^compare_i86_accent: FAILED$"]))
     OK86 = {"values": r"^ok +%s +\d+ writes, values identical", "times": r"^ok +%s +times identical",
             "audio": r"^ok +%s +audio identical", "regs": r"^ok +%s +CPU registers identical",
+            "flags": r"^ok +%s +FLAGS identical in bits 0-11 at \d+ samples .* 0000 / F000 \(unicorn / mame\) at every",
             "log": r"^ok +%s +host log identical", "mem": r"^ok +init +memory after INIT identical but for 4 allowed",
             "snapshot": r"^ok +state +INIT snapshots: .* identical$"}
     for what, scen, fails, mark in (
@@ -355,7 +356,17 @@ if os.path.isfile(PC86):
                                    r"images \(00500: "),
             ("allowed", "init", "mem", r"^FAIL init +memory after INIT DIFFERS in 1 byte\(s\) outside the allowed "
                                        r"FLAGS images \(9FFB5: 02/F3\)"),
-            ("snapshot", "state", "snapshot", r"^FAIL state +INIT snapshots: .* DIFFER in regs$")):
+            ("snapshot", "state", "snapshot", r"^FAIL state +INIT snapshots: .* DIFFER in regs$"),
+            # FLAGS (Astra, Reply 106): a required flag flipped (IF; CF, an arithmetic one), the masked bits no
+            # longer the recorded values, the snapshot's FLAGS
+            ("flags", "init", "flags", r"^FAIL init +FLAGS DIFFER at 1 of \d+ samples: first \d+ \(INT 67h\): "
+                                       r"unicorn 0002, mame F202, bits 0200 \(IF\)$"),
+            ("carry", "init", "flags", r"^FAIL init +FLAGS DIFFER at 1 of \d+ samples: first \d+ \(the end\): "
+                                       r"unicorn 0002, mame F003, bits 0001 \(CF\)$"),
+            ("flagsmask", "init", "flags", r"^FAIL init +FLAGS bits 12-15 not the recorded 0000 / F000 at 1 of \d+ "
+                                           r"samples: first \d+ \(INT 67h\): unicorn 0002, mame E002$"),
+            ("snapflags", "state", "snapshot", r"^FAIL state +INIT snapshots: .*\(FLAGS_POLICY: 0002 / F202\).* "
+                                               r"DIFFER in eflags$")):
         others = [OK86[k] % scen if "%s" in OK86[k] else OK86[k] for k in OK86
                   if k != fails and (k != "mem" or scen == "init") and (k != "snapshot" or scen == "state")]
         CHECKS.append(check("MAME 8086 core: Accent-mini CONTROL (%s perturbed, must fail)" % what,
