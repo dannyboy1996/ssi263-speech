@@ -16,6 +16,8 @@ paths.local
 *.hex
 *.HEX
 *.bns
+*.tns
+*.TNS
 *.BNS
 *.dvc
 *.DVC
