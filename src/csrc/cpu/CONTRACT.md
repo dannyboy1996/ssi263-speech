@@ -282,13 +282,60 @@ Acceptance per core:
 The behavioural specification comes from the manufacturers' manuals. Observations of today's cores are labelled
 **(legacy)** and are kept as regression facts, not as the definition of correct.
 
+**Written for the MAME V40 core** (`test_v40_contract.c`; its must-fail controls, each undoing one rule of the
+driver, the shim, a named change of the extraction or an upstream rule, are `v40_controls.py`): see 12.
+
 ## 11. Licences
 
 - `cpu.h` and this contract: MIT.
 - The z180emu adapter links a GPL-2.0-or-later core, so any build containing it is GPL.
-- MAME's Z180 and 8085 files keep their BSD-3-Clause notices, each extracted dependency with its own actual notice
+- MAME's Z180, 8085 and NEC (V40) files keep their BSD-3-Clause notices, each extracted dependency with its own actual notice
   and the upstream revision pinned.
 - **Our dependency policy** for store builds (iOS): no GPL components, so neither z180emu nor Unicorn; MIT and BSD
   components with their notices kept; no firmware shipped (it is imported from Files). This is our policy. Apple's
   review guidelines don't require any particular licence, and choosing these licences doesn't by itself make an app
   acceptable.
+
+## 12. The V40 (NEC uPD70208: the Speak-Out)
+
+MAME's NEC core (`nec.cpp` and its parts, pinned in `mame_nec/PINNED.txt`) with the V40's parameters from `v5x.cpp`:
+the V20's instruction set and clock counts, an 8-bit bus (a word is two byte accesses, low byte first), a 4-byte
+prefetch queue at 4 clocks a byte, 20 address lines, no DIV quirk. The V40's on-chip ICU, TCU, SCU and DMA are **not**
+in the core: a board models what its firmware uses and drives `V40_INT` from its interrupt controller.
+
+- **Reset** **(MAME)**: PS = FFFFh, IP = 0, so the first fetch is at FFFF0h; the flags clear (IE off). Held lines
+  are kept as 9 says (MAME's reset forgets a held INT; the driver asserts it again).
+- **A step** is one instruction, or **one iteration of a REP string instruction** **(model)**, or a HALT slot of 2
+  clocks **(model)**. A segment prefix and its instruction are one step **(MAME)**: an interrupt is never taken
+  between them.
+- **REP** **(chip: interruptible between iterations; the details are MAME's)**: an interrupt raised at an iteration's
+  boundary is taken before the next iteration. It pushes the address of the instruction's FIRST prefix, with CW, IX
+  and IY as far as they got, so IRET re-executes the whole prefixed instruction, a segment override included (before
+  or after the REP), for the iterations left. Without an interrupt the override holds from step to step. The REP
+  prefix's 2 clocks are charged once per instruction: MAME charges them at every re-entry of a split REP, which with
+  one iteration per step would be every iteration (changed in the driver). Unicorn counts a REP of n iterations that
+  ends by its count as n + 1 instructions (measured), this core as n steps.
+- **INT** **(MAME)**: a level, sampled at A when IE is set and no shadow runs; its acceptance reads the vector
+  NUMBER from `irq_ack(ctx, V40_INT, 0)` (the V40's ICU supplies 8-15 on the Speak-Out), pushes the flags, PS and IP,
+  clears IE and BRK, and consumes the request: MAME clears the line, so a board asserts it again for a further one.
+  The acceptance costs 12 clocks: MAME's, its PUSHF's; NEC's figure for an interrupt acknowledge is not modelled.
+- **NMI** **(MAME)**: an edge, vector 2, taken whatever IE says, before INT.
+- **Shadows** **(MAME)**: after MOV sreg, POP SS and LOCK one more instruction runs before an interrupt is taken.
+  **EI (STI) has none**: an INT pending at EI's step is taken before the instruction after it. Intel's 8086 delays it
+  by one instruction; NEC's V40 manual is still to be checked.
+- **HALT**: ended by an acceptance, at the next step's A, never by the line itself (changed: MAME wakes at the line,
+  so the instruction after the HLT ran before the interrupt). With IE = 0 an INT leaves the CPU halted, as on the
+  8086 **(chip, the 8086's; changed: MAME wakes it)**. During the slots `v40_pc()` stays on the HLT; at A it is the
+  address after it, which is pushed.
+- **Undefined opcodes** **(MAME)**: executed as MAME executes them (0x63, 0x66, 0x67, 0xF1: 10 clocks and nothing
+  else; SETALC; the undefined shift and group forms) and counted in `v40_regs.undefined`, with the last one's address.
+  The FPO escapes (D8h-DFh) are the coprocessor's, defined, not counted. **The 8080 emulation mode** (BRKEM) is not
+  built: entering it sets `v40_regs.fault` and the core then does 2-clock slots.
+- **Divide error** **(MAME)**: vector 0 with the address after the DIV pushed, AW and DW unchanged.
+- `v40_pc()` is linear (PS * 16 + IP, 20 bits).
+
+Tests (`test_v40_contract.c`, 22): `zero_budget`, `reset_vector`, `reset`, `two_cores`, `int_accept`, `int_masked`,
+`ei_no_shadow`, `sreg_shadow`, `prefix_atomic`, `rep_steps`, `rep_irq`, `rep_seg_irq`, `rep_seg_steps`, `halt_int`,
+`halt_masked`, `nmi`, `nmi_priority`, `undefined`, `mode8080_fault`, `div_overflow`, `word_order`, `wrap20`.
+`v40_controls.py` undoes 19 rules, each failing exactly its tests. No control is possible for the statics made members
+(`Mod_RM`, `parity_table`, `nec_popa_tmp`): the tables are the same in every instance.

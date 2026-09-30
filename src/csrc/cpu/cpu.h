@@ -94,6 +94,36 @@ uint64_t i8085_steps(const i8085 *c);
 uint32_t i8085_pc(const i8085 *c);                 /* the saved instruction-start PC; no side effects (no RIM) */
 void i8085_regs_get(const i8085 *c, i8085_regs *out);
 
+/* ---- V40 (NEC uPD70208: the Speak-Out) -------------------------------------------------------------------------
+   The V20 instruction set on an 8-bit bus, 20-bit addresses.  The V40's on-chip peripherals (ICU, TCU, SCU, DMA) are
+   NOT in the core: a board models what its firmware uses and drives INT from its interrupt controller.  Memory and
+   port addresses reach the bus as they are (ports 16 bits, memory 20 bits).  CONTRACT.md 4 and 12 say what a step is
+   here: a REP string instruction is one step per iteration. */
+typedef struct v40 v40;
+
+enum { V40_INT, V40_NMI };           /* INT: a level (the ICU's output), consumed by its acceptance; NMI: an edge */
+
+typedef struct {                     /* NEC's names (Intel's): the programmer-visible state */
+    uint16_t aw, cw, dw, bw, sp, bp, ix, iy;    /* AX CX DX BX SP BP SI DI */
+    uint16_t ds1, ps, ss, ds0;                   /* ES CS SS DS */
+    uint16_t ip, psw;                            /* psw: the flags as PUSHF stores them */
+    uint8_t halted;
+    uint8_t fault;                   /* BRKEM entered the 8080 emulation mode, which this core does not model: it stops */
+    uint32_t undefined;              /* undefined or unimplemented opcodes executed since reset (MAME's own handling) */
+    uint32_t undefined_at;           /* the linear address of the last one's step */
+} v40_regs;
+
+v40 *v40_create(const cpu_bus *bus, double clock_hz);
+void v40_destroy(v40 *c);
+void v40_reset(v40 *c);                            /* PS = FFFFh, IP = 0: the first fetch is at FFFF0h */
+int v40_step(v40 *c);                              /* one step (CONTRACT.md 1, 12); returns its clocks */
+uint64_t v40_run(v40 *c, uint64_t budget);         /* whole steps until >= budget clocks; returns those run */
+void v40_set_irq(v40 *c, int line, int asserted);
+uint64_t v40_cycles(const v40 *c);                 /* clocks since reset */
+uint64_t v40_steps(const v40 *c);
+uint32_t v40_pc(const v40 *c);                     /* the saved step-start address, LINEAR (PS * 16 + IP, 20 bits) */
+void v40_regs_get(const v40 *c, v40_regs *out);
+
 #ifdef __cplusplus
 }
 #endif

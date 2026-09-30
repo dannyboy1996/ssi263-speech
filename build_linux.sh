@@ -67,6 +67,18 @@ mkdir -p "$OUT/obj_i8085"
 $CXX $MAME -Wno-sign-compare -c -o "$OUT/obj_i8085/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i8085/test_i8085_contract.o" "$SRC/cpu/test_i8085_contract.c"
 $CXX -o "$OUT/test_i8085_contract" "$OUT/obj_i8085/test_i8085_contract.o" "$OUT/obj_i8085/i8085_mame.o"
+# MAME's V40 core (src/csrc/cpu/v40_mame.cpp, the Speak-Out's; opt-in, not yet accepted): the CPU contract's tests,
+# the Speak-Out board's tests (src/csrc/speakout) and the board as a shared library for src/hosts/speakout_v40.py.
+mkdir -p "$OUT/obj_v40"
+$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_v40/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
+for f in so_board so_icu so_scu so_hex; do
+    $CC -O2 -std=gnu89 -ffp-contract=off -fPIC -Wall -I$SRC/cpu -I$SRC/speakout -c -o "$OUT/obj_v40/$f.o" "$SRC/speakout/$f.c"
+done
+$CC -O2 -std=gnu89 -I$SRC/cpu -c -o "$OUT/test_v40_contract.o" "$SRC/cpu/test_v40_contract.c"
+$CXX -o "$OUT/test_v40_contract" "$OUT/test_v40_contract.o" "$OUT/obj_v40/v40_mame.o"
+$CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC/speakout -c -o "$OUT/test_so_board.o" "$SRC/speakout/test_so_board.c"
+$CXX -o "$OUT/test_so_board" "$OUT/test_so_board.o" "$OUT"/obj_v40/*.o
+$CXX -shared -o "$OUT/libspeakout_v40.so" "$OUT"/obj_v40/*.o
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"

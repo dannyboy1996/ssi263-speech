@@ -24,6 +24,13 @@ The cores never know which board they are in.
 | `test_i8085_contract.c` | CONTRACT.md's clauses on the 8085 core, one test each (TRAP, the RSTs, INTR's injected instructions, EI, HALT, RIM/SIM, SID/SOD, reset, two instances), T-states from Intel's manual. |
 | `i8085_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (the runner guard is `contract_controls.py`'s). |
 | `test_i8085_cpm.c` | Runs a CP/M 8080/8085 test program (TST8080, 8080PRE, 8080EXM, CPUTEST; GPL, not in the repo) on the 8085 core. |
+| `mame_nec/` | Where MAME's NEC core (the V40, the Speak-Out's CPU) comes from: `PINNED.txt` (the upstream revision, each file's hash) and the licence text (BSD-3-Clause; Bryan McPhail). Nothing of it is copied unchanged. |
+| `extract_v40_machine.py` | Generates `v40_mame_machine.cpp` from eight files of MAME's `src/devices/cpu/nec/` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
+| `v40_mame_machine.cpp` | **Generated; do not edit.** MAME's V20/V40 instruction set: the class's members, fetch and the prefetch queue, the instruction table, reset, interrupts, every instruction. No 8080 mode, no V33 map, no on-chip peripherals. |
+| `v40_mame.hpp` | The shim MAME's NEC code compiles against: the bus (8-bit, 20-bit addresses), I/O, the interrupt acknowledge, `logerror`. |
+| `v40_mame.cpp` | **Our step driver** (the contract's phases for the V40: one REP iteration per step, HALT, the undefined-opcode count) and the `cpu.h` functions. It includes `v40_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
+| `test_v40_contract.c` | CONTRACT.md 12's clauses on the V40 core, one test each (22). |
+| `v40_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (19). |
 | `trace_i8085.py` | The 8085 core against the Python one (`src/hosts/i8085.py`) on the Accent SA firmware's boot: per-step registers at the boundary, the first differences by class. |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
@@ -73,3 +80,22 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
   the reset value on. `--control` (an 11-T acceptance) must be reported, and is. With `--trap-after-ei 1` (a
   TRAP raised right after an EI) the cores part: the MAME core takes TRAP at once (CONTRACT.md 5), the Python
   core runs the next instruction first.
+
+## The MAME V40 against Unicorn (first comparison, 2026-09-30)
+
+The Speak-Out on the board in `../speakout/`, against today's Unicorn host, same chip model, same scenario (the
+greeting, six sentences spoken to their end, one cut by ^X): `nvda/tools/speakout_core_compare.py`.
+
+- Steps coupled to chip time as Unicorn's instructions (`mame-steps`): all 4,268 SSI-263 writes identical, values
+  and times. One counting difference had to be matched first: Unicorn counts a REP string instruction that ends by
+  its count as n + 1 instructions (the exit test is one more), this core as n steps (`so_run_steps_unicorn`, tested
+  against Unicorn's own counts).
+- Clocks at 8 MHz (`mame`): every speech frame of every utterance identical (the cut one up to the cut). The firmware
+  writes more idle frames (PA at rate F) while its rules work, and the times move: an utterance's first phoneme lands
+  about twice as late after the text is sent (e.g. 74 against 34.5 ms, 160 against 69.5 ms), and phonemes inside
+  long utterances lag their first by up to 65 ms more than on Unicorn; the greeting gains 6 idle frames inside it.
+- Why: MAME charges this firmware 12.7 clocks per instruction on average (the V20's clock counts and its prefetch),
+  so Unicorn's 1.5 million instructions a second are a 19.1 MHz V40. At 19.1 MHz the times fall within a few ms of
+  Unicorn's (first phonemes within 5.5 ms, inside utterances within 16 ms, the same idle frames). The unit's crystal
+  is not yet read; 8 MHz is the uPD70208-8's rating (MAME's nec.cpp notes the V40 at 10 MHz, the V40HL up to 20).
+- No undefined opcode was executed.

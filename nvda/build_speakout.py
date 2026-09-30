@@ -61,6 +61,9 @@ def main():
     copy_engine(ENGINE, eng)
     shutil.copy2(os.path.join(ENGINE, "hosts", "speakout.py"), os.path.join(eng, "speakout_host.py"))
     shutil.copy2(os.path.join(ENGINE, "hosts", "ucmini.py"), eng)
+    # the MAME V40 core's binding: inert unless SSI263_SPEAKOUT_CORE selects it (research only; its DLL is not
+    # shipped: speakout_v40.py finds the research tree's nvda/dist/speakout-lib)
+    shutil.copy2(os.path.join(ENGINE, "hosts", "speakout_v40.py"), eng)
     shutil.copy2(os.path.join(HERE, "shared", "ssi263_rates.py"), eng)
     shutil.copy2(os.path.join(HERE, "shared", "ssi263_numwords.py"), eng)   # currencies()
     shutil.copytree(os.path.join(ENGINE, "hosts", "bin"), os.path.join(eng, "bin"), ignore=IGN)
