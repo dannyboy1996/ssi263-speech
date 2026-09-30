@@ -48,6 +48,7 @@ class SettingsActivity : Activity() {
     private var importMessage: TextView? = null
     private var importAnnounced = -1
     private var importAnnouncedAt = 0L
+    private var importLogged = 0
     private val ticker = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -314,6 +315,7 @@ class SettingsActivity : Activity() {
             .setNegativeButton("Cancel") { _, _ -> job.cancel(); importStatus.text = "Cancelling…" }
             .create().also { it.show() }
         importAnnounced = -1
+        importLogged = 0
         importAnnouncedAt = android.os.SystemClock.elapsedRealtime()   // the dialog is being read out now
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         job.listener = { j -> runOnUiThread { showImportProgress(j) } }
@@ -332,6 +334,11 @@ class SettingsActivity : Activity() {
         val permille = (job.progress() * 1000).toInt().coerceIn(0, 1000)
         importBar?.progress = permille
         importMessage?.text = "${job.step.ifEmpty { "Importing the firmware" }}… ${permille / 10}%"
+        // The bar's course in the log, a line per tenth (adb logcat -s SsiImport): how a device test sees it move.
+        if (permille / 100 > importLogged) {
+            importLogged = permille / 100
+            Log.i("SsiImport", "progress ${permille / 10}%: ${job.step}")
+        }
         // A screen reader hears the dialog once; the percentage moving is silent unless said.  Every fifth, and no
         // closer than 5 seconds apart: Spanish's minute is said four times, English's few seconds once at most.
         val fifth = permille / 200
@@ -340,6 +347,7 @@ class SettingsActivity : Activity() {
             importAnnounced = fifth
             importAnnouncedAt = now
             try { importMessage?.announceForAccessibility("${fifth * 20} percent") } catch (e: Throwable) {}
+            Log.i("SsiImport", "announced ${fifth * 20} percent")
         }
     }
 
