@@ -220,6 +220,10 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("keepOpen", "&Keep the channel open after speaking (the hiss or whine until the unit "
                              "clicks off)", defaultVal=True),
         DriverSetting(rates.SETTING_ID, rates.SETTING_LABEL, defaultVal=str(rates.DEFAULT)),
+        # the unit run ahead of the chip (src/csrc/blazie/run_ahead.h), off by default until Astra and Tomi have heard
+        # it: the same register values, answers at the unit's own speed, no reading pauses, "done" when the last
+        # spoken phoneme ends.  With "short pauses" on only (it shortens them further), and the in-process unit only.
+        BooleanDriverSetting("runAhead", "&Run the unit ahead (experimental: with short pauses)", defaultVal=False),
     )
     # LangChangeCommand: NVDA's automatic language switching (and MultiLang passing a language on) sends each
     # stretch of text to the unit for its language
@@ -250,6 +254,7 @@ class SynthDriver(SynthDriver):
         self._whine = self._want_whine = "off"
         self._keep_open = True
         self._play_end = 0.0             # when the listener will have heard everything fed (_feed); 0: nothing queued
+        self._run_ahead = False
         self._player = self._makePlayer()
         self._queue = queue.Queue()
         self._cancelFlag = threading.Event()
@@ -404,6 +409,12 @@ class SynthDriver(SynthDriver):
         # parameter, so the worker restarts the unit (silently) before the next utterance
         if v in dict(WHINES):
             self._want_whine = v
+
+    def _get_runAhead(self):
+        return self._run_ahead
+
+    def _set_runAhead(self, v):
+        self._run_ahead = bool(v)        # the worker applies it at the next utterance (_speakSegment)
 
     def _get_keepOpen(self):
         return self._keep_open
@@ -664,6 +675,8 @@ class SynthDriver(SynthDriver):
         gain = MAKEUP * self._volume / 100.0
         self._cur_pitch = settings[1]
         self._lead = True                # nothing audible fed yet in this utterance
+        if hasattr(type(unit), "run_ahead"):                 # the in-process unit (the pipe host has no such mode)
+            unit.run_ahead = 1 if (self._run_ahead and self._short) else 0
         try:
             self._speakItems(items, unit, gain)
         finally:

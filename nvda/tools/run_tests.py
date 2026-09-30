@@ -131,6 +131,21 @@ CHECKS.append(check("open channel CONTROL (0.6.0 pacing, must fail)", [PY, "tail
                     env={"TAIL_LATENCY_BREAK": "1"}, expect_fail=True,
                     fail_marks=[r"^FAIL A whine on, keep open, no cancel ", r"^ok +B whine off",
                                 r"^tail latency: 1 FAILED$"]))
+# ... and the opt-in "run ahead" mode (src/csrc/blazie/run_ahead.h) against today's lockstep through bl.dll: every
+# register value identical over sessions with cancels and a rate change, and say() to first sound in chip time (at most
+# 100 ms run ahead, 300 ms in lockstep); its controls: one value flipped must be caught, and the mode left off must fail
+# the head limit
+if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
+    CHECKS.append(check("run ahead = lockstep, English (values; head latency)", [PY, "run_ahead_equiv.py"]))
+    CHECKS.append(check("run ahead = lockstep, Spanish (values; head latency)", [PY, "run_ahead_equiv.py", "--es"]))
+    CHECKS.append(check("run ahead CONTROL (a value flipped, must fail)", [PY, "run_ahead_equiv.py", "--quick"],
+                        env={"RUN_AHEAD_EQUIV_FLIP": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL case 1 block 1: write values DIFFER at write \d+ of",
+                                    r"^run ahead vs lockstep \(English\): 1 FAILED$"]))
+    CHECKS.append(check("run ahead CONTROL (left off, the head must fail)", [PY, "run_ahead_equiv.py", "--quick"],
+                        env={"RUN_AHEAD_EQUIV_OFF": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.3 Select synthesizer dialog +head 123\.0 -> 123\.0 ms",
+                                    r"^run ahead vs lockstep \(English\): 3 FAILED$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

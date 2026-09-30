@@ -50,7 +50,9 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
 BL_API void bh_set_whine(bl_host *h, int mode);
 BL_API int bh_get_whine(const bl_host *h);
 
-/* the host's state, as blazie.py keeps it (tests and the Python wrapper read and some set these) */
+/* the host's state, as blazie.py keeps it (tests and the Python wrapper read and some set these).  Also "run_ahead"
+   (int, 0 = off, the default): each bh_say's utterance is captured with the unit run ahead of the chip and played
+   from the script (run_ahead.h); the pipe host has no such mode. */
 BL_API int bh_get_int(const bl_host *h, const char *name);
 BL_API void bh_set_int(bl_host *h, const char *name, int v);
 BL_API double bh_get_double(const bl_host *h, const char *name);

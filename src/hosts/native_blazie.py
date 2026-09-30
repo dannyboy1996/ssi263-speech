@@ -171,6 +171,9 @@ class NativeBlazie:
     say_time = _float_attr("say_time")
     cancel_cut = _float_attr("cancel_cut")
     cancel_quiet = _float_attr("cancel_quiet")
+    # the unit run ahead of the chip (src/csrc/blazie/run_ahead.h): 0 = today's lockstep (the default), 1 = on.  The
+    # Python pipe host has no such mode.
+    run_ahead = _int_attr("run_ahead")
 
     @property
     def preparing(self):
