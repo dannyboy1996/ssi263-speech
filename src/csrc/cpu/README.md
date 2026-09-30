@@ -33,6 +33,7 @@ The cores never know which board they are in.
 | `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (24): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT, prefixes, REP, the trap flag, the alias counter, T-states, I/O, FLAGS. |
 | `i86_controls.py` | Its must-fail controls (18): each rule undone in a scratch copy, exactly its tests must fail. |
 | `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios, every chip write compared. |
+| `census_i86_accent.py` | Which x86 SPKEMS.DVC needs: every block it runs under Unicorn, disassembled (needs capstone). |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
 `test_bl_board_mame.exe`, beside the legacy ones) and `../../../build_linux.sh` (`test_bl_board_mame`). Gated in
