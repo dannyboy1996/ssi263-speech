@@ -1,0 +1,154 @@
+#!/bin/sh
+# Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (z180emu's
+# Z180 core), the Braille Lite host and voice -- the same sources and flags as build_linux.sh -- plus the app's
+# front end (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle
+# packages prebuilt libraries.  Then it stages what the APK carries besides code: the unit's firmware (never in the
+# repository), the licences, and for z180emu's GPL the complete corresponding source.
+#
+#   sh build_android.sh                  arm64-v8a, armeabi-v7a and x86_64
+#   sh build_android.sh arm64-v8a        one ABI
+#   sh build_android.sh --test arm64-v8a the host-side test program for that ABI (run over adb)
+#
+# Found from the environment first, then paths.local (the key of the same name), then the default:
+#   Z180EMU            a z180emu checkout (default third_party/z180emu)
+#   SSI263_FIRMWARE    the folder with BL2ENG.BNS + bl2_2003_warm.state, and BL2SPA.BNS + bl2spa_fresh.state for
+#                      the Spanish unit, there or in its spanish/ folder (default firmware/blazie)
+#   ANDROID_NDK_HOME   the NDK (default: the newest under $ANDROID_HOME/ndk or $ANDROID_SDK_ROOT/ndk)
+#
+# Output: src/platforms/android/app/src/main/jniLibs/<abi>/libssi263speech.so (gitignored) and build/android/assets
+# (gitignored), which Gradle packages.  Nothing here is committed.
+set -e
+
+# A Windows path on MSYS (pwd -W), because the NDK's clang is a Windows program and path conversion is switched off
+# below, so a POSIX /c/... path would reach it unconverted.  As outspoken's build_android.sh.
+ROOT="$(cd "$(dirname "$0")" && (pwd -W 2>/dev/null || pwd))"
+APP="$ROOT/src/platforms/android/app/src/main"
+OUT="$ROOT/build/android"
+SRC="$ROOT/src/csrc"
+API=26                                  # the app's minSdk
+
+# paths.local: "KEY = value" lines (tools/repo_paths.py's format); backslashes become slashes for the shell
+local_path() {
+    [ -f "$ROOT/paths.local" ] || return 0
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ROOT/paths.local" | tail -1 | tr '\\' '/' | tr -d '\r'
+}
+Z180="${Z180EMU:-${SSI263_Z180EMU:-$(local_path Z180EMU)}}"
+Z180="${Z180:-$ROOT/third_party/z180emu}"
+FW="${SSI263_FIRMWARE:-$(local_path SSI263_FIRMWARE)}"
+FW="${FW:-$ROOT/firmware/blazie}"
+[ -f "$Z180/z180/z180.c" ] || { echo "z180emu not found at $Z180 (set Z180EMU)"; exit 1; }
+
+newest() { for p in "$@"; do [ -e "$p" ] && echo "$p"; done | sort -V | tail -1; }
+NDK="${ANDROID_NDK_HOME:-}"
+[ -n "$NDK" ] || NDK="$(newest "${ANDROID_HOME:-/nonexistent}"/ndk/* "${ANDROID_SDK_ROOT:-/nonexistent}"/ndk/* 2>/dev/null)"
+[ -n "$NDK" ] && [ -d "$NDK" ] || { echo "no Android NDK found; set ANDROID_NDK_HOME"; exit 1; }
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) HOST=windows-x86_64; EXE=.exe; NDK="$(cd "$NDK" && (pwd -W 2>/dev/null || pwd))" ;;
+    Darwin) HOST=darwin-x86_64; EXE= ;;
+    *) HOST=linux-x86_64; EXE= ;;
+esac
+BIN="$NDK/toolchains/llvm/prebuilt/$HOST/bin"
+[ -x "$BIN/clang$EXE" ] || { echo "no clang under $BIN"; exit 1; }
+echo "NDK: $NDK"
+
+# As build_linux.sh.  The chip: plain C99.  The board and host: gnu89 and -fcommon for z180emu's MAME-era C.
+# -ffp-contract=off keeps the Python reference's arithmetic (no fused multiply-adds, which arm64 would otherwise
+# use), so the PCM is the other platforms' byte for byte.  Not -ftls-model=initial-exec: Bionic refuses an
+# initial-exec TLS access in a library loaded with dlopen (System.loadLibrary), so the adapter's thread-local
+# instance pointer keeps the default model here.
+CHIP="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter"
+BOARD="-O3 -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
+FRONT="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I$SRC"
+CPP="$APP/cpp"
+
+target() {
+    case "$1" in
+        arm64-v8a)   echo "aarch64-linux-android$API" ;;
+        armeabi-v7a) echo "armv7a-linux-androideabi$API" ;;
+        x86_64)      echo "x86_64-linux-android$API" ;;
+        *) echo "unknown ABI $1" >&2; exit 1 ;;
+    esac
+}
+
+# MSYS would rewrite --target's argument as a path; nothing here is one.
+cc() { MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1 "$BIN/clang$EXE" "$@"; }
+
+objects() {
+    ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
+    mkdir -p "$O"
+    cc --target="$TARGET" $CHIP -c -o "$O/ssi263.o" "$SRC/ssi263.c"
+    cc --target="$TARGET" $CHIP -c -o "$O/ssi263dsp.o" "$SRC/ssi263dsp.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_unity.o" "$SRC/blazie/bl_unity.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_host.o" "$SRC/blazie/bl_host.c"
+    cc --target="$TARGET" $BOARD -c -o "$O/bl_voice.o" "$SRC/blazie/bl_voice.c"
+    cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
+    cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
+}
+
+build_abi() {
+    ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
+    echo "=== $ABI ==="
+    objects "$ABI"
+    cc --target="$TARGET" $FRONT -c -o "$O/ssa_jni.o" "$CPP/ssa_jni.c"
+    mkdir -p "$APP/jniLibs/$ABI"
+    # only the API and the JNI entry points are exported; the Z180 core's globals stay inside
+    cc --target="$TARGET" -shared -Wl,-z,max-page-size=16384 -o "$OUT/$ABI/libssi263speech.so" "$O"/*.o -lm -llog
+    "$BIN/llvm-strip$EXE" --strip-unneeded -o "$APP/jniLibs/$ABI/libssi263speech.so" "$OUT/$ABI/libssi263speech.so"
+    ls -l "$APP/jniLibs/$ABI/libssi263speech.so"
+}
+
+# The host-side test (src/platforms/android/test) for a device: a plain executable, run from /data/local/tmp over
+# adb with no app installed (not -static: Bionic refuses a static executable whose TLS segment is under-aligned).
+build_test() {
+    ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
+    objects "$ABI"
+    cc --target="$TARGET" $FRONT -I"$CPP" -o "$OUT/$ABI/test_android_native" \
+        "$ROOT/src/platforms/android/test/test_android_native.c" \
+        "$O/ssa_engine.o" "$O/ssa_map.o" "$O/bl_voice.o" "$O/bl_host.o" "$O/bl_unity.o" "$O/ssi263.o" \
+        "$O/ssi263dsp.o" -lm
+    echo "  -> build/android/$ABI/test_android_native"
+}
+
+# What the APK carries besides code, into build/android/assets (Gradle's assets folder for it)
+stage_assets() {
+    A="$OUT/assets"
+    rm -rf "$A"
+    mkdir -p "$A/firmware" "$A/licenses" "$A/source"
+    for f in BL2ENG.BNS bl2_2003_warm.state; do
+        [ -f "$FW/$f" ] || { echo "missing firmware: $FW/$f (set SSI263_FIRMWARE)"; exit 1; }
+        cp "$FW/$f" "$A/firmware/"
+    done
+    # the Spanish unit, when both of its files are there
+    for d in "$FW" "$FW/spanish"; do
+        if [ -f "$d/BL2SPA.BNS" ] && [ -f "$d/bl2spa_fresh.state" ]; then
+            cp "$d/BL2SPA.BNS" "$d/bl2spa_fresh.state" "$A/firmware/"
+            break
+        fi
+    done
+    cp "$ROOT/src/platforms/android/licenses/"*.txt "$A/licenses/"
+    cp "$ROOT/LICENSE" "$A/licenses/ssi263-speech-MIT.txt"
+    cp "$Z180/COPYING" "$A/licenses/z180emu-GPL-2.0.txt"
+    # GPLv2 (z180emu): the complete source this library was built from, and how, as tools/package_linux.sh does
+    Z180_PARENT="$(dirname "$Z180")"; Z180_NAME="$(basename "$Z180")"
+    # --force-local: on Windows the archive's "C:" is a drive, not a remote host
+    (cd "$ROOT" && tar --force-local --exclude=jniLibs --exclude=build --exclude=.gradle --exclude=.cxx \
+        --exclude=local.properties --exclude=signing.properties \
+        -czf "$A/source/ssi263-speech-source.tgz" build_android.sh build_linux.sh LICENSE \
+        src/csrc/ssi263.c src/csrc/ssi263dsp.c src/csrc/ssi263.h src/csrc/ssi263_defaults.h src/csrc/blazie \
+        src/csrc/cpu src/platforms/android src/platforms/speechd \
+        -C "$Z180_PARENT" "$Z180_NAME/z180" "$Z180_NAME/COPYING")
+    cat > "$A/source/BUILD.txt" <<EOF
+libssi263speech.so was built with the Android NDK $(basename "$NDK") (clang, --target=<abi>-linux-android$API).
+Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, put the unit's firmware in
+firmware/blazie, then: sh build_android.sh, and in src/platforms/android: ./gradlew assembleDebug
+EOF
+    ls "$A/firmware"
+}
+
+if [ "$1" = "--test" ]; then
+    build_test "${2:-arm64-v8a}"
+    exit 0
+fi
+if [ -n "$1" ]; then build_abi "$1"; else build_abi arm64-v8a; build_abi armeabi-v7a; build_abi x86_64; fi
+stage_assets
+echo "done."
