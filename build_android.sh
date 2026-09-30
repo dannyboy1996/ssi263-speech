@@ -131,7 +131,7 @@ stage_assets() {
     # GPLv2 (z180emu): the complete source this library was built from, and how, as tools/package_linux.sh does
     Z180_PARENT="$(dirname "$Z180")"; Z180_NAME="$(basename "$Z180")"
     # --force-local: on Windows the archive's "C:" is a drive, not a remote host
-    (cd "$ROOT" && tar --force-local --exclude=jniLibs --exclude=build --exclude=.gradle --exclude=.cxx \
+    (cd "$ROOT" && tar --force-local --exclude=jniLibs --exclude=build --exclude=.gradle --exclude=.kotlin --exclude=.cxx \
         --exclude=local.properties --exclude=signing.properties \
         -czf "$A/source/ssi263-speech-source.tgz" build_android.sh build_linux.sh LICENSE \
         src/csrc/ssi263.c src/csrc/ssi263dsp.c src/csrc/ssi263.h src/csrc/ssi263_defaults.h src/csrc/blazie \

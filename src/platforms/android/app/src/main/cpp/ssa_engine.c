@@ -56,7 +56,10 @@ static void shut_down(ssa_engine *e)
         blv_destroy(e->voices[i]);
         e->voices[i] = NULL;
     }
-    e->cur = NULL;
+    e->cur = NULL;                     /* nothing may point into a unit that is gone */
+    e->block = NULL;
+    e->block_n = e->block_at = 0;
+    e->done = 1;
 }
 
 void ssa_free(ssa_engine *e)
