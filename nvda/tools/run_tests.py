@@ -185,8 +185,10 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
 
 # MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
 # clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
-# both CPUs, every chip write's value identical (cpu/compare_i86_accent.py), with its control (one value flipped);
-# and the built add-on on it (SSI263_ACCENT_CORE=mame)
+# both CPUs, every promised invariant identical -- write values and times, audio, registers, host log, memory after
+# INIT but for its allow-list, INIT snapshots (cpu/compare_i86_accent.py) -- with a must-fail control per invariant,
+# each perturbing exactly one of them and showing its own FAIL line beside the others' ok (Astra, Reply 104); and the
+# built add-on on it (SSI263_ACCENT_CORE=mame)
 if os.path.isfile(os.path.join(LIB, "test_i86_contract.exe")):
     CHECKS.append(check("MAME 8086 core: CPU contract tests", [os.path.join(LIB, "test_i86_contract.exe")]))
 PC86 = os.path.join(LIB, "x64", "pc86.dll")
@@ -198,6 +200,27 @@ if os.path.isfile(PC86):
                         [PY, CMP86, "--quick", "--control"], env={"SSI263_PC86_DLL": PC86}, expect_fail=True,
                         fail_marks=[r"^FAIL init +write values DIFFER at write 8 of 17/17",
                                     r"^FAIL state +write values DIFFER at write \d+ of", r"^compare_i86_accent: FAILED$"]))
+    OK86 = {"values": r"^ok +%s +\d+ writes, values identical", "times": r"^ok +%s +times identical",
+            "audio": r"^ok +%s +audio identical", "regs": r"^ok +%s +CPU registers identical",
+            "log": r"^ok +%s +host log identical", "mem": r"^ok +init +memory after INIT identical but for 4 allowed",
+            "snapshot": r"^ok +state +INIT snapshots: .* identical$"}
+    for what, scen, fails, mark in (
+            ("time", "init", "times", r"^FAIL init +write times DIFFER: 1 of 17, the largest \+0\.000001 s at write 8"),
+            ("pcm", "state", "audio", r"^FAIL state +audio DIFFERS \(\d+ / \d+ blocks\)"),
+            ("reg", "init", "regs", r"^FAIL init +CPU registers DIFFER \(ax=0000 .* \| ax=10000 "),
+            ("log", "init", "log", r"^FAIL init +host log DIFFERS at line \d+ of (\d+)/\d+: unicorn None, mame "
+                                   r"'\(a line the control added\)'"),
+            ("mem", "init", "mem", r"^FAIL init +memory after INIT DIFFERS in 1 byte\(s\) outside the allowed FLAGS "
+                                   r"images \(00500: "),
+            ("allowed", "init", "mem", r"^FAIL init +memory after INIT DIFFERS in 1 byte\(s\) outside the allowed "
+                                       r"FLAGS images \(9FFB5: 02/F3\)"),
+            ("snapshot", "state", "snapshot", r"^FAIL state +INIT snapshots: .* DIFFER in regs$")):
+        others = [OK86[k] % scen if "%s" in OK86[k] else OK86[k] for k in OK86
+                  if k != fails and (k != "mem" or scen == "init") and (k != "snapshot" or scen == "state")]
+        CHECKS.append(check("MAME 8086 core: Accent-mini CONTROL (%s perturbed, must fail)" % what,
+                            [PY, CMP86, "--quick", "--only", scen],
+                            env={"SSI263_PC86_DLL": PC86, "I86_COMPARE_PERTURB": what}, expect_fail=True,
+                            fail_marks=[mark] + others + [r"^compare_i86_accent: FAILED$"]))
     CHECKS.append(check("driver_sim accent on the MAME 8086 core (NVDA 64-bit)", [PY, "-S", "driver_sim.py", "accent",
                         NVDA, "rt"], env={"SSI263_ACCENT_CORE": "mame", "SSI263_PC86_DLL": PC86}))
 # the Python wheel (python/): built from this tree's libraries, installed into a fresh venv, the chip audible and

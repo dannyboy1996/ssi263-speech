@@ -39,7 +39,7 @@ The cores never know which board they are in.
 | `i86_mame.cpp` | **Our step driver** (the contract's phases, following execute_run) and the `cpu.h` functions (`i86_*`, with `i86_regs_set`, `i86_next_pc` and `i86_aliased` for a host that stands in for DOS). It includes `i86_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
 | `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (24): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT, prefixes, REP, the trap flag, the alias counter, T-states, I/O, FLAGS. |
 | `i86_controls.py` | Its must-fail controls (18): each rule undone in a scratch copy, exactly its tests must fail. |
-| `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios, every chip write compared. |
+| `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios; write values and times, audio, registers, host log, INIT memory and snapshots must all match (with must-fail controls). |
 | `census_i86_accent.py` | Which x86 SPKEMS.DVC needs: every block it runs under Unicorn, disassembled (needs capstone). |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
@@ -53,8 +53,10 @@ by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated; no b
 
 MAME's 8086 (the Accent-mini's PC, to replace Unicorn under `src/hosts/accent.py`) likewise: `test_i86_contract.exe`
 and `x64/`, `x86/pc86.dll` (`../pc86`) by `build_board.py`, `test_i86_contract` and `libpc86.so` by `build_linux.sh`.
-Gated: the contract tests, `compare_i86_accent.py --quick` with its control, and driver_sim on the built add-on with
-`SSI263_ACCENT_CORE=mame`. Opt-in only: Unicorn stays the default.
+Gated: the contract tests, `compare_i86_accent.py --quick` with its eight controls (one value flipped; one write
+time, one PCM sample, one register, one log line, one memory byte outside and one inside the allow-list, the MAME
+snapshot's registers perturbed), and driver_sim on the built add-on with `SSI263_ACCENT_CORE=mame`. Opt-in only:
+Unicorn stays the default.
 
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.
@@ -128,7 +130,12 @@ greeting, six sentences spoken to their end, one cut by ^X): `nvda/tools/speakou
   cancels 1,447, the add-on's snapshot path 687 -- every value AND every time identical, the audio identical, the
   registers and the host's log identical; INIT's snapshots (registers, chip writes, card and EMS state) identical;
   64- and 32-bit Python. Memory after INIT differs in 4 bytes: FLAGS images on the stack, bits 12-15 set on the
-  8086 (F2h) and clear on Unicorn (02h, a 386 in real mode) -- never read back as data.
+  8086 (F2h) and clear on Unicorn (02h, a 386 in real mode) -- never read back as data. Every one of these is the
+  tool's pass/fail predicate (Astra, Reply 104: it used to fail only on write values): values, times, audio,
+  registers, host log per scenario, INIT's snapshots, and memory after INIT byte for byte except an explicit
+  allow-list of those 4 addresses, each still required to be a FLAGS image's byte (Unicorn's high nibble 0, MAME's
+  F, the low nibble equal). The registers are accent.py's `regs()`, FLAGS not among them (its bits 12-15 differ by
+  CPU, the undefined flags by core).
 - **Timing, classified.** Both CPUs are driven the host's way, `cpu_ips` (5 million) instructions per second of chip
   time in slices, so a write's time can move only where the two count instructions differently and a slice ends in
   between. The known cases: (1) a REP string instruction with CX = n: Unicorn counts n + 1 (a last pass that finds
