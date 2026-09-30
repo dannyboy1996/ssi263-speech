@@ -197,8 +197,6 @@ controls, each undoing one driver rule, are `contract_controls.py`):
   error flags cleared by EFR = 0 and not by EFR = 1.
 
 **Tests still to write:**
-- the legacy exceptions on `z180_legacy.c`: the budget-taking burst chunk and the SLP slice end (the NMI one
-  exists, `investigation/section95-review/`);
 - refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
 - the 8085's INTR injected instructions (with its core);
 - the bus order of the other stack writes (see 4), if a board ever depends on it.
@@ -210,7 +208,20 @@ interrupted PC); the first three IM0 tests now assert their T-states (5, 19, 24 
 IX+5, PCH first), `trapbus_legal_ddcb` (the control: RLC (IX+5) reads IX+5); `prt_priority` (a waiting PRT0
 overflow beats a waiting DMA0 completion in all 20 timer-clock phases; Astra's fixture had 3 of 20) and
 `prt_stale` (with TIF0 cleared first, DMA0 is taken). `contract_controls.py` checks each program's exit code,
-summary line and the full test inventory (a crash, a timeout or a missing test fails the run), and has 29 controls.
+summary line and the full test inventory (a crash, a timeout or a missing test fails the run), and has 27 controls
+(29 after Reply 95).
+
+**After Astra, Reply 95:** an injected prefixed instruction keeps the PC it set only if it transfers control (JP
+(IX)/(IY), RETN, RETI), decided from the acknowledge bytes, not from the final PC: `im0_jpix_collision`/`_ordinary`,
+`im0_retn_collision`/`_ordinary`, `im0_wrap`; an injected LDIR runs one iteration with the PC put back
+(`im0_ldir_once`, a model choice).
+
+**The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
+first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
+it at the next call), `legacy_burst` (a 100-cycle call from the DMA start: one boundary, 17 bytes, 102 cycles),
+`legacy_slp_slice` (one 5000-cycle call: SLP reports the budget with no PRT0 wake; the HALT control wakes four
+times).  Writing them found that `z180_set_irq(Z180_NMI)` never reached z180emu's NMI (line 3 is an IRQ slot there);
+fixed in the adapter, and the test fails with the mapping undone.
 
 **TRAP** (`z180_trap.hpp`, from the manual's op code maps): undefined second bytes after DD/FD (DD 00h, INC IXH,
 EX DE,HL), ED (the Z80's NEG duplicate, IN (C)) and CB (SLL) trap with UFO = 0 and the stacked PC at the
@@ -225,8 +236,7 @@ while IFF1 = 0 is kept, and taken only after EI and its shadow: the DMA hunk and
 
 Acceptance per core:
 - **The z180emu adapter (legacy path)**: the Braille Lite goldens, English and Spanish, bit for bit, through
-  `bl_board.c` rewritten onto `cpu.h`; plus the legacy-exception tests above (NMI exists; burst DMA and the SLP slice
-  end still to write).
+  `bl_board.c` rewritten onto `cpu.h`; plus the legacy-exception tests above (`test_z180_legacy.c`).
 - **MAME's Z180 extracted (corrected path)**:
   - the Z80 instruction exercisers, and the phase tests above;
   - then the Braille Lite firmware, compared with the legacy adapter. Every difference is explained before new

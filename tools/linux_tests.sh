@@ -33,6 +33,7 @@ check "two units in one process" ./build/linux/test_bl_board "$DATA/BL2ENG.BNS" 
     "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
 check "CPU contract tests (MAME Z180 core)" ./build/linux/test_z180_contract
 check "white-box tests (MAME Z180 core)" ./build/linux/test_z180_whitebox
+check "legacy path exceptions (z180emu)" ./build/linux/test_z180_legacy
 check "two units in one process (MAME Z180 core)" ./build/linux/test_bl_board_mame "$DATA/BL2ENG.BNS" \
     "$DATA/bl2_2003_warm.state" "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
 check "golden (en)" python3 nvda/tools/bns_equiv.py --native "$LIB" --against=nvda/tools/golden/blazie_en.txt

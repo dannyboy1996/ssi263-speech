@@ -40,6 +40,8 @@ $CC $BOARD -c -o "$OUT/obj/bl_voice.o" "$SRC/blazie/bl_voice.c"
 # only the API is exported (SSI263_API / BL_API mark it); the Z180 core's globals stay inside
 $CC -shared -o "$OUT/libssi263speech.so" "$OUT"/obj/*.o -lm
 $CC $BOARD -o "$OUT/test_bl_board" "$SRC/blazie/test_bl_board.c" "$OUT/obj/bl_unity.o" -lm
+# the legacy path's exceptions (CONTRACT.md 3) on z180emu
+$CC $BOARD -I$SRC/cpu -o "$OUT/test_z180_legacy" "$SRC/cpu/test_z180_legacy.c" "$SRC/cpu/z180_legacy.c" -lm
 # the speech-dispatcher module: one static-linked program (no .so to install beside it)
 $CC $BOARD -o "$OUT/sd_ssi263" "$ROOT/src/platforms/speechd/sd_ssi263.c" "$OUT"/obj/*.o -lm
 

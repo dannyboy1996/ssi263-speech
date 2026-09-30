@@ -177,7 +177,11 @@ uint64_t z180_run_legacy(z180 *c, uint64_t budget)
 void z180_set_irq(z180 *c, int line, int asserted)
 {
     zcur = c;
-    z180_set_irq_line((device_t *)c->dev, line, asserted ? 1 : 0);
+    if (line < Z180_INT0 || line > Z180_NMI)
+        return;
+    /* cpu.h's lines are not z180emu's input numbers: its NMI is INPUT_LINE_NMI, and 3 would be an IRQ state slot
+       (test_z180_legacy.c's legacy_nmi_entry; the Braille Lite board raises no NMI, so its goldens never saw it) */
+    z180_set_irq_line((device_t *)c->dev, line == Z180_NMI ? INPUT_LINE_NMI : Z180_IRQ0 + line, asserted ? 1 : 0);
 }
 
 uint64_t z180_cycles(const z180 *c)
