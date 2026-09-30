@@ -109,6 +109,14 @@ if os.path.isfile(MAME_LIVE):
     # CONTRACT.md's clauses (src/csrc/cpu/test_z180_contract.c; its must-fail controls: cpu/contract_controls.py)
     CHECKS.append(check("MAME Z180 core: CPU contract tests", [os.path.join(LIB, "test_z180_contract.exe")]))
     CHECKS.append(check("MAME Z180 core: white-box tests", [os.path.join(LIB, "test_z180_whitebox.exe")]))
+# the Android engine's native part (src/platforms/android): built for the desktop, it speaks as bl.dll does, byte
+# for byte; its control (the request's rate dropped) must differ
+ANDROID_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "platforms", "android", "test",
+                            "test_android_native.py")
+if os.path.isfile(ANDROID_TEST):
+    CHECKS.append(check("Android engine: native part as bl.dll", [PY, ANDROID_TEST]))
+    CHECKS.append(check("Android engine CONTROL (rate dropped, must fail)", [PY, ANDROID_TEST],
+                        env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail
@@ -155,7 +163,11 @@ def run(c):
     except subprocess.TimeoutExpired:
         out, passed, why = "", False, "TIMEOUT after %d s" % LIMIT
     if c["expect_fail"]:
-        passed, why = (not passed and "TIMEOUT" not in why), ("" if not passed else "control did NOT fail")
+        # a control must fail as a test fails, not by crashing: a traceback (a build that broke, a race on a shared
+        # file) proves nothing about the bug it guards
+        crashed = "Traceback (most recent call last)" in out
+        passed, why = ((not passed and "TIMEOUT" not in why and not crashed),
+                       "control CRASHED instead of failing" if crashed else ("" if not passed else "control did NOT fail"))
     last = [ln for ln in out.splitlines() if ln.strip() and not ln.startswith("LOG")][-1:] or [""]
     first_bad = [ln.strip() for ln in out.splitlines() if re.search(r"ended with|died|Error|FAILED|began with", ln)][:1]
     if not passed and first_bad:

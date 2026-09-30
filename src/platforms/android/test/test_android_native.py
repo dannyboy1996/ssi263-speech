@@ -30,7 +30,8 @@ from tools import repo_paths  # noqa: E402
 
 SRC = os.path.join(REPO, "src", "csrc")
 CPP = os.path.join(REPO, "src", "platforms", "android", "app", "src", "main", "cpp")
-OUT = os.path.join(REPO, "build", "android-host")
+# the control builds its own program (run_tests runs both at once: one output file would race)
+OUT = os.path.join(REPO, "build", "android-host" + ("-control" if os.environ.get("SSI263_ANDROID_TEST_BREAK") else ""))
 WINDOWS = sys.platform == "win32"
 
 HELLO = "Hello there. This is the Braille Lite, speaking on a phone."
