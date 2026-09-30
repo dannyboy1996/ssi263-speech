@@ -1,0 +1,27 @@
+SSI-263 Speech for Android: distribution and licenses
+
+Copyright (c) 2026 Tamas Geczy
+
+This app is distributed under the GNU General Public License, version 2 or
+(at your option) any later version, because its native library carries
+z180emu -- Michal Tomek's Z180 system emulator, built on Juergen
+Buchmueller's Z180 core from MAME -- which is GPL-2.0-or-later. The
+project's own code -- the SSI-263 chip model, the Braille Lite board, host
+and voice, and this app -- is MIT, and stays MIT where it is used on its
+own; combined with z180emu in this app, the whole is under the GPL.
+
+The complete corresponding source of the native library, and how to build
+it, is inside this app (source/ssi263-speech-source.tgz and
+source/BUILD.txt in the APK), and at:
+https://github.com/tgeczy/ssi263-speech
+
+The app also carries the Kotlin runtime (Apache License 2.0).
+
+The Blazie Braille Lite 2000's firmware in this app is not ours. It is
+shared with permission so the unit can speak again, and it will be removed
+if its rights holders ask. It is not covered by the licenses above.
+
+Use Full licenses to read the included terms. Third-party components retain
+their own licenses.
+
+z180emu: https://github.com/mtdev79/z180emu
