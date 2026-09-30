@@ -303,6 +303,21 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
              [r"^FAIL lane 2 case 1 step 0\.5000 ms: UNCLASSIFIED 40 ", LANES_SUM % 4])):
         CHECKS.append(check("run ahead lanes CONTROL (%s, must fail)" % what, [PY, "run_ahead_lanes.py", "--quick"] + args,
                             env={"RUN_AHEAD_LANES_BREAK": brk}, expect_fail=True, fail_marks=marks))
+    # the firmware and board state at semantic checkpoints (run_ahead_state.py), and the same continuation after them:
+    # without a cancel every checkpoint must agree but for the listed timing differences; its control changes one RAM
+    # byte.  With a cancel mid-utterance there is an OPEN finding (English: phonemes of the cancelled text at the head
+    # of the next utterance); this tracker must keep showing it until it is fixed -- then flip it to a passing check
+    for lang in ([], ["--es"]):
+        CHECKS.append(check("run ahead state = lockstep at checkpoints, no cancel, %s" % ("Spanish" if lang else "English"),
+                            [PY, "run_ahead_state.py", "--no-cancel"] + lang))
+    CHECKS.append(check("run ahead state CONTROL (a RAM byte changed, must fail)",
+                        [PY, "run_ahead_state.py", "--no-cancel"], env={"RUN_AHEAD_STATE_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL setting .*FINDING: RAM 1 cells beyond timing's: FFF00 00/5A$",
+                                    r"^run ahead state \(English\): 1 FAILED$"]))
+    CHECKS.append(check("run ahead state OPEN FINDING tracker (cancel, then respeech: must still show)",
+                        [PY, "run_ahead_state.py"], expect_fail=True,
+                        fail_marks=[r"^FAIL respoken .*writes DIFFER at \d+ of \d+/\d+$",
+                                    r"^run ahead state \(English\): \d+ FAILED$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
