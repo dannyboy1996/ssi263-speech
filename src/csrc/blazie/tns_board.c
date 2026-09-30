@@ -1,0 +1,283 @@
+/* tns_board.c -- the Type 'n Speak board (see tns_board.h).  Structured as bl_board.c: the board drives its CPU only
+ * through ../cpu/cpu.h, every callback gets its tns_unit, no globals.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "../cpu/cpu.h"
+#include "tns_board.h"
+#include "flash29.h"
+
+#define RAM_SIZE 0x100000
+#define IMAGE_MAX 0x40000
+#define FLASH_SIZE 0x400000
+#define FLASH_WINDOW 0xE0000
+#define SLICE 10000
+#define CLOCK_HZ 6144000.0
+#define KEYQ 64
+
+struct tns_unit {
+    unsigned char *ram, *fdata;
+    unsigned long image_len;
+    flash29 ff;
+    z180 *cpu;
+    unsigned char ssi[5];
+    int ssi_ctl, ssi_ar, ssi_mode;
+    unsigned char port_f0, port_b0;
+    unsigned char keyq[KEYQ], key_latch;
+    int n_keyq, key_ready;
+    bl_event *ev;
+    int n_ev, cap_ev;
+};
+
+static void event(tns_unit *u, unsigned char type, unsigned char a, unsigned char b)
+{
+    if (u->n_ev == u->cap_ev) {
+        int cap = u->cap_ev ? u->cap_ev * 2 : 256;
+        bl_event *e = (bl_event *)realloc(u->ev, (size_t)cap * sizeof(bl_event));
+        if (!e)
+            return;
+        u->ev = e;
+        u->cap_ev = cap;
+    }
+    u->ev[u->n_ev].type = type;
+    u->ev[u->n_ev].a = a;
+    u->ev[u->n_ev].b = b;
+    u->n_ev++;
+}
+
+static void ar_line(tns_unit *u)
+{
+    z180_set_irq(u->cpu, Z180_INT1, u->ssi_ar && u->ssi_mode ? 1 : 0);
+}
+
+static int in_window(const tns_unit *u, uint32_t A)
+{
+    return A >= FLASH_WINDOW && (u->port_f0 & 0x20);
+}
+
+static unsigned long window_off(const tns_unit *u, uint32_t A)
+{
+    return ((unsigned long)(u->port_f0 & 0x1F) << 17) | (A & 0x1FFFF);
+}
+
+/* ---- the bus the CPU sees (cpu.h) ------------------------------------------------------------------------------ */
+static uint8_t mem_read(void *ctx, uint32_t A)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    A &= 0xFFFFF;
+    if (in_window(u, A))
+        return flash29_read(&u->ff, window_off(u, A));
+    return u->ram[A];
+}
+
+static void mem_write(void *ctx, uint32_t A, uint8_t V)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    A &= 0xFFFFF;
+    if (in_window(u, A)) {
+        flash29_write(&u->ff, window_off(u, A), V);
+        return;
+    }
+    if (A < u->image_len)
+        return;                              /* the program itself is not written */
+    u->ram[A] = V;
+}
+
+static uint8_t io_read(void *ctx, uint16_t Port)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    int p = Port & 0xFF;
+    if (p >= 0x90 && p <= 0x94)
+        return u->ssi_ar ? 0x80 : 0x00;
+    if (p == 0xE0)                           /* status: battery good, switched on; bit 0 low while a key waits */
+        return (unsigned char)(0xFE | (u->key_ready ? 0 : 1));
+    if (p == 0xD0) {
+        unsigned char v = u->key_latch;
+        if (u->key_ready) {
+            u->key_ready = 0;
+            z180_set_irq(u->cpu, Z180_INT2, 0);
+        }
+        return v;
+    }
+    return 0xFF;                             /* 80h (watchdog) and the rest */
+}
+
+static void io_write(void *ctx, uint16_t Port, uint8_t V)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    int p = Port & 0xFF;
+    if (p == 0xF0)
+        u->port_f0 = V;
+    else if (p == 0xB0)
+        u->port_b0 = V;
+    else if (p >= 0x90 && p <= 0x94) {
+        int reg = p - 0x90;
+        u->ssi[reg] = V;
+        if (reg == 3)
+            u->ssi_ctl = V >> 7;
+        event(u, 'W', (unsigned char)reg, V);
+        if (reg == 0 && u->ssi_ctl) {
+            u->ssi_mode = V >> 6;
+            ar_line(u);
+        } else if (reg == 0) {
+            u->ssi_ar = 0;                   /* the host raises it again when the chip asks */
+            ar_line(u);
+        }
+    }
+}
+
+static int asci_rx(void *ctx, int channel) { (void)ctx; (void)channel; return -1; }
+static void asci_tx(void *ctx, int channel, uint8_t data) { (void)ctx; (void)channel; (void)data; }
+static int serial_pin(void *ctx, int pin) { (void)ctx; return pin == Z180_PIN_DCD0 ? 1 : 0; }
+
+static void boundary(void *ctx, uint32_t pc)
+{
+    tns_unit *u = (tns_unit *)ctx;
+    (void)pc;
+    if (u->n_keyq && !u->key_ready) {
+        u->key_latch = u->keyq[0];
+        memmove(u->keyq, u->keyq + 1, (size_t)--u->n_keyq);
+        u->key_ready = 1;
+        z180_set_irq(u->cpu, Z180_INT2, 1);
+    }
+}
+
+/* the ROM image in an update file: the first 1000h-aligned offset from 2000h that starts F3 C3 .. .. FF "COPYRIGHT"
+   (3000h in the 2000 revision, 5000h in the 1998 one) */
+static long image_offset(const unsigned char *d, long n)
+{
+    long o;
+    for (o = 0x2000; o + 16 < n; o += 0x1000)
+        if (d[o] == 0xF3 && d[o + 1] == 0xC3 && d[o + 4] == 0xFF && !memcmp(d + o + 5, "COPYRIGHT", 9))
+            return o;
+    return -1;
+}
+
+tns_unit *tns_create(const char *firmware, const char *state, char *err, int errlen)
+{
+    tns_unit *u = (tns_unit *)calloc(1, sizeof(tns_unit));
+    unsigned char *file = NULL;
+    long n, off;
+    FILE *f;
+    cpu_bus bus;
+    if (!u) { snprintf(err, errlen, "out of memory"); return NULL; }
+    u->ram = (unsigned char *)calloc(1, RAM_SIZE);
+    u->fdata = (unsigned char *)malloc(FLASH_SIZE);
+    file = (unsigned char *)malloc(0x100000);
+    if (!u->ram || !u->fdata || !file) { snprintf(err, errlen, "out of memory"); free(file); tns_destroy(u); return NULL; }
+    memset(u->ram, 0xFF, IMAGE_MAX);
+    memset(u->fdata, 0xFF, FLASH_SIZE);
+    u->ff.data = u->fdata;                   /* an Am29F016 */
+    u->ff.size = FLASH_SIZE;
+    u->ff.maker = 0x01;
+    u->ff.device = 0xAD;
+    u->ff.short_decode = 1;
+    if (state) {
+        FILE *s = fopen(state, "rb");
+        if (!s || fread(u->ram, 1, RAM_SIZE, s) != RAM_SIZE || fread(u->fdata, 1, FLASH_SIZE, s) != FLASH_SIZE) {
+            if (s) fclose(s);
+            snprintf(err, errlen, "cannot read state %s", state);
+            free(file);
+            tns_destroy(u);
+            return NULL;
+        }
+        fclose(s);
+    }
+    f = fopen(firmware, "rb");
+    if (!f) { snprintf(err, errlen, "cannot open %s", firmware); free(file); tns_destroy(u); return NULL; }
+    n = (long)fread(file, 1, 0x100000, f);
+    fclose(f);
+    off = image_offset(file, n);
+    if (off < 0 || n - off > IMAGE_MAX) {
+        snprintf(err, errlen, "no Type 'n Speak ROM image in %s", firmware);
+        free(file);
+        tns_destroy(u);
+        return NULL;
+    }
+    u->image_len = (unsigned long)(n - off);
+    memcpy(u->ram, file + off, u->image_len);   /* over a saved state too: the program always comes from the file */
+    free(file);
+    if (!state) {
+        /* a cold start: Ctrl+Alt+Del held at power-on, the unit's own reset to its defaults.  Blank RAM leaves the
+           volume at 0 (every phoneme goes out with R3's amplitude 0); the reset sets R3 = 56h, as the Braille Lite's
+           defaults do.  Then the keys come up. */
+        static const unsigned char cold[] = {0x81, 0xA1, 0xC9, 0x49, 0x21, 0x01};
+        int k;
+        for (k = 0; k < (int)sizeof cold; k++)
+            tns_key(u, cold[k]);
+    }
+    memset(&bus, 0, sizeof bus);
+    bus.ctx = u;
+    bus.read = mem_read;
+    bus.write = mem_write;
+    bus.in = io_read;
+    bus.out = io_write;
+    bus.serial_rx = asci_rx;
+    bus.serial_tx = asci_tx;
+    bus.serial_pin = serial_pin;
+    bus.boundary = boundary;
+    u->cpu = z180_create(&bus, CLOCK_HZ);
+    if (!u->cpu) { snprintf(err, errlen, "cannot create the Z180"); tns_destroy(u); return NULL; }
+    return u;
+}
+
+void tns_destroy(tns_unit *u)
+{
+    if (!u)
+        return;
+    if (u->cpu)
+        z180_destroy(u->cpu);
+    free(u->ram);
+    free(u->fdata);
+    free(u->ev);
+    free(u);
+}
+
+void tns_run(tns_unit *u, unsigned long long cycles)
+{
+    while (cycles > 0) {
+        unsigned long long done = z180_run_legacy(u->cpu, cycles > SLICE ? SLICE : cycles);
+        cycles = done >= cycles ? 0 : cycles - done;
+    }
+}
+
+void tns_set_ar(tns_unit *u, int requesting)
+{
+    u->ssi_ar = requesting ? 1 : 0;
+    ar_line(u);
+}
+
+int tns_key(tns_unit *u, int code)
+{
+    if (u->n_keyq == KEYQ)
+        return 0;
+    u->keyq[u->n_keyq++] = (unsigned char)code;
+    return 1;
+}
+
+unsigned long long tns_cycles(const tns_unit *u)
+{
+    return z180_cycles(u->cpu);
+}
+
+int tns_events(const tns_unit *u, const bl_event **events)
+{
+    *events = u->ev;
+    return u->n_ev;
+}
+
+void tns_clear_events(tns_unit *u)
+{
+    u->n_ev = 0;
+}
+
+int tns_save_state(const tns_unit *u, const char *path)
+{
+    FILE *s = fopen(path, "wb");
+    int ok;
+    if (!s)
+        return 0;
+    ok = fwrite(u->ram, 1, RAM_SIZE, s) == RAM_SIZE && fwrite(u->fdata, 1, FLASH_SIZE, s) == FLASH_SIZE;
+    return fclose(s) == 0 && ok;
+}

@@ -1,9 +1,13 @@
 /* main_win.c -- the Windows shell of the Blazie emulator: one window, a menu, the keyboard, the sound card.
  *
- * While the window is in front, the braille keys (default S D F J K L = dots 3 2 1 4 5 6, the space bar, and A or ;
- * for the advance bar) go to the unit as chords (chords.h); every other key goes to Windows as usual, so Alt opens
- * the menu and Alt+F4 closes it.  Sound: waveOut, four blocks of 20 ms, each rendered by the unit when the card gives
- * one back -- the card's clock paces the unit.  Settings: blazie_emu.ini beside the program.
+ * While the window is in front:
+ *   Braille Lite: the braille keys (default S D F J K L = dots 3 2 1 4 5 6, the space bar, and A or ; for the
+ *   advance bar) go to the unit as chords (chords.h); every other key goes to Windows as usual, so Alt opens the
+ *   menu and Alt+F4 closes it.
+ *   Type 'n Speak: the whole keyboard is the unit's (tns_keymap_win.c) -- Alt and F10 included -- except F11, which
+ *   opens this program's menu.
+ * Sound: waveOut, four blocks of 20 ms, each rendered by the unit when the card gives one back -- the card's clock
+ * paces the unit.  Settings: blazie_emu.ini beside the program.
  *
  * Firmware: firmware\ beside the program (a release carries it), or firmware_dir= in the settings.
  */
@@ -14,18 +18,26 @@
 #include <string.h>
 #include "chords.h"
 #include "emu_unit.h"
+#include "tns_keymap_win.h"
 
 #define RATE 44100
 #define BLOCK (RATE / 50)
 #define NBLOCKS 4
 
-enum { ID_EN = 100, ID_ES, ID_TNS, ID_FACTORY, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_KEYS = 300, ID_ABOUT };
+enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET,
+       ID_KEYS = 300, ID_ABOUT };
 
-typedef struct { const char *name, *firmware, *state, *saved; } unit_kind;
+/* state NULL: a cold start (the Type 'n Speak asks to initialise its flash; answer y twice) */
+typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; } unit_kind;
 static const unit_kind KINDS[] = {
-    {"Braille Lite 2000 (English)", "BL2ENG.BNS", "bl2_2003_warm.state", "english.state"},
-    {"Braille Lite 2000 (Spanish)", "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state", "spanish.state"},
+    {"Braille Lite 2000 (English)", EMU_BRAILLE_LITE, "BL2ENG.BNS", "bl2_2003_warm.state", "english.state",
+     "english"},
+    {"Braille Lite 2000 (Spanish)", EMU_BRAILLE_LITE, "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state",
+     "spanish.state", "spanish"},
+    {"Type 'n Speak (English)", EMU_TYPE_N_SPEAK, "tns\\TNSENG.TNS", NULL, "tns_english.state", "tns_english"},
+    {"Type 'n Speak (Spanish)", EMU_TYPE_N_SPEAK, "tns\\TNSSPA.TNS", NULL, "tns_spanish.state", "tns_spanish"},
 };
+#define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
 static HWND g_wnd;
 static CRITICAL_SECTION g_lock;
@@ -117,14 +129,19 @@ static void save_unit(void)
 static int start_unit(int kind)
 {
     char fw[MAX_PATH], st[MAX_PATH], err[256];
+    const char *state = st;
     emu_unit *u;
     save_unit();                            /* first: the unit being left keeps its memory (it may be this kind) */
     snprintf(fw, sizeof fw, "%s\\%s", g_fw_dir, KINDS[kind].firmware);
     saved_path(kind, st, sizeof st);
-    if (!exists(st))                        /* the first time: the unit as it left the factory (the shipped state) */
-        snprintf(st, sizeof st, "%s\\%s", g_fw_dir, KINDS[kind].state);
+    if (!exists(st)) {                      /* the first time: the unit as it left the factory */
+        if (KINDS[kind].state)
+            snprintf(st, sizeof st, "%s\\%s", g_fw_dir, KINDS[kind].state);
+        else
+            state = NULL;                   /* a cold start */
+    }
     status("Starting");
-    u = emu_create(fw, st, RATE, g_whine, err, sizeof err);
+    u = emu_create(KINDS[kind].kind, fw, state, RATE, g_whine, err, sizeof err);
     if (!u) {
         char msg[700];
         snprintf(msg, sizeof msg, "Could not start the %s.\n\n%s\n\nFirmware looked for in:\n%s", KINDS[kind].name,
@@ -139,8 +156,8 @@ static int start_unit(int kind)
     chord_reset(&g_chord);
     LeaveCriticalSection(&g_lock);
     status(KINDS[kind].name);
-    CheckMenuRadioItem(GetMenu(g_wnd), ID_EN, ID_TNS, ID_EN + kind, MF_BYCOMMAND);
-    WritePrivateProfileStringA("unit", "kind", kind ? "spanish" : "english", g_ini);
+    CheckMenuRadioItem(GetMenu(g_wnd), ID_EN, ID_EN + N_KINDS - 1, ID_EN + kind, MF_BYCOMMAND);
+    WritePrivateProfileStringA("unit", "kind", KINDS[kind].ini, g_ini);
     return 1;
 }
 
@@ -224,9 +241,11 @@ static HMENU make_menu(void)
     HMENU bar = CreateMenu(), unit = CreatePopupMenu(), sound = CreatePopupMenu(), help = CreatePopupMenu();
     AppendMenuA(unit, MF_STRING, ID_EN, "Braille Lite 2000, &English");
     AppendMenuA(unit, MF_STRING, ID_ES, "Braille Lite 2000, &Spanish");
-    AppendMenuA(unit, MF_STRING | MF_GRAYED, ID_TNS, "&Type 'n Speak (not yet)");
+    AppendMenuA(unit, MF_STRING, ID_TNS_EN, "&Type 'n Speak, English");
+    AppendMenuA(unit, MF_STRING, ID_TNS_ES, "Type 'n Speak, S&panish");
     AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
     AppendMenuA(unit, MF_STRING, ID_FACTORY, "Back to the &factory state (erases this unit's files)...");
+    AppendMenuA(unit, MF_STRING, ID_EXIT, "E&xit");
     AppendMenuA(sound, MF_STRING, ID_HISS, "Idle channel: &hiss");
     AppendMenuA(sound, MF_STRING, ID_WHINE, "Idle channel: &whine");
     AppendMenuA(sound, MF_STRING, ID_QUIET, "Idle channel: &silent");
@@ -238,8 +257,52 @@ static HMENU make_menu(void)
     return bar;
 }
 
+/* the Type 'n Speak's keys held now (their down codes), so a key held when the window loses the keyboard is let go */
+static unsigned char g_tns_held[256];
+
+static int tns_active(void)
+{
+    return g_unit && emu_kind(g_unit) == EMU_TYPE_N_SPEAK;
+}
+
+static void tns_release_all(void)
+{
+    int vk;
+    EnterCriticalSection(&g_lock);
+    for (vk = 0; vk < 256; vk++)
+        if (g_tns_held[vk]) {
+            if (tns_active())
+                emu_key(g_unit, g_tns_held[vk] & 0x7F);
+            g_tns_held[vk] = 0;
+        }
+    LeaveCriticalSection(&g_lock);
+}
+
 static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (tns_active() && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYUP)) {
+        int down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN, code;
+        if (wp == VK_F11) {                 /* this program's own key: its menu */
+            if (down)
+                PostMessageA(w, WM_SYSCOMMAND, SC_KEYMENU, 0);
+            return 0;
+        }
+        code = wp < 256 ? tns_code_for_key(wp, lp) : 0;
+        if (code) {
+            EnterCriticalSection(&g_lock);
+            if (down && !g_tns_held[wp]) {  /* the first down only: auto-repeat is the unit's business */
+                g_tns_held[wp] = (unsigned char)code;
+                emu_key(g_unit, code);
+            } else if (!down && g_tns_held[wp]) {
+                emu_key(g_unit, g_tns_held[wp] & 0x7F);
+                g_tns_held[wp] = 0;
+            }
+            LeaveCriticalSection(&g_lock);
+        }
+        return 0;                           /* nothing of the unit's keyboard reaches Windows (no menu on Alt) */
+    }
+    if (tns_active() && (msg == WM_CHAR || msg == WM_SYSCHAR))
+        return 0;
     switch (msg) {
     case WM_KEYDOWN:
         if (wp < 256 && g_keymap[wp]) {
@@ -266,10 +329,15 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         EnterCriticalSection(&g_lock);
         chord_reset(&g_chord);              /* a chord half-pressed when the window lost the keyboard is dropped */
         LeaveCriticalSection(&g_lock);
+        tns_release_all();                  /* and the Type 'n Speak's held keys come up */
         break;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_EN: case ID_ES: start_unit(LOWORD(wp) - ID_EN); return 0;
+        case ID_EN: case ID_ES: case ID_TNS_EN: case ID_TNS_ES:
+            tns_release_all();
+            start_unit(LOWORD(wp) - ID_EN);
+            return 0;
+        case ID_EXIT: DestroyWindow(w); return 0;
         case ID_FACTORY: {
             char path[MAX_PATH];
             emu_unit *old;
@@ -290,11 +358,15 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         case ID_WHINE: set_whine(2); return 0;
         case ID_QUIET: set_whine(0); return 0;
         case ID_KEYS:
-            MessageBoxA(w, "Braille keys, while this window is in front:\n\n"
+            MessageBoxA(w, "Braille Lite, while this window is in front:\n\n"
                         "F D S = dots 1 2 3\nJ K L = dots 4 5 6\nSpace bar = space\nA or ; = advance bar\n\n"
                         "Press the keys of a chord together; it goes to the unit when you let go of them.\n"
-                        "The keys can be changed in blazie_emu.ini, section [keys].\n\n"
-                        "Alt opens this program's menu; Alt+F4 closes it.", "Keys", MB_OK);
+                        "The keys can be changed in blazie_emu.ini, section [keys].\n"
+                        "Alt opens this program's menu; Alt+F4 closes it.\n\n"
+                        "Type 'n Speak: the whole keyboard is the unit's, Alt and the function keys included.\n"
+                        "F11 opens this program's menu (Unit > Exit closes it).\n"
+                        "The first time, the unit asks to initialize its flash: press y, then y again "
+                        "(the Spanish unit: s, then s).", "Keys", MB_OK);
             return 0;
         case ID_ABOUT:
             MessageBoxA(w, "Blazie emulator, part of ssi263-speech.\n\n"
@@ -367,7 +439,13 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (!open_audio())
         MessageBoxA(g_wnd, "Could not open the sound card.", "Blazie emulator", MB_OK | MB_ICONERROR);
     GetPrivateProfileStringA("unit", "kind", "english", v, sizeof v, g_ini);
-    start_unit(!strcmp(v, "spanish") ? 1 : 0);
+    {
+        int k, start = 0;
+        for (k = 0; k < N_KINDS; k++)
+            if (!strcmp(v, KINDS[k].ini))
+                start = k;
+        start_unit(start);
+    }
     while (GetMessageA(&m, NULL, 0, 0) > 0) {
         TranslateMessage(&m);
         DispatchMessageA(&m);

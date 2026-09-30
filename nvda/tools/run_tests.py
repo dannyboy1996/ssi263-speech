@@ -81,10 +81,17 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
 EMU = os.path.join(os.path.dirname(HERE), "dist", "blazie-emu")
 if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
     CHECKS.append(check("Blazie emulator: chords", [os.path.join(EMU, "test_chords.exe")]))
-    CHECKS.append(check("Blazie emulator: the unit, headless", [os.path.join(EMU, "test_emu_unit.exe"),
+    CHECKS.append(check("Blazie emulator: the unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
-    CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"),
+    CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
+    # the Type 'n Speak from cold (firmware/blazie/tns/, when the builder has it): its reset to defaults, its
+    # question heard, y answered, its memory kept
+    TNS_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie", "tns")
+    for name in ("TNSENG.TNS", "TNSSPA.TNS"):
+        if os.path.isfile(os.path.join(TNS_DIR, name)):
+            CHECKS.append(check("Blazie emulator: Type 'n Speak %s, headless" % name[3:6],
+                                [os.path.join(EMU, "test_emu_unit.exe"), "tns", os.path.join(TNS_DIR, name), "-"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

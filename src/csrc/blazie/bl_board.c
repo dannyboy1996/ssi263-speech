@@ -15,6 +15,7 @@
 #include <string.h>
 #include "../cpu/cpu.h"
 #include "bl_board.h"
+#include "flash29.h"
 
 #define ROM_SIZE 0x40000
 #define FILE_ROM_OFFSET 0x3000
@@ -25,6 +26,7 @@
 
 struct bl_unit {
     unsigned char *flash, *ram, *fflash;
+    flash29 ff;                              /* the file flash's command logic, over fflash */
     z180 *cpu;
     double clock_hz, phon_ms;
     int irq_line;
@@ -39,7 +41,6 @@ struct bl_unit {
     int n_keys, next_key, key_latched, hold_chord;
     unsigned char live_keys[16];             /* bl_key: chords pressed live, delivered one per boundary when free */
     int n_live_keys;
-    int ff_state, ff_autoselect;
     unsigned char port_e0;
     unsigned site_release;
     uint32_t instr_pc;
@@ -74,46 +75,13 @@ static int flash_window(const bl_unit *u)
     return (u->port_e0 & 0x08) != 0;
 }
 
-static unsigned char fflash_read(const bl_unit *u, uint32_t off)
-{
-    if (u->ff_autoselect)
-        return (off & 3) == 0 ? 0x01 : (off & 3) == 1 ? 0xA4 : 0x00;   /* AMD, Am29F040 */
-    return u->fflash[off];
-}
-
-static void fflash_write(bl_unit *u, uint32_t off, unsigned char V)
-{
-    unsigned a = off & 0x7FFF;
-    switch (u->ff_state) {
-    case 0: if (V == 0xF0) { u->ff_autoselect = 0; return; }
-            u->ff_state = (a == 0x5555 && V == 0xAA) ? 1 : 0; break;
-    case 1: u->ff_state = (a == 0x2AAA && V == 0x55) ? 2 : 0; break;
-    case 2: u->ff_state = 0;
-            if (a != 0x5555) break;
-            if (V == 0xA0) u->ff_state = 3;
-            else if (V == 0x80) u->ff_state = 4;
-            else if (V == 0x90) u->ff_autoselect = 1;
-            else if (V == 0xF0) u->ff_autoselect = 0;
-            break;
-    case 3: u->fflash[off] &= V; u->ff_state = 0; break;
-    case 4: u->ff_state = (a == 0x5555 && V == 0xAA) ? 5 : 0; break;
-    case 5: u->ff_state = (a == 0x2AAA && V == 0x55) ? 6 : 0; break;
-    case 6: u->ff_state = 0;
-            if (V == 0x10)
-                memset(u->fflash, 0xFF, 0x80000);
-            else if (V == 0x30)
-                memset(u->fflash + (off & 0x70000), 0xFF, 0x10000);
-            break;
-    }
-}
-
 /* ---- the bus the CPU sees (cpu.h) -------------------------------------------------------------------------------- */
 static uint8_t mem_read(void *ctx, uint32_t A)
 {
     bl_unit *u = (bl_unit *)ctx;
     A &= 0xFFFFF;
     if (A < ROM_SIZE) return u->flash[A];
-    if (A >= FLASH_BASE && flash_window(u)) return fflash_read(u, A - FLASH_BASE);
+    if (A >= FLASH_BASE && flash_window(u)) return flash29_read(&u->ff, A - FLASH_BASE);
     return u->ram[A];
 }
 
@@ -124,7 +92,7 @@ static void mem_write(void *ctx, uint32_t A, uint8_t V)
     if (A < ROM_SIZE)
         return;                              /* ROM: bns.c counts and logs these; after a hard reset there are none */
     if (A >= FLASH_BASE && flash_window(u)) {
-        fflash_write(u, A - FLASH_BASE, V);
+        flash29_write(&u->ff, A - FLASH_BASE, V);
         return;
     }
     u->ram[A] = V;
@@ -275,6 +243,10 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
     u->fflash = (unsigned char *)malloc(0x80000);
     u->lfifo = (unsigned char *)malloc(FIFO);
     if (!u->flash || !u->ram || !u->fflash || !u->lfifo) { snprintf(err, errlen, "out of memory"); bl_destroy(u); return NULL; }
+    u->ff.data = u->fflash;                  /* an Am29F040 */
+    u->ff.size = 0x80000;
+    u->ff.maker = 0x01;
+    u->ff.device = 0xA4;
     u->clock_hz = 6144000.0;
     u->phon_ms = phon_ms;
     u->irq_line = Z180_INT1;

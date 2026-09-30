@@ -38,9 +38,11 @@ def main():
         (os.path.join(CSRC, "ssi263dsp.c"), CHIP),
         (os.path.join(CSRC, "blazie", "bl_unity.c"), BOARD + zinc),
         (os.path.join(CSRC, "blazie", "bl_host.c"), BOARD),
+        (os.path.join(CSRC, "blazie", "tns_board.c"), BOARD),
         (os.path.join(HERE, "emu_unit.c"), APP),
         (os.path.join(HERE, "chords.c"), APP),
         (os.path.join(HERE, "main_win.c"), APP),
+        (os.path.join(HERE, "tns_keymap_win.c"), APP),
     ]
     objs = []
     for src, flags in units:
@@ -54,7 +56,7 @@ def main():
                    env=env, check=True)
     # the unit, headless (run_tests passes it the firmware)
     subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_emu_unit.exe"),
-                    os.path.join(HERE, "test_emu_unit.c")] + [o for o in objs if not o.endswith("main_win.c.o")]
+                    os.path.join(HERE, "test_emu_unit.c")] + [o for o in objs if not o.endswith(("main_win.c.o", "tns_keymap_win.c.o"))]
                    + ["-lm"], env=env, check=True)
     print("built %s" % OUT)
 

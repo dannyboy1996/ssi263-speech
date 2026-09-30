@@ -11,4 +11,5 @@
  * since a library must never write to a stdout that may be a protocol pipe.
  */
 #include "bl_board.c"
+#include "flash29.c"
 #include "../cpu/z180_legacy.c"

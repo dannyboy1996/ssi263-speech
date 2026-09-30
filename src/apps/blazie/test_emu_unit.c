@@ -1,15 +1,20 @@
 /* test_emu_unit.c -- the emulator's unit, headless: it boots and speaks its greeting, a chord makes it answer (and
  * the same run without the chord stays quiet there: the control), and it renders faster than real time.
  *
- *   test_emu_unit FIRMWARE STATE        (run_tests passes the source tree's firmware/blazie files)
+ *   test_emu_unit bl FIRMWARE STATE     the Braille Lite (a chord: dot 1)
+ *   test_emu_unit tns FIRMWARE -        the Type 'n Speak from cold (its question, then y answered: "are you sure?")
+ * (run_tests passes the source tree's firmware/blazie files)
  */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include "emu_unit.h"
 
 #define RATE 44100
+
+static int g_kind;
 
 static int failures;
 
@@ -22,11 +27,12 @@ static double rms(const short *x, int n)
     return sqrt(s / n) / 32768.0;
 }
 
-/* seconds of audio from `from` to `to` s, pressing `chord` (0 = none) at `at` s */
-static double run(const char *fw, const char *st, int chord, double at, double from, double to, double *secs)
+/* the rms from `from` to `to` s, pressing the key (0 = none: the control) at `at` s -- for the Braille Lite the chord
+   dot 1, for the Type 'n Speak y down and up */
+static double run(const char *fw, const char *st, int press, double at, double from, double to, double *secs)
 {
     char err[256];
-    emu_unit *u = emu_create(fw, st, RATE, 0, err, sizeof err);
+    emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
     int n = (int)(to * RATE), i, block = RATE / 50;
     short *buf;
     double r;
@@ -39,8 +45,13 @@ static double run(const char *fw, const char *st, int chord, double at, double f
     c0 = clock();
     for (i = 0; i < n; i += block) {
         int k = n - i < block ? n - i : block;
-        if (chord && i <= (int)(at * RATE) && (int)(at * RATE) < i + block)
-            emu_key(u, chord);
+        if (press && i <= (int)(at * RATE) && (int)(at * RATE) < i + block) {
+            if (g_kind == EMU_TYPE_N_SPEAK) {
+                emu_key(u, 0xBD);           /* y down */
+                emu_key(u, 0x3D);           /* y up */
+            } else
+                emu_key(u, 0x01);
+        }
         emu_render(u, buf + i, k);
     }
     if (secs)
@@ -61,29 +72,33 @@ int main(int argc, char **argv)
 {
     char d[200];
     double greet, with_key, without, secs;
-    if (argc < 3) {
-        printf("usage: test_emu_unit FIRMWARE STATE\n");
+    const char *fw, *st;
+    if (argc < 4) {
+        printf("usage: test_emu_unit bl|tns FIRMWARE STATE|-\n");
         return 2;
     }
-    greet = run(argv[1], argv[2], 0, 0, 0.0, 2.0, NULL);
-    snprintf(d, sizeof d, "rms %.4f over the first 2 s", greet);
+    g_kind = !strcmp(argv[1], "tns") ? EMU_TYPE_N_SPEAK : EMU_BRAILLE_LITE;
+    fw = argv[2];
+    st = strcmp(argv[3], "-") ? argv[3] : NULL;
+    greet = run(fw, st, 0, 0, 0.0, 6.0, NULL);         /* the Type 'n Speak's cold question comes after its reset */
+    snprintf(d, sizeof d, "rms %.4f over the first 6 s", greet);
     check("boot greeting", greet > 0.01, d);
-    /* the greeting is over by ~7 s; a chord at 8 s (dot 1, 'a': the main menu answers) against no chord */
-    with_key = run(argv[1], argv[2], 0x01, 8.0, 8.0, 10.0, &secs);
-    without = run(argv[1], argv[2], 0, 8.0, 8.0, 10.0, NULL);
+    /* the greeting (or the cold question) is over by ~7 s; a key at 8 s against none */
+    with_key = run(fw, st, 1, 8.0, 8.0, 10.0, &secs);
+    without = run(fw, st, 0, 8.0, 8.0, 10.0, NULL);
     snprintf(d, sizeof d, "8-10 s: rms %.4f with the chord, %.4f without (the control)", with_key, without);
     check("a chord is answered", with_key > 0.01 && without < 0.002, d);
     snprintf(d, sizeof d, "10 s of unit in %.2f s (%.1fx real time)", secs, 10.0 / secs);
     check("faster than real time", secs < 5.0, d);
     {   /* switched off and on: the saved memory is the state format, and the unit boots from it and speaks */
         char err[256], path[] = "test_emu_unit.saved.state";
-        emu_unit *u = emu_create(argv[1], argv[2], RATE, 0, err, sizeof err);
+        emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
         short *buf = (short *)calloc(RATE, sizeof(short));
         FILE *f;
         long size = -1;
         double again;
         emu_render(u, buf, RATE);
-        emu_key(u, 0x01);
+        emu_key(u, g_kind == EMU_TYPE_N_SPEAK ? 0xBD : 0x01);
         emu_render(u, buf, RATE);
         check("save", emu_save(u, path), "emu_save returned 1");
         emu_destroy(u);
@@ -92,9 +107,10 @@ int main(int argc, char **argv)
             size = ftell(f);
             fclose(f);
         }
-        again = run(argv[1], path, 0, 0, 0.0, 2.0, NULL);
-        snprintf(d, sizeof d, "%ld bytes (want 786432); booted from it: rms %.4f over the first 2 s", size, again);
-        check("switched off and on", size == 786432 && again > 0.01, d);
+        again = run(fw, path, 0, 0, 0.0, 2.0, NULL);
+        snprintf(d, sizeof d, "%ld bytes (want %ld); booted from it: rms %.4f over the first 2 s", size,
+                 g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L, again);
+        check("switched off and on", size == (g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L) && again > 0.01, d);
         remove(path);
         free(buf);
     }
