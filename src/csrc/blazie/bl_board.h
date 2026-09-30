@@ -10,6 +10,8 @@
 #ifndef BL_BOARD_H
 #define BL_BOARD_H
 
+#include "bl_serial.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,6 +52,16 @@ void bl_hold(bl_unit *u, int chord);
 /* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
    1 on success */
 int  bl_save_state(const bl_unit *u, const char *path);
+
+/* The serial port carried to a real port (the emulator's COM port; bl_serial.h): from bl_serial_attach(u, 1) the
+   unit's serial bytes no longer come back as 'T' events, nor does bl_queue feed it -- bl_serial_write gives it what
+   arrived (returns how many it took: at most bl_serial_space), bl_serial_read hands out what it sent, each run of
+   bytes with the line status it left under (call until 0).  Off (the default) is the screen-reader drivers' path,
+   unchanged.  bl_serial_attach returns 0 when out of memory. */
+int  bl_serial_attach(bl_unit *u, int on);
+int  bl_serial_write(bl_unit *u, const unsigned char *bytes, int n);
+int  bl_serial_space(const bl_unit *u);
+int  bl_serial_read(bl_unit *u, unsigned char *out, int cap, bl_serial_status *status);
 
 /* the events since the last bl_clear_events, in order */
 int  bl_events(const bl_unit *u, const bl_event **events);

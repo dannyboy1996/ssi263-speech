@@ -8,13 +8,16 @@
  * Memory: ROM image from file offset 3000h at physical 00000h (256 KB, FFh-padded); 40000h..FFFFFh RAM, except that
  * port E0h bit 3 maps the AMD 29F040-style file flash over 80000h..FFFFFh.  SSI-263 at ports C0h..C4h, its A/R
  * request on /INT1.  Braille keyboard on port 40h, /INT2.  Serial on ASCI0 (9600 bit/s at 6.144 MHz), with the
- * host honouring the unit's XON/XOFF.
+ * host honouring the unit's XON/XOFF.  Port A0h bit 0 switches the serial port's line drivers on (bl_serial.h).
+ * With bl_serial_attach the serial port is carried to a real port instead (the emulator app's COM port): bytes
+ * both ways through a bl_serial_line, the host's XON/XOFF handling left to the far end.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../cpu/cpu.h"
 #include "bl_board.h"
+#include "bl_serial.h"
 #include "flash29.h"
 
 #define ROM_SIZE 0x40000
@@ -42,7 +45,8 @@ struct bl_unit {
     unsigned char live_keys[16];             /* bl_key: chords pressed live, delivered one per boundary when free */
     int n_live_keys;
     int batt_level, batt_bit, batt_fresh;    /* the battery gauge's serial A/D converter (bl_battery) */
-    unsigned char port_e0;
+    unsigned char port_e0, port_a0;
+    bl_serial_line *line;                    /* bl_serial_attach: the serial port carried to a real port */
     unsigned site_release;
     uint32_t instr_pc;
     bl_event *ev;
@@ -142,6 +146,8 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     int p = Port & 0xFF;
     if (p == 0xE0)
         u->port_e0 = V;
+    if (p == 0xA0)
+        u->port_a0 = V;                      /* bit 0: the serial port's line drivers on */
     if (p >= 0xC0 && p <= 0xC4) {
         int reg = p - 0xC0;
         unsigned long long cyc = z180_cycles(u->cpu);
@@ -165,6 +171,8 @@ static int asci_rx(void *ctx, int channel)
 {
     bl_unit *u = (bl_unit *)ctx;
     int b;
+    if (u->line)                             /* a real port: what arrived on it, paced by the ASCI's own clock */
+        return channel == 0 ? bl_serial_next(u->line) : -1;
     if (u->live_on) {
         if (channel == 0 && u->urgent >= 0) {
             b = u->urgent;
@@ -178,11 +186,25 @@ static int asci_rx(void *ctx, int channel)
     return -1;                               /* before live mode nothing is queued (bns: no --serial in live runs) */
 }
 
+static void serial_note(bl_unit *u)          /* the line status now, in order with the bytes sent */
+{
+    z180_asci_regs r;
+    bl_serial_status s;
+    z180_asci_get(u->cpu, 0, &r);
+    bl_serial_decode(&r, u->clock_hz, u->port_a0 & 1, &s);
+    bl_serial_note(u->line, &s);
+}
+
 static void asci_tx(void *ctx, int channel, uint8_t data)
 {
     bl_unit *u = (bl_unit *)ctx;
     if (channel != 0)
         return;
+    if (u->line) {
+        serial_note(u);
+        bl_serial_sent(u->line, data);
+        return;
+    }
     event(u, 'T', data, 0);
     if (data == 0x13)
         u->host_xoff = 1;
@@ -326,6 +348,7 @@ void bl_destroy(bl_unit *u)
         return;
     if (u->cpu)
         z180_destroy(u->cpu);
+    bl_serial_free(u->line);
     free(u->flash);
     free(u->ram);
     free(u->fflash);
@@ -431,6 +454,43 @@ void bl_hold(bl_unit *u, int chord)
 unsigned long long bl_cycles(const bl_unit *u)
 {
     return z180_cycles(u->cpu);
+}
+
+int bl_serial_attach(bl_unit *u, int on)
+{
+    if (on && !u->line) {
+        u->line = bl_serial_new();
+        if (!u->line)
+            return 0;
+        serial_note(u);
+    } else if (!on && u->line) {
+        bl_serial_free(u->line);
+        u->line = NULL;
+    }
+    return 1;
+}
+
+int bl_serial_write(bl_unit *u, const unsigned char *bytes, int n)
+{
+    return u->line ? bl_serial_put(u->line, bytes, n) : 0;
+}
+
+int bl_serial_space(const bl_unit *u)
+{
+    return u->line ? bl_serial_room(u->line) : 0;
+}
+
+int bl_serial_read(bl_unit *u, unsigned char *out, int cap, bl_serial_status *status)
+{
+    if (!u->line) {                          /* unplugged: nothing sent, the status now */
+        z180_asci_regs r;
+        z180_asci_get(u->cpu, 0, &r);
+        if (status)
+            bl_serial_decode(&r, u->clock_hz, u->port_a0 & 1, status);
+        return 0;
+    }
+    serial_note(u);
+    return bl_serial_take(u->line, out, cap, status);
 }
 
 int bl_events(const bl_unit *u, const bl_event **events)

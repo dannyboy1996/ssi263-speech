@@ -144,6 +144,8 @@ void emu_render(emu_unit *u, short *out, int n)
         if (!u->n_pend) {
             double sec = (double)n / u->out_rate;
             u->n_pend = u->tns ? tns_render(u, sec, &u->pend) : bh_run(u->host, sec, STEP_S, &u->pend);
+            if (u->host)
+                bh_clear_tx(u->host);   /* unplugged, what the unit sends goes nowhere (plugged, it never lands here) */
             if (u->n_pend <= 0) {   /* nothing came back: give silence rather than spin */
                 memset(out, 0, sizeof(short) * (size_t)n);
                 u->n_pend = 0;
@@ -178,4 +180,24 @@ void emu_set_whine(emu_unit *u, int whine)
 void emu_set_volume(emu_unit *u, int volume)
 {
     u->gain = MAKEUP * volume / 100.0;
+}
+
+int emu_serial_attach(emu_unit *u, int on)
+{
+    return u->tns ? tns_serial_attach(u->tns, on) : bh_serial_attach(u->host, on);
+}
+
+int emu_serial_space(const emu_unit *u)
+{
+    return u->tns ? tns_serial_space(u->tns) : bh_serial_space(u->host);
+}
+
+int emu_serial_write(emu_unit *u, const unsigned char *bytes, int n)
+{
+    return u->tns ? tns_serial_write(u->tns, bytes, n) : bh_serial_write(u->host, bytes, n);
+}
+
+int emu_serial_read(emu_unit *u, unsigned char *out, int cap, bl_serial_status *status)
+{
+    return u->tns ? tns_serial_read(u->tns, out, cap, status) : bh_serial_read(u->host, out, cap, status);
 }

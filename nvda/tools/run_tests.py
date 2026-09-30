@@ -164,6 +164,32 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
         if os.path.isfile(os.path.join(TNS_DIR, name)):
             CHECKS.append(check("Blazie emulator: Type 'n Speak %s, headless" % name[3:6],
                                 [os.path.join(EMU, "test_emu_unit.exe"), "tns", os.path.join(TNS_DIR, name), "-"]))
+# the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
+# storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
+# paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end
+# through a named pipe; and the controls, built with the receive path cut: "ACK answered" must FAIL
+if os.path.isfile(os.path.join(EMU, "test_serial.exe")):
+    SERIAL = os.path.join(EMU, "test_serial.exe")
+    for label, fw, state in (("Braille Lite ENG", "BL2ENG.BNS", "bl2_2003_warm.state"),
+                             ("Braille Lite SPA", "BL2SPA.BNS", "bl2spa_fresh.state")):
+        CHECKS.append(check("Blazie emulator: serial port, %s" % label, [SERIAL, "bl", os.path.join(ENG, fw),
+                                                                         os.path.join(ENG, state)]))
+    for name in ("TNSENG.TNS", "TNSSPA.TNS"):
+        TNS_FW = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie", "tns", name)
+        if os.path.isfile(TNS_FW):
+            CHECKS.append(check("Blazie emulator: serial port, Type 'n Speak %s" % name[3:6],
+                                [SERIAL, "tns", TNS_FW, "-"]))
+    BL_UNIT = [os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]
+    CHECKS.append(check("Blazie emulator: serial port through Windows (a named pipe)",
+                        [os.path.join(EMU, "test_serial_win.exe")] + BL_UNIT))
+    CHECKS.append(check("Blazie emulator: serial port, receive path cut (control)",
+                        [os.path.join(EMU, "test_serial_cut.exe"), "bl"] + BL_UNIT, expect_fail=True,
+                        fail_marks=[r"^ok +storage: XON ENQ out +sent \[11 05\]$",
+                                    r"^FAIL ACK answered +ACK -> nothing back$",
+                                    r"^ok +NAK not answered \(control\)"]))
+    CHECKS.append(check("Blazie emulator: serial port through Windows, receive path cut (control)",
+                        [os.path.join(EMU, "test_serial_win_cut.exe")] + BL_UNIT, expect_fail=True,
+                        fail_marks=[r"^ok +XON ENQ reach the far end", r"^FAIL ACK answered +ACK -> nothing back$"]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

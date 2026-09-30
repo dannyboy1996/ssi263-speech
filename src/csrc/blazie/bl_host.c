@@ -447,6 +447,31 @@ BL_API int bh_tx(const bl_host *h, const unsigned char **bytes)
     return h->n_tx;
 }
 
+BL_API void bh_clear_tx(bl_host *h)
+{
+    h->n_tx = 0;
+}
+
+BL_API int bh_serial_attach(bl_host *h, int on)
+{
+    return bl_serial_attach(h->unit, on);
+}
+
+BL_API int bh_serial_write(bl_host *h, const unsigned char *bytes, int n)
+{
+    return bl_serial_write(h->unit, bytes, n);
+}
+
+BL_API int bh_serial_space(const bl_host *h)
+{
+    return bl_serial_space(h->unit);
+}
+
+BL_API int bh_serial_read(bl_host *h, unsigned char *out, int cap, bl_serial_status *status)
+{
+    return bl_serial_read(h->unit, out, cap, status);
+}
+
 int bh_key(bl_host *h, int chord)
 {
     return bl_key(h->unit, chord);
