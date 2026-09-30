@@ -7,6 +7,10 @@
  * cpu.h steps (a prefixed instruction is one; a REP string instruction one iteration) and stops before a step whose
  * start is `until`, after `count` steps, or after the step in which a callback called pc86_stop -- the three ways
  * Unicorn's uc_emu_start(begin, until, 0, count) stops.
+ *
+ * A run is counted in STEPS, never in clocks: the Accent host's instruction coupling (cpu_ips instructions per chip
+ * second) is a compatibility policy kept from Unicorn, not a CPU clock (Astra, Reply 104).  pc86_cycles reports the
+ * core's T-states (Intel's counts, ../cpu/CONTRACT.md 4) beside pc86_steps; neither drives the other.
  */
 #ifndef SSI263_PC86_H
 #define SSI263_PC86_H

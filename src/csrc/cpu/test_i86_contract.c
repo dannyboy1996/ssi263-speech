@@ -1,20 +1,22 @@
 /* test_i86_contract.c -- CONTRACT.md's behaviour of a cpu.h 8086 core on the CORRECTED path (i86_step / i86_run).
  *
  * Each test is a few instructions in a flat 1 MB, driven through cpu.h only, and checks one clause.  T-states are
- * MAME's table (i86.cpp, the pinned revision); where a test asserts one it says whether Intel's figure agrees.
+ * MAME's table (i86.cpp, the pinned revision) with the corrections from Intel's manual (Astra, Reply 104: The 8086
+ * Family User's Manual, Oct 1979, Table 2-21, cited as printed page / PDF page); where a test asserts one it says
+ * whose figure it is.
  *   zero_budget    i86_run(0) returns 0 and changes nothing (2)
  *   reset          CS:IP = FFFF:0000 and FLAGS F002h (IF off); counts zeroed; a pending NMI edge dropped; a held
  *                  INTR sampled again once IF is set (9)
  *   two_cores      two instances interleaved step by step behave as each alone (9)
  *   intr_vector    INTR, IF on: FLAGS, CS, IP pushed (the interrupted IP), IF and TF cleared, the vector from
- *                  irq_ack(I86_INTR, 0) once; the acceptance charges 0 T (MAME; 4)
+ *                  irq_ack(I86_INTR, 0) once; the acceptance charges 61 T (Intel, 2-56/PDF 79; MAME 0) (4)
  *   intr_masked    with IF off INTR is not taken; after STI it is, one instruction later (4, 5)
  *   intr_level     INTR is a level: dropped inside STI's shadow, before acceptance, it is never taken (4)
  *   sti_shadow     an INTR pending at STI is taken after the instruction that follows STI (5)
  *   ss_shadow      after MOV SS and after POP SS the next instruction runs before a pending INTR (5)
  *   nmi_edge       NMI is taken with IF off, once per rising edge (vector 2) (4)
- *   int_iret       INT 21h without the seam vectors through the table and IRET returns: INT n 0 T (MAME;
- *                  Intel 51), IRET 44 T (MAME: 32 + its POPF 12; Intel 24) (4)
+ *   int_iret       INT 21h without the seam vectors through the table and IRET returns: INT n 51 T, IRET 24 T
+ *                  (Intel, 2-56/PDF 79; MAME 0 and 32 + its POPF 12) (4)
  *   intercept      the seam: INT 21h offered at E with IP past it, nothing pushed, the host's regs_set kept; a
  *                  vector the host declines is taken through the table (4)
  *   intercept_kinds INT 3 and INTO (OF set) as software, a divide error as an exception with IP past the DIV;
@@ -26,14 +28,34 @@
  *   wait           WAIT with TEST low is a slot of 3 T per step (MAME ends the slice); with TEST high it passes
  *   prefix_atomic  a segment override and its instruction are one step: no boundary, no interrupt between (1)
  *   rep_iteration  CS: REP MOVSB is one iteration per step; an INTR between iterations pushes the first prefix's
- *                  IP, and after IRET the copy resumes with the override intact (1, 4)
+ *                  IP, and after IRET the copy resumes with the override intact; the first pass 2 + 9 + 17 T, a
+ *                  continuing one 17, the resumed one a first pass again (Intel 9 + 17/rep, 2-61/PDF 84) (1, 4)
  *   trap           TF set by POPF: the next instruction runs, then INT 1 (TF cleared in the handler), never
  *                  offered to the seam (4)
  *   trap_ss        with TF set, a MOV SS delays the trap by one more instruction (4, 5)
  *   aliased        60h (JO on the 8086, PUSHA from the 80186 on) is counted with its address; plain code is not
- *   tstates        MOV r16,imm 4, OUT DX,AL 8, IN AL,DX 8, CLI 2, STI 2, JMP short 15 (MAME = Intel)
+ *   tstates        MOV r16,imm 4, OUT DX,AL 8, IN AL,DX 8, CLI 2, STI 2, JMP short 15 (MAME = Intel); NOP 3,
+ *                  LOCK 2, ESC 2 with a register and 8 + EA with memory (Intel; MAME 2, 2, 2 + EA)
  *   io             byte I/O through in/out; a word OUT DX,AX / IN AX,DX is two byte accesses, port then port + 1
  *   flags          FLAGS bits 12-15 read 1 (regs_set, PUSHF after POPF of 0000h)
+ *   int_costs      INT n 51, INT 3 52, INTO 53 taken and 4 not (Intel, 2-56/PDF 79); each the SAME when the host's
+ *                  seam services it: the instruction's own entry, the omitted handler's time not modelled (4)
+ *   accept_costs   an INTR acceptance 61 T, an NMI 50, the single-step trap 50 (2-56/PDF 79, 2-60/PDF 83,
+ *                  2-66/PDF 89), each beside the handler's first instruction in its step (4)
+ *   divide_error   DIV BL by 0: DIV r8's 80 + the entry 51 (a model: no figure in the manual); AAM 0: 51 (MAME
+ *                  charged it nothing); the same when the seam services it (4)
+ *   rep_counts     REP MOVSB/CMPSB/SCASB/LODSB/STOSB with CX = 2: 9 + n, then n, with n = 17, 22, 15, 13, 10
+ *                  (2-61, 2-53, 2-65, 2-60, 2-66); CX = 0: 9; a REP before a non-string instruction 2 (2-63) (1)
+ *   odd_word       4 more T per word transfer at an odd address (every page of Table 2-21): MOV AX,[BX] 13 -> 17,
+ *                  MOVSW 18 -> 22, INT 21h at an odd SP 51 -> 63, IRET 24 -> 36, OUT DX,AX to an odd port 12 -> 16
+ *                  (12 is MAME's word-port row: Intel's 8 + the 8088's 4 -- open, CONTRACT.md 4) (4)
+ *   forward_progress Astra's probe (Reply 104): INT 21h vectored at itself, i86_run(1) returns after one step --
+ *                  and so do an intercepted INT 21h in a loop, AAM 0 vectored at itself, a REP before NOP, REP
+ *                  MOVSB with CX = 0.  Guarded: a run past 1000 boundaries has its instruction overwritten with a
+ *                  NOP by the boundary callback, so a regression FAILS here instead of hanging (2, 4)
+ *   step_cost_floor every first byte 00h-FFh, followed by 00h (a memory ModRM) or C0h (a register one), alone and
+ *                  after REP / REPNE, with no seam and with a seam that services every interrupt: every step costs
+ *                  at least 2 T (2, 4)
  *
  *   build: gcc -c test_i86_contract.c; g++ ... i86_mame.cpp   (../blazie/build_board.py does it)
  * Each line: "ok"/"FAIL", the test's name, the detail; the last line "all passed" or "FAILED"; exit status 0/1.
@@ -63,6 +85,7 @@ typedef struct {
     int n_offers;
     int out_port[16], out_val[16], n_out;
     int in_port[16], n_in;
+    int guard, guard_count, guard_tripped;     /* boundaries allowed before the guard breaks a loop (0: off) */
 } machine;
 
 static uint8_t rd(void *ctx, uint32_t a) { return ((machine *)ctx)->mem[a & 0xFFFFF]; }
@@ -124,6 +147,11 @@ static void boundary(void *ctx, uint32_t pc)
     int i;
     if (m->n_pcs < 256)
         m->pcs[m->n_pcs++] = pc;
+    if (m->guard && ++m->guard_count > m->guard) {
+        m->mem[pc & 0xFFFFF] = 0x90;           /* break the loop: the instruction about to run becomes a NOP */
+        m->guard_tripped = 1;
+        m->guard = 0;
+    }
     for (i = 0; i < m->n_acts; i++)
         if ((long)i86_steps(m->cpu) == m->acts[i].step)
             i86_set_irq(m->cpu, m->acts[i].line, m->acts[i].level);
@@ -311,12 +339,12 @@ static void t_intr_vector(void)
     regs(m, &r);
     /* step 4: accepted at A, the handler's NOP at E */
     sprintf(d, "step 4 at %05X; stacked IP %04X CS %04X FLAGS %04X; SP %04X, IF in handler %d; acks %d (line %d, byte "
-            "%d); step 4 %d T against a plain NOP's %d; i86_pc() at the pushes %05X", m->pcs[3], word(m, STACK_TOP - 6),
+            "%d); step 4 %d T against a plain NOP's %d (want + 61); i86_pc() at the pushes %05X", m->pcs[3], word(m, STACK_TOP - 6),
             word(m, STACK_TOP - 4), word(m, STACK_TOP - 2), r.sp, !!(r.flags & F_IF), m->n_ack, m->ack_line, m->ack_n,
             t[3], t[2], m->stack_wr_pc[0]);
     report("intr_vector", m->pcs[3] == 0x40040 && word(m, STACK_TOP - 6) == 0x0003 && word(m, STACK_TOP - 4) == 0x1000
            && word(m, STACK_TOP - 2) == (0xF002 | F_IF) && r.sp == 0x0FFA && !(r.flags & (F_IF | F_TF))
-           && m->n_ack == 1 && m->ack_line == I86_INTR && m->ack_n == 0 && t[3] == t[2]
+           && m->n_ack == 1 && m->ack_line == I86_INTR && m->ack_n == 0 && t[3] == t[2] + 61
            && m->n_stack_wr > 0 && m->stack_wr_pc[0] == 0x10003, d);
     free_machine(m);
 }
@@ -433,10 +461,10 @@ static void t_int_iret(void)
         t2 = i86_step(m->cpu);                  /* IRET */
         i86_step(m->cpu);                       /* the NOP after INT */
         regs(m, &r);
-        sprintf(d, "boundaries %05X %05X %05X; stacked %04X:%04X; SP %04X after IRET; INT 21h %d T (MAME; Intel 51), "
-                "IRET %d T (MAME: IRET 32 + its POPF 12; Intel 24)", m->pcs[0], m->pcs[1], m->pcs[2], scs, sip, r.sp, t1, t2);
+        sprintf(d, "boundaries %05X %05X %05X; stacked %04X:%04X; SP %04X after IRET; INT 21h %d T (Intel 51), "
+                "IRET %d T (Intel 24)", m->pcs[0], m->pcs[1], m->pcs[2], scs, sip, r.sp, t1, t2);
         report("int_iret", m->pcs[1] == 0x40100 && m->pcs[2] == 0x10002 && sip == 0x0002 && scs == 0x1000
-               && r.sp == 0x1000 && t1 == 0 && t2 == 44, d);
+               && r.sp == 0x1000 && t1 == 51 && t2 == 24, d);
     }
     free_machine(m);
 }
@@ -611,10 +639,10 @@ static void t_rep_iteration(void)
     /* 1, 2 iterations at 10000; 3 the vector (IRET); 4, 5 iterations at 10000; 6 NOP at 10003 */
     ok = m->pcs[0] == 0x10000 && m->pcs[1] == 0x10000 && m->pcs[2] == 0x40040 && m->pcs[3] == 0x10000
          && m->pcs[4] == 0x10000 && m->pcs[5] == 0x10003 && memcmp(m->mem + 0x30200, "ABCD", 4) == 0 && r.cx == 0
-         && m->stack_wr_pc[0] == 0x10000 && t[0] == 22;
-    sprintf(d, "boundaries %05X %05X %05X %05X %05X %05X; ES:0200 \"%.4s\", CX %u; an iteration %d T (MAME: override "
-            "2 + REP 2 + MOVSB 18; Intel 17 per repetition)", m->pcs[0], m->pcs[1], m->pcs[2], m->pcs[3], m->pcs[4],
-            m->pcs[5], (const char *)m->mem + 0x30200, r.cx, t[0]);
+         && m->stack_wr_pc[0] == 0x10000 && t[0] == 28 && t[1] == 17 && t[2] == 61 + 24 && t[3] == 28 && t[4] == 17;
+    sprintf(d, "boundaries %05X %05X %05X %05X %05X %05X; ES:0200 \"%.4s\", CX %u; passes %d %d T, the INTR + IRET "
+            "%d, resumed %d %d (want 28 17, 85, 28 17: CS: 2 + 9 + 17, then 17)", m->pcs[0], m->pcs[1], m->pcs[2],
+            m->pcs[3], m->pcs[4], m->pcs[5], (const char *)m->mem + 0x30200, r.cx, t[0], t[1], t[2], t[3], t[4]);
     report("rep_iteration", ok, d);
     free_machine(m);
 }
@@ -681,18 +709,23 @@ static void t_tstates(void)
 {
     machine *m = new_machine(0x0002);
     char d[200];
-    int t[7], i;
-    static const int want[7] = { 4, 4, 8, 8, 2, 2, 15 };
+    int t[11], i;
+    static const int want[11] = { 4, 4, 8, 8, 2, 2, 15, 3, 2, 2, 13 };
     db(m, 3, 0xB8, 0x34, 0x12);                 /* MOV AX,1234h */
     db(m, 3, 0xBA, 0xEE, 0x03);                 /* MOV DX,3EEh */
     db(m, 1, 0xEE);                             /* OUT DX,AL */
     db(m, 1, 0xEC);                             /* IN AL,DX */
     db(m, 1, CLI); db(m, 1, STI);
     db(m, 2, 0xEB, 0x00);                       /* JMP short +0 */
-    for (i = 0; i < 7; i++) t[i] = i86_step(m->cpu);
-    sprintf(d, "MOV AX %d, MOV DX %d, OUT %d, IN %d, CLI %d, STI %d, JMP short %d; cycles %llu", t[0], t[1], t[2], t[3],
-            t[4], t[5], t[6], (unsigned long long)i86_cycles(m->cpu));
-    report("tstates", memcmp(t, want, sizeof t) == 0 && i86_cycles(m->cpu) == 43, d);
+    db(m, 1, NOP);                              /* NOP: 3 (Intel, 2-62/PDF 85) */
+    db(m, 1, 0xF0);                             /* LOCK: 2, its own step (2-60/PDF 83) */
+    db(m, 2, 0xD8, 0xC0);                       /* ESC with a register: 2 (2-54/PDF 77) */
+    db(m, 2, 0xD8, 0x07);                       /* ESC [BX]: 8 + EA 5 */
+    for (i = 0; i < 11; i++) t[i] = i86_step(m->cpu);
+    sprintf(d, "MOV AX %d, MOV DX %d, OUT %d, IN %d, CLI %d, STI %d, JMP short %d, NOP %d, LOCK %d, ESC reg %d, ESC "
+            "[BX] %d; cycles %llu", t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10],
+            (unsigned long long)i86_cycles(m->cpu));
+    report("tstates", memcmp(t, want, sizeof t) == 0 && i86_cycles(m->cpu) == 63, d);
     free_machine(m);
 }
 
@@ -734,6 +767,245 @@ static void t_flags(void)
     free_machine(m);
 }
 
+/* ---- the clock counts from Intel's manual and forward progress (Astra, Reply 104) ------------------------------- */
+
+/* INT n, INT 3, INTO taken and not: each step's T, without the seam and with a seam that services every vector */
+static void t_int_costs(void)
+{
+    char d[300];
+    int t[2][4], k, ok = 1;
+    for (k = 0; k < 2; k++) {
+        machine *m = new_machine_ex(k, 0x0002);
+        m->claim = k ? -1 : -2;
+        db(m, 2, 0xCD, 0x21);                   /* 10000 INT 21h */
+        set_vec(m, 0x21, 0x1000, 0x0002);       /* ... returning nowhere: its handler is the next instruction */
+        db(m, 1, 0xCC);                         /* 10002 INT 3 */
+        set_vec(m, 3, 0x1000, 0x0003);
+        db(m, 1, 0xCE);                         /* 10003 INTO, OF clear: not taken */
+        db(m, 2, 0xB0, 0x7F); db(m, 2, 0x04, 0x01);   /* 10004 MOV AL,7Fh; 10006 ADD AL,1: OF set */
+        db(m, 1, 0xCE);                         /* 10008 INTO: taken */
+        set_vec(m, 4, 0x1000, 0x0009);
+        db(m, 1, NOP);
+        t[k][0] = i86_step(m->cpu);
+        t[k][1] = i86_step(m->cpu);
+        t[k][2] = i86_step(m->cpu);
+        i86_step(m->cpu); i86_step(m->cpu);
+        t[k][3] = i86_step(m->cpu);
+        ok &= t[k][0] == 51 && t[k][1] == 52 && t[k][2] == 4 && t[k][3] == 53 && m->n_offers == (k ? 3 : 0);
+        free_machine(m);
+    }
+    sprintf(d, "INT 21h / INT 3 / INTO not taken / INTO taken: %d %d %d %d T through the table, %d %d %d %d T serviced "
+            "by the host (want 51 52 4 53 both)", t[0][0], t[0][1], t[0][2], t[0][3], t[1][0], t[1][1], t[1][2], t[1][3]);
+    report("int_costs", ok, d);
+}
+
+/* INTR 61, NMI 50, the trap 50: the accepting step's T minus its first handler instruction's (a NOP, 3) */
+static void t_accept_costs(void)
+{
+    machine *m;
+    char d[260];
+    int i, t[8], intr, nmi, trap;
+    /* INTR: STI; NOP...; raised at step 2's boundary, accepted at step 3 */
+    m = intr_program(0x0002);
+    at(m, 2, I86_INTR, 1);
+    for (i = 0; i < 4; i++) t[i] = i86_step(m->cpu);
+    intr = t[2] - 3;
+    free_machine(m);
+    /* NMI */
+    m = new_machine(0x0002);
+    for (i = 0; i < 6; i++) db(m, 1, NOP);
+    set_vec(m, 2, 0x4000, 0x0020); org(m, 0x40020); db(m, 1, NOP); db(m, 2, 0xEB, 0xFE);
+    at(m, 1, I86_NMI, 1);
+    for (i = 0; i < 3; i++) t[i] = i86_step(m->cpu);
+    nmi = t[1] - 3;
+    free_machine(m);
+    /* the trap: MOV AX,0102h; PUSH AX; POPF; NOP (the one instruction); the trap with the handler's NOP */
+    m = new_machine(0x0002);
+    db(m, 3, 0xB8, 0x02, 0x01); db(m, 1, PUSH_AX); db(m, 1, POPF); db(m, 1, NOP); db(m, 1, NOP);
+    set_vec(m, 1, 0x4000, 0x0010); org(m, 0x40010); db(m, 1, NOP); db(m, 2, 0xEB, 0xFE);
+    for (i = 0; i < 6; i++) t[i] = i86_step(m->cpu);
+    trap = t[4] - 3;
+    sprintf(d, "INTR %d T, NMI %d T, the single-step trap %d T (want 61, 50, 50); the trap's step at %05X", intr, nmi,
+            trap, m->pcs[4]);
+    report("accept_costs", intr == 61 && nmi == 50 && trap == 50 && m->pcs[4] == 0x40010, d);
+    free_machine(m);
+}
+
+/* the divide error's entry: DIV BL by 0 and AAM 0, through the table and serviced by the host */
+static void t_divide_error(void)
+{
+    char d[260];
+    int t[2][2], k, ok = 1;
+    for (k = 0; k < 2; k++) {
+        machine *m = new_machine_ex(k, 0x0002);
+        m->claim = k ? -1 : -2;
+        db(m, 2, 0xB3, 0x00);                   /* 10000 MOV BL,0 */
+        db(m, 2, 0xF6, 0xF3);                   /* 10002 DIV BL: divide error */
+        set_vec(m, 0, 0x1000, 0x0004);          /* its handler: the next instruction */
+        i86_step(m->cpu);
+        t[k][0] = i86_step(m->cpu);
+        set_vec(m, 0, 0x1000, 0x0006);
+        db(m, 2, 0xD4, 0x00);                   /* 10004 AAM 0: divide error */
+        db(m, 1, NOP);
+        t[k][1] = i86_step(m->cpu);
+        ok &= t[k][0] == 80 + 51 && t[k][1] == 51 && m->n_offers == (k ? 2 : 0);
+        free_machine(m);
+    }
+    sprintf(d, "DIV BL by 0 %d T, AAM 0 %d T through the table; %d, %d serviced by the host (want 131 = DIV r8 80 + "
+            "51, and 51)", t[0][0], t[0][1], t[1][0], t[1][1]);
+    report("divide_error", ok, d);
+}
+
+/* REP string forms: 9 + n per repetition; CX = 0 costs the 9; a REP before a non-string instruction its 2 */
+static void t_rep_counts(void)
+{
+    static const struct { const char *name; uint8_t rep, op; int n; } ops[] = {
+        { "MOVSB", 0xF3, 0xA4, 17 }, { "CMPSB", 0xF3, 0xA6, 22 }, { "SCASB", 0xF2, 0xAE, 15 },
+        { "LODSB", 0xF3, 0xAC, 13 }, { "STOSB", 0xF3, 0xAA, 10 } };
+    char d[400];
+    int k, ok = 1, pos = 0, t0, t1, t2, z, nonstr, after;
+    for (k = 0; k < 5; k++) {
+        machine *m = new_machine(0x0002);
+        i86_regs r;
+        regs(m, &r); r.cx = 2; r.si = 0x0100; r.di = 0x0200; r.ax = 0x00FF; i86_regs_set(m->cpu, &r);
+        memcpy(m->mem + 0x30100, "ab", 2); memcpy(m->mem + 0x30200, "ab", 2);   /* CMPSB equal: REPE runs on */
+        db(m, 2, ops[k].rep, ops[k].op);        /* 10000 */
+        db(m, 2, ops[k].rep, ops[k].op);        /* 10002: CX = 0 by then */
+        t0 = i86_step(m->cpu); t1 = i86_step(m->cpu); t2 = i86_step(m->cpu);
+        regs(m, &r);
+        ok &= t0 == 9 + ops[k].n && t1 == ops[k].n && t2 == 9 && r.cx == 0 && m->pcs[2] == 0x10002;
+        pos += sprintf(d + pos, "%s %d %d, CX=0 %d; ", ops[k].name, t0, t1, t2);
+        free_machine(m);
+    }
+    {
+        machine *m = new_machine(0x0002);
+        db(m, 1, 0xF3); db(m, 1, NOP);          /* REP NOP: the prefix, then the NOP (MAME: two steps) */
+        nonstr = i86_step(m->cpu);
+        after = i86_step(m->cpu);
+        z = m->pcs[1] == 0x10001;
+        ok &= nonstr == 2 && after == 3 && z;
+        sprintf(d + pos, "REP before NOP %d, then the NOP %d at %05X", nonstr, after, m->pcs[1]);
+        free_machine(m);
+    }
+    report("rep_counts", ok, d);
+}
+
+/* 4 more T per word transfer at an odd address */
+static void t_odd_word(void)
+{
+    char d[400];
+    int t[5], e[5], k, ok;
+    for (k = 0; k < 2; k++) {                   /* k = 0 even addresses, 1 odd */
+        machine *m = new_machine(0x0002);
+        i86_regs r;
+        int i;
+        regs(m, &r); r.bx = (uint16_t)(0x0010 + k); r.si = (uint16_t)(0x0100 + k); r.di = 0x0200;
+        r.sp = (uint16_t)(0x1000 - k); r.dx = (uint16_t)(0x3EE + k); i86_regs_set(m->cpu, &r);
+        db(m, 2, 0x8B, 0x07);                   /* MOV AX,[BX]: 8 + EA 5 */
+        db(m, 1, 0xA5);                         /* MOVSW: 18 (the source odd) */
+        db(m, 2, 0xCD, 0x21);                   /* INT 21h: 51 (three pushes) */
+        set_vec(m, 0x21, 0x4000, 0x0100); org(m, 0x40100); db(m, 1, IRET);   /* IRET: 24 (three pops) */
+        org(m, 0x10005); db(m, 1, 0xEF);        /* OUT DX,AX: MAME's 12 */
+        for (i = 0; i < 5; i++)
+            (k ? t : e)[i] = i86_step(m->cpu);
+        free_machine(m);
+    }
+    ok = e[0] == 13 && e[1] == 18 && e[2] == 51 && e[3] == 24 && e[4] == 12
+         && t[0] == 17 && t[1] == 22 && t[2] == 63 && t[3] == 36 && t[4] == 16;
+    sprintf(d, "even / odd: MOV AX,[BX] %d/%d, MOVSW %d/%d, INT 21h %d/%d, IRET %d/%d, OUT DX,AX %d/%d (want 13/17, "
+            "18/22, 51/63, 24/36, 12/16)", e[0], t[0], e[1], t[1], e[2], t[2], e[3], t[3], e[4], t[4]);
+    report("odd_word", ok, d);
+}
+
+/* Astra's probe (Reply 104, i86_zero_probe.c) and its relatives: i86_run(1) must return after one step */
+static machine *progress_machine(int with_seam, int claim)
+{
+    machine *m = new_machine_ex(with_seam, 0x0002);
+    m->claim = claim;
+    m->guard = 1000;                            /* a regression is broken out of, and fails, instead of hanging */
+    return m;
+}
+static void t_forward_progress(void)
+{
+    static const char *names[5] = { "INT 21h at itself", "INT 21h serviced, in a loop", "AAM 0 at itself",
+                                     "REP before NOP", "REP MOVSB with CX = 0" };
+    char d[600];
+    int k, ok = 1, pos = 0;
+    for (k = 0; k < 5; k++) {
+        machine *m;
+        uint64_t done, steps;
+        int first;
+        switch (k) {
+        case 0:                                 /* Astra's probe: the vector points at the INT itself */
+            m = progress_machine(0, -2);
+            db(m, 2, 0xCD, 0x21); set_vec(m, 0x21, 0x1000, 0x0000);
+            break;
+        case 1:                                 /* the host services it; the loop jumps back to it */
+            m = progress_machine(1, -1);
+            db(m, 2, 0xCD, 0x21); db(m, 2, 0xEB, 0xFC);
+            break;
+        case 2:                                 /* AAM 0 raises a divide error vectored at itself */
+            m = progress_machine(0, -2);
+            db(m, 2, 0xD4, 0x00); set_vec(m, 0, 0x1000, 0x0000);
+            break;
+        case 3:
+            m = progress_machine(0, -2);
+            db(m, 1, 0xF3); db(m, 1, NOP); db(m, 2, 0xEB, 0xFC);
+            break;
+        default:                                /* CX is 0 */
+            m = progress_machine(0, -2);
+            db(m, 2, 0xF3, 0xA4); db(m, 2, 0xEB, 0xFC);
+            break;
+        }
+        first = i86_step(m->cpu);
+        i86_reset(m->cpu);
+        {
+            i86_regs r;
+            regs(m, &r); r.cs = 0x1000; r.ip = 0; r.ss = 0x2000; r.sp = 0x1000; r.ds = r.es = 0x3000; r.flags = 0x0002;
+            i86_regs_set(m->cpu, &r);
+        }
+        m->guard_count = 0;
+        done = i86_run(m->cpu, 1);
+        steps = i86_steps(m->cpu);
+        ok &= first >= 1 && done >= 1 && steps == 1 && !m->guard_tripped;
+        pos += sprintf(d + pos, "%s%s: a step %d T, run(1) %llu T in %llu step(s)%s", k ? "; " : "", names[k], first,
+                       (unsigned long long)done, (unsigned long long)steps,
+                       m->guard_tripped ? " ONLY AFTER THE GUARD BROKE THE LOOP" : "");
+        free_machine(m);
+    }
+    report("forward_progress", ok, d);
+}
+
+/* every first byte, alone and after REP / REPNE, with no seam and with a seam servicing everything: >= 2 T */
+static void t_step_cost_floor(void)
+{
+    static const int prefix[3] = { -1, 0xF3, 0xF2 };
+    char d[240];
+    int seam, p, b, mr, worst = 1000, worst_b = -1, worst_p = -1, worst_seam = -1, worst_mr = -1;
+    for (seam = 0; seam < 2; seam++)
+        for (p = 0; p < 3; p++)
+            for (mr = 0; mr < 2; mr++)          /* the byte after: 00h (a memory ModRM), C0h (a register one) */
+                for (b = 0; b < 256; b++) {
+                    machine *m = new_machine_ex(seam, 0x0002);
+                    i86_regs r;
+                    int t;
+                    m->claim = seam ? -1 : -2;
+                    regs(m, &r); r.cx = 1; i86_regs_set(m->cpu, &r);
+                    if (prefix[p] >= 0)
+                        db(m, 1, prefix[p]);
+                    db(m, 6, b, mr ? 0xC0 : 0, 0, 0, 0, 0);
+                    t = i86_step(m->cpu);
+                    if (t < worst) {
+                        worst = t; worst_b = b; worst_p = prefix[p]; worst_seam = seam; worst_mr = mr;
+                    }
+                    free_machine(m);
+                }
+    sprintf(d, "the cheapest step: %d T (first byte %02Xh then %02Xh, prefix %s, %s)", worst, worst_b,
+            worst_mr ? 0xC0 : 0, worst_p < 0 ? "none" : worst_p == 0xF3 ? "REP" : "REPNE",
+            worst_seam ? "the seam servicing" : "no seam");
+    report("step_cost_floor", worst >= 2, d);
+}
+
 int main(void)
 {
     t_zero_budget();
@@ -760,6 +1032,13 @@ int main(void)
     t_tstates();
     t_io();
     t_flags();
+    t_int_costs();
+    t_accept_costs();
+    t_divide_error();
+    t_rep_counts();
+    t_odd_word();
+    t_forward_progress();
+    t_step_cost_floor();
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

@@ -11,7 +11,8 @@
 //      halted core stops here (no trap, no shadow count), as execute_run returns.  Then the single-step trap: armed
 //      by POPF/IRET with TF set, it fires (INT 1) at the second boundary after, i.e. after one instruction, and not
 //      while the shadow is active.  i86_pc() is the interrupted address (where execution resumes) throughout A.
-//   B  the acceptance T-states: MAME charges none for an interrupt's entry (its table's EXCEPTION is never used).
+//   B  the acceptance T-states, Intel's (MAME charges none): INTR 61, NMI 50, the single-step trap 50, each with
+//      4 more per push at an odd SP (I86_INTR_T and the others, i86_mame.hpp; CONTRACT.md 4).
 //   C  the shadow ends: m_no_interrupt counts down (not while halted).
 //   D  steps++, the saved PC (the first prefix's address), bus->boundary.
 //   E  prefixes and one instruction -- a segment override is MAME's own loop turn (no interrupt between it and its
@@ -21,9 +22,16 @@
 //
 // A REP string instruction is one ITERATION per step: MAME loops while its slice has cycles left and otherwise puts
 // IP back on the first prefix; every step here starts with none left, so each iteration ends the step, interrupts
-// are sampled between iterations (the 8086 does too), and the next step re-fetches the prefixes (each charged again:
-// MAME's OVERRIDE per pass, not Intel's 9 + 17n for REP MOVSB).  All prefixes survive an interruption (IP back to
-// the first), not the real 8086's one.
+// are sampled between iterations (the 8086 does too), and the next step re-fetches the prefixes.  The T-states are
+// Intel's 9 + n per repetition (CHANGED): the first pass pays the 9 and its segment override, a pass continuing the
+// same instruction only its repetition (the re-fetched prefixes are not charged again); after an interrupt the
+// resumed instruction is a first pass again (model).  All prefixes survive an interruption (IP back to the first),
+// not the real 8086's one.
+//
+// Forward progress (CONTRACT.md 4): every step costs at least 2 T-states -- every path charges an entry of Intel's
+// table, the smallest being 2 -- so i86_run(budget) returns.  Before these counts an INT n (0 T in MAME), a divide
+// error by AAM 0 (0 T), and a REP before a non-string instruction (0 T) could each make a step of 0 T, and an INT
+// whose vector pointed at itself kept i86_run(1) looping for ever (Astra, Reply 104).
 //
 // Differences from MAME, each deliberate (the generated file marks those made there 'CHANGED'):
 //   - HLT charges its own 2 T-states; a halted core does 2-T slots (MAME ends the slice).  A WAIT that waits is a
@@ -31,9 +39,16 @@
 //   - The INT seam (bus->intercept) in interrupt(), for interrupts raised by the instruction at E only.
 //   - Every NMI rising edge counts (MAME ignores one at machine time 0).
 //   - The `JMP $` cycle skip (i_jmp_d8's m_icount %= 12) never fires: a step starts with no cycles left.
-// Known limits (MAME's, kept): an interrupt's entry costs 0 T (INT n is 0 T, INT 3 2 T, an acceptance 0 T; Intel
-// gives 51, 52 and more -- open, CONTRACT.md 4); IRET is 32 T (Intel 24); MAME's undefined-flag results (e.g. OF
-// after a rotate by CL is left alone); a word access at FFFFh wraps linearly, not inside the segment.
+//   - Clock counts from Intel's manual (Astra, Reply 104; Table 2-21 of the 8086 Family User's Manual, Oct 1979):
+//     INT n 51, INT 3 52, INTO 53 taken, IRET 24 (MAME 0, 2, 2, 44); an intercepted one the same; the divide error's
+//     entry 51 (a model: no figure in the manual); INTR 61, NMI 50, the trap 50 (MAME 0); REP string forms 9 + n
+//     (MOVS 17, CMPS 22, SCAS 15, LODS 13, STOS 10); a REP before a non-string instruction 2; NOP 3, LOCK 2, ESC 2 or
+//     8 + EA; 4 more for every word transfer at an odd address (MAME: none).
+// Known limits (MAME's, kept): the table's stack and word-port rows are Intel's 8086 figure plus the 8088's 4 per
+// word transfer (PUSH r16 15, POP r16 12, PUSHF 14, POPF 12, IN AX,DX 12 -- Intel's 8086: 11, 8, 10, 8, 8), so at an
+// odd address they count that 4 twice, and its returns match neither CPU (RET 20, Intel 8) -- open, CONTRACT.md 4;
+// MAME's undefined-flag results (e.g. OF after a rotate by CL is left alone); a word access at FFFFh wraps
+// linearly, not inside the segment.
 #include "i86_mame_machine.cpp"
 
 #include <new>
@@ -50,10 +65,12 @@ int i8086_common_cpu_device::drv_accept()
     if (m_pending_irq && (m_no_interrupt == 0)) {
         if (m_pending_irq & NMI_IRQ) {
             interrupt(I8086_NMI_INT_VECTOR);
+            m_icount -= I86_NMI_T;
             m_pending_irq &= ~NMI_IRQ;
             m_halt = false;
         } else if (m_IF) {
             interrupt(-1);                 // the vector is read after FLAGS is pushed and IF cleared, as upstream
+            m_icount -= I86_INTR_T;
             m_halt = false;
         }
     }
@@ -63,6 +80,7 @@ int i8086_common_cpu_device::drv_accept()
         if ((m_fire_trap >= 2) && (m_no_interrupt == 0)) {
             m_fire_trap = 0;
             interrupt(1);
+            m_icount -= I86_TRAP_T;
         } else
             m_fire_trap++;
     }
@@ -85,6 +103,9 @@ int i8086_common_cpu_device::drv_instruction()
     m_icount = 0;
     if (m_halt)
         return I86_HALT_SLOT_T;           // a HALT slot (CONTRACT.md 6)
+    uint32_t start = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
+    m_rep_continue = m_rep_pending && start == m_rep_at;   // the REP the previous step left, and nothing between:
+    m_rep_pending = m_rep_ran = false;    // after an acceptance this step's instruction is the handler's
     m_in_instruction = true;
     for (;;) {
         uint32_t at = ((m_sregs[CS] << 4) + m_ip) & 0xfffff;
@@ -101,6 +122,10 @@ int i8086_common_cpu_device::drv_instruction()
         m_seg_prefix_next = false;
     }
     m_in_instruction = false;
+    if (m_rep_ran && m_ip == m_prev_ip) { // the REP put IP back on its first prefix: the next pass continues it
+        m_rep_pending = true;
+        m_rep_at = start;
+    }
     return -m_icount;
 }
 
@@ -160,6 +185,7 @@ void i86_reset(i86 *c)
 {
     c->dev->device_reset();
     c->dev->m_in_instruction = false;
+    c->dev->m_rep_pending = false;
     c->cycles = c->steps = 0;
     c->pc = i86_linear(*c->dev);
 }
@@ -182,6 +208,8 @@ int i86_step(i86 *c)
     return acc + ins;
 }
 
+// Returns: every step costs at least 2 T-states (forward progress, CONTRACT.md 4; test_i86_contract.c's
+// forward_progress and step_cost_floor)
 uint64_t i86_run(i86 *c, uint64_t budget)
 {
     uint64_t done = 0;

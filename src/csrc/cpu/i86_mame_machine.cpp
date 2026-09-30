@@ -1005,14 +1005,14 @@ inline void i8086_common_cpu_device::ADJB(int8_t param1, int8_t param2)
 
 const uint8_t i8086_cpu_device::m_i8086_timing[] =
 {
-	51,32,          /* exception, IRET */
-		2, 0, 4, 2, /* INTs */
+	51,24,          /* exception, IRET */   // CHANGED: IRET 24 (Table 2-21, printed 2-56/PDF 79), its POPF included (see 'IRET charges no POPF'); upstream 32 + POPF 12 = 44.  EXCEPTION 51 (unused upstream) is the divide error's entry: a model, see 'the divide error's entry'
+		52,51, 4,53, /* INTs */   // CHANGED: INT 3 52, INT n 51, INTO 4 not taken / 53 taken (Table 2-21, printed 2-56/PDF 79); upstream 2, 0, 4, 2.  An intercepted one costs the same (CONTRACT.md 4)
 		2,              /* segment overrides */
 		2, 4, 4,        /* flag operations */
 		4, 4,83,60, /* arithmetic adjusts */
 		4, 4,           /* decimal adjusts */
 		2, 5,           /* sign extension */
-		2,24, 2, 2, 3,11,   /* misc */
+		2,24, 2, 3, 3,11,   /* misc */   // CHANGED: NOP 3 (Table 2-21, printed 2-62/PDF 85); upstream 2
 
 	15,15,15,       /* direct JMPs */
 	11,18,24,       /* indirect JMPs */
@@ -1053,12 +1053,12 @@ const uint8_t i8086_cpu_device::m_i8086_timing[] =
 	15,20, 4,       /* m8 shift/rotate */
 	15,20, 4,       /* m16 shift/rotate */
 
-	22, 9,21,       /* CMPS 8-bit */
-	22, 9,21,       /* CMPS 16-bit */
-	15, 9,14,       /* SCAS 8-bit */
-	15, 9,14,       /* SCAS 16-bit */
-	12, 9,11,       /* LODS 8-bit */
-	12, 9,11,       /* LODS 16-bit */
+	22, 9,22,       /* CMPS 8-bit */
+	22, 9,22,       /* CMPS 16-bit */   // CHANGED: REP CMPS 9 + 22/rep (printed 2-53/PDF 76); upstream 21
+	15, 9,15,       /* SCAS 8-bit */
+	15, 9,15,       /* SCAS 16-bit */   // CHANGED: REP SCAS 9 + 15/rep (printed 2-65/PDF 88); upstream 14
+	12, 9,13,       /* LODS 8-bit */
+	12, 9,13,       /* LODS 16-bit */   // CHANGED: REP LODS 9 + 13/rep (printed 2-60/PDF 83); upstream 11
 	11, 9,10,       /* STOS 8-bit */
 	11, 9,10,       /* STOS 16-bit */
 	18, 9,17,       /* MOVS 8-bit */
@@ -1158,6 +1158,8 @@ void i8086_common_cpu_device::interrupt(int int_num, int trap)
 {
 	// CHANGED: the host's seam (CONTRACT.md 4, cpu_bus.intercept): an INT n, INT 3, INTO or divide error raised by
 	// the instruction may be serviced by the host instead -- nothing pushed, the instruction ends here
+	if (m_in_instruction && trap)   // CHANGED: a divide error's entry, 51 -- a MODEL: Intel gives no figure. Like INT n
+		CLK(EXCEPTION);                 // it runs no INTA cycles (printed 2-25/PDF 48), and INT n's entry is 51 (2-56/PDF 79). Upstream: 0
 	if (drv_intercept(int_num, trap))
 		return;
 	PUSH(CompressFlags());
@@ -1296,7 +1298,7 @@ void i8086_common_cpu_device::execute_op(uint8_t op)
 					m_esc_data_handler(get_ea(1, I8086_READ));
 				else
 					m_esc_data_handler(0);
-				CLK(NOP);
+				m_icount -= (m_modrm < 0xc0) ? 8 : 2;   // CHANGED: ESC 8 + EA with a memory operand, 2 with a register (Table 2-21, printed 2-54/PDF 77); upstream charged NOP's entry (+ EA)
 				break;
 
 			default:
@@ -2525,6 +2527,7 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 			m_ip = POP();
 			m_sregs[CS] = POP();
 			i_popf();
+			m_icount += m_timing[POPF];   // CHANGED: IRET's 24 includes restoring FLAGS; upstream also charges POPF's 12
 			CLK(IRET);
 			break;
 
@@ -2826,7 +2829,7 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 			//logerror("%06x: Warning - BUSLOCK\n", m_pc); // Why warn for using lock instruction?
 			m_lock = true;
 			m_no_interrupt = 1;
-			CLK(NOP);
+			CLK(OVERRIDE);   // CHANGED: LOCK is a 2-T prefix (Table 2-21, printed 2-60/PDF 83), the segment override's 2; upstream charged NOP's entry
 			break;
 
 		case 0xf2: // i_repne
@@ -2837,20 +2840,21 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 
 				switch (next)
 				{
-				case 0xa4:  CLK(OVERRIDE); if (c) do { i_movsb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa5:  CLK(OVERRIDE); if (c) do { i_movsw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa6:  CLK(OVERRIDE); if (c) do { i_cmpsb(); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa7:  CLK(OVERRIDE); if (c) do { i_cmpsw(); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xaa:  CLK(OVERRIDE); if (c) do { i_stosb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xab:  CLK(OVERRIDE); if (c) do { i_stosw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xac:  CLK(OVERRIDE); if (c) do { i_lodsb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xad:  CLK(OVERRIDE); if (c) do { i_lodsw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xae:  CLK(OVERRIDE); if (c) do { i_scasb(); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xaf:  CLK(OVERRIDE); if (c) do { i_scasw(); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa4:  rep_first(REP_MOVS8_BASE); /* CHANGED */ if (c) do { i_movsb(); rep_count(MOVS8, REP_MOVS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa5:  rep_first(REP_MOVS16_BASE); /* CHANGED */ if (c) do { i_movsw(); rep_count(MOVS16, REP_MOVS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa6:  rep_first(REP_CMPS8_BASE); /* CHANGED */ if (c) do { i_cmpsb(); rep_count(CMPS8, REP_CMPS8_COUNT); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa7:  rep_first(REP_CMPS16_BASE); /* CHANGED */ if (c) do { i_cmpsw(); rep_count(CMPS16, REP_CMPS16_COUNT); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xaa:  rep_first(REP_STOS8_BASE); /* CHANGED */ if (c) do { i_stosb(); rep_count(STOS8, REP_STOS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xab:  rep_first(REP_STOS16_BASE); /* CHANGED */ if (c) do { i_stosw(); rep_count(STOS16, REP_STOS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xac:  rep_first(REP_LODS8_BASE); /* CHANGED */ if (c) do { i_lodsb(); rep_count(LODS8, REP_LODS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xad:  rep_first(REP_LODS16_BASE); /* CHANGED */ if (c) do { i_lodsw(); rep_count(LODS16, REP_LODS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xae:  rep_first(REP_SCAS8_BASE); /* CHANGED */ if (c) do { i_scasb(); rep_count(SCAS8, REP_SCAS8_COUNT); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xaf:  rep_first(REP_SCAS16_BASE); /* CHANGED */ if (c) do { i_scasw(); rep_count(SCAS16, REP_SCAS16_COUNT); c--; } while (c>0 && !ZF && m_icount>0);   m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
 				default:
 					logerror("%06x: REPNE invalid\n", m_pc);
 					// Decrement IP so the normal instruction will be executed next
 					m_ip--;
+					CLK(OVERRIDE);   // CHANGED: the REP prefix's own 2 T (Table 2-21, REP, printed 2-63/PDF 86): upstream charged none, a 0-T step
 					invalid = true;
 					break;
 				}
@@ -2870,20 +2874,21 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 
 				switch (next)
 				{
-				case 0xa4:  CLK(OVERRIDE); if (c) do { i_movsb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa5:  CLK(OVERRIDE); if (c) do { i_movsw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa6:  CLK(OVERRIDE); if (c) do { i_cmpsb(); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xa7:  CLK(OVERRIDE); if (c) do { i_cmpsw(); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xaa:  CLK(OVERRIDE); if (c) do { i_stosb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xab:  CLK(OVERRIDE); if (c) do { i_stosw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xac:  CLK(OVERRIDE); if (c) do { i_lodsb(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xad:  CLK(OVERRIDE); if (c) do { i_lodsw(); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xae:  CLK(OVERRIDE); if (c) do { i_scasb(); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
-				case 0xaf:  CLK(OVERRIDE); if (c) do { i_scasw(); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa4:  rep_first(REP_MOVS8_BASE); /* CHANGED */ if (c) do { i_movsb(); rep_count(MOVS8, REP_MOVS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa5:  rep_first(REP_MOVS16_BASE); /* CHANGED */ if (c) do { i_movsw(); rep_count(MOVS16, REP_MOVS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa6:  rep_first(REP_CMPS8_BASE); /* CHANGED */ if (c) do { i_cmpsb(); rep_count(CMPS8, REP_CMPS8_COUNT); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xa7:  rep_first(REP_CMPS16_BASE); /* CHANGED */ if (c) do { i_cmpsw(); rep_count(CMPS16, REP_CMPS16_COUNT); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xaa:  rep_first(REP_STOS8_BASE); /* CHANGED */ if (c) do { i_stosb(); rep_count(STOS8, REP_STOS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xab:  rep_first(REP_STOS16_BASE); /* CHANGED */ if (c) do { i_stosw(); rep_count(STOS16, REP_STOS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xac:  rep_first(REP_LODS8_BASE); /* CHANGED */ if (c) do { i_lodsb(); rep_count(LODS8, REP_LODS8_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xad:  rep_first(REP_LODS16_BASE); /* CHANGED */ if (c) do { i_lodsw(); rep_count(LODS16, REP_LODS16_COUNT); c--; } while (c>0 && m_icount>0);          m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xae:  rep_first(REP_SCAS8_BASE); /* CHANGED */ if (c) do { i_scasb(); rep_count(SCAS8, REP_SCAS8_COUNT); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
+				case 0xaf:  rep_first(REP_SCAS16_BASE); /* CHANGED */ if (c) do { i_scasw(); rep_count(SCAS16, REP_SCAS16_COUNT); c--; } while (c>0 && ZF && m_icount>0);    m_regs.w[CX]=c; m_seg_prefix = false; m_seg_prefix_next = false; break;
 				default:
 					logerror("%06x: REPE invalid\n", m_pc);
 					// Decrement IP so the normal instruction will be executed next
 					m_ip--;
+					CLK(OVERRIDE);   // CHANGED: the REP prefix's own 2 T (Table 2-21, REP, printed 2-63/PDF 86): upstream charged none, a 0-T step
 					invalid = true;
 					break;
 				}

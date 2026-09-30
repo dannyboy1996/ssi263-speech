@@ -8,6 +8,10 @@ divide error is offered to the host, which services it -- as a Unicorn interrupt
 Opt-in: accent.py uses it when SSI263_ACCENT_CORE=mame.  The library is looked for in SSI263_PC86_DLL (a file), bin/<arch>/
 beside this file, then the repository's nvda/dist/blazie-lib/<arch>/ (where src/csrc/blazie/build_board.py puts it).
 
+Time: accent.py runs the CPU a number of STEPS per slice (cpu_ips instructions per chip second, as with Unicorn) --
+a compatibility policy, not a clock.  The core also counts T-states (cycles(), Intel's counts), separately; the
+host does not use them (Astra, Reply 104).
+
 Differences from Unicorn that a caller can see (src/csrc/cpu/README.md, "The MAME 8086 against Unicorn"):
   - a step is MAME's: a REP string instruction with CX = n > 0 is n steps (Unicorn counts n + 1, a last pass that
     only finds CX = 0); a LOCK prefix is its own step;
