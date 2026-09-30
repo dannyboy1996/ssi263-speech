@@ -378,7 +378,8 @@ in the core: a board models what its firmware uses and drives `V40_INT` from its
   nothing of its own, only its PUSHF's (the V20 column). Twelve clocks of PUSHF are not evidence for the whole
   hardware response (for INT the acknowledge bus cycles, then the flags, PS and PC pushed and the vector read), and
   Intel's 8086 figures (51 for INT n, 61 for INTR) are Intel's software and hardware timings for another CPU: not
-  substituted. No NEC figure is in hand: the V40 section of the 1990 data book, as read, gives none; the instruction
+  substituted. No NEC figure is in hand: the V40 section of the 1990 data book, as read, gives none (nor do its V20
+  and V30 sections: the INTAK pin and its bus timing, no response count); the instruction
   manual's clock table (Table 2-8, a V40 column) times instructions, its only interrupt note being CHKIND's; the data
   book's "27 + N clocks" interrupt latency is the V25's (uPD70320), a different CPU. The 12 stays, labelled MAME's,
   until a NEC source gives the response.
