@@ -177,6 +177,18 @@ void emu_set_whine(emu_unit *u, int whine)
         bh_set_whine(u->host, whine);
 }
 
+int emu_set_idle(emu_unit *u, int sound, int keep_open, int pop_click, int tick)
+{
+    bl_idle_options o;
+    if (!u->host)
+        return 1;                   /* the Type 'n Speak: not measured */
+    o.sound = sound;
+    o.keep_open = keep_open;
+    o.pop_click = pop_click;
+    o.tick = tick;
+    return bh_set_idle(u->host, &o);
+}
+
 void emu_set_volume(emu_unit *u, int volume)
 {
     u->gain = MAKEUP * volume / 100.0;

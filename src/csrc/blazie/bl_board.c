@@ -147,7 +147,8 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     if (p == 0xE0)
         u->port_e0 = V;
     if (p == 0xA0)
-        u->port_a0 = V;                      /* bit 0: the serial port's line drivers on */
+        u->port_a0 = V;                      /* bit 0: the serial port's line drivers on; bit 1: the speech
+                                                channel's power (bl_port_a0) */
     if (p >= 0xC0 && p <= 0xC4) {
         int reg = p - 0xC0;
         unsigned long long cyc = z180_cycles(u->cpu);
@@ -491,6 +492,11 @@ int bl_serial_read(bl_unit *u, unsigned char *out, int cap, bl_serial_status *st
     }
     serial_note(u);
     return bl_serial_take(u->line, out, cap, status);
+}
+
+int bl_port_a0(const bl_unit *u)
+{
+    return u->port_a0;
 }
 
 int bl_events(const bl_unit *u, const bl_event **events)

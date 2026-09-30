@@ -6,6 +6,7 @@
   test_serial.exe    the serial port plugged in, headless: the storage handshake answered from the far end
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
+  test_idle.exe    the idle channel against Tomi's unit (its board built with bl_idle.c's test hooks)
 
 w64devkit gcc, x64 (paths.local W64DEVKIT), z180emu from third_party/z180emu.  The firmware is NOT copied: a release
 puts firmware\\ beside the program; run from the source tree, the program finds firmware/blazie/ itself.
@@ -77,6 +78,14 @@ def main():
         subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, exe),
                                       os.path.join(HERE, "test_serial_win.c"), win] + board
                        + ["-lsetupapi", "-lm"], env=env, check=True)
+    # the idle channel's sounds against the unit's (run_tests passes the firmware); its board built with the test hooks
+    # its must-fail controls use (bl_idle.c, BLI_TEST_HOOKS)
+    hooks = os.path.join(obj, "bl_unity_hooks.o")
+    subprocess.run([gcc] + BOARD + zinc + ["-DBLI_TEST_HOOKS", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"), "-o", hooks],
+                   env=env, check=True)
+    subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_idle.exe"), os.path.join(HERE, "test_idle.c"), hooks]
+                   + [o for o in objs if o.endswith(("ssi263.c.o", "ssi263dsp.c.o", "bl_host.c.o"))] + ["-lm"],
+                   env=env, check=True)
     print("built %s" % OUT)
 
 

@@ -40,6 +40,11 @@ void bl_queue(bl_unit *u, const unsigned char *bytes, int n);/* bns 'S': bytes f
 void bl_urgent(bl_unit *u, int byte);                        /* bns 'U': one byte delivered even under XOFF (^X) */
 int  bl_drop(bl_unit *u);                                    /* bns 'D': drop queued input; the ^F markers dropped */
 unsigned long long bl_cycles(const bl_unit *u);              /* CPU cycles so far */
+/* the last value the firmware wrote to port A0 (0 before any).  Bit 1 is the speech channel's power, watched on the
+   running firmware (English and Spanish): set ~0.26 s before a line's first phoneme when the channel was off, cleared
+   with R3 = 00 when the firmware clicks the channel off (~10 s after the last phoneme).  The emulator's idle sounds
+   (bl_idle.h) follow it. */
+int  bl_port_a0(const bl_unit *u);
 /* a braille key chord pressed live (port 40h: dot 1 = bit 0 .. dot 6 = bit 5, space = bit 6, bit 7 = an advance
    key): latched with /INT2 at the next boundary after the last chord was read; 0 if 16 are already waiting */
 int  bl_key(bl_unit *u, int chord);

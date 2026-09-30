@@ -9,6 +9,7 @@
 
 #include "../ssi263.h"
 #include "bl_serial.h"
+#include "bl_idle.h"
 
 #if defined(_WIN32)
 #define BL_API __declspec(dllexport)
@@ -50,6 +51,12 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
 /* whine: 0 off, 1 hiss, 2 whine */
 BL_API void bh_set_whine(bl_host *h, int mode);
 BL_API int bh_get_whine(const bl_host *h);
+
+/* The emulator's idle channel (bl_idle.h): the measured noise and lines at their absolute level, the pop when the
+   firmware opens the channel, the click when it clicks it off, the 10 Hz tick, and when the channel is heard.  While
+   set it replaces bh_set_whine's hiss/whine; NULL turns it off again (the default: the screen-reader drivers never set
+   it).  0 if out of memory. */
+BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
 
 /* the host's state, as blazie.py keeps it (tests and the Python wrapper read and some set these) */
 BL_API int bh_get_int(const bl_host *h, const char *name);

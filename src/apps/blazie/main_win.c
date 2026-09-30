@@ -26,7 +26,8 @@
 #define BLOCK_MAX (RATE_MAX / 50)
 #define NBLOCKS 4
 
-enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET,
+enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
+       ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK,
        ID_RATE = 220,
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
@@ -46,7 +47,9 @@ static const unit_kind KINDS[] = {
 static HWND g_wnd;
 static CRITICAL_SECTION g_lock;
 static emu_unit *g_unit;
-static int g_kind, g_whine = 1;
+static int g_kind, g_whine = 3;          /* the idle channel: 0 silent, 1 hiss, 2 whine, 3 as the unit (by volume) */
+static int g_keep_open = 1;              /* 0 off, 1 until the unit clicks off, 2 always */
+static int g_popclick = 1, g_tick = 1;   /* the channel's pop and click-off, its 10 Hz tick */
 static chord_state g_chord;
 static HWAVEOUT g_wave;
 static WAVEHDR g_hdr[NBLOCKS];
@@ -167,6 +170,7 @@ static int start_unit(int kind)
     }
     if (g_link)
         emu_serial_attach(u, 1);            /* the new unit takes the old one's place on the COM port */
+    emu_set_idle(u, g_whine, g_keep_open, g_popclick, g_tick);
     EnterCriticalSection(&g_lock);
     emu_destroy(g_unit);
     g_unit = u;
@@ -270,16 +274,43 @@ static void set_rate(int r)
 }
 
 /* ---- the window ------------------------------------------------------------------------------------------------ */
-static void set_whine(int w)
+static const char *const IDLE_NAMES[] = {"off", "hiss", "whine", "unit"};
+static const int IDLE_IDS[] = {ID_QUIET, ID_HISS, ID_WHINE, ID_UNITSOUND};
+static const char *const OPEN_NAMES[] = {"off", "until", "always"};
+
+/* the idle channel's settings to the unit (bl_idle.h: the sound, when it is heard, the pop and click, the tick), the
+   menu's marks and the settings file */
+static void apply_idle(void)
 {
-    g_whine = w;
+    HMENU m = GetMenu(g_wnd);
     EnterCriticalSection(&g_lock);
     if (g_unit)
-        emu_set_whine(g_unit, w);
+        emu_set_idle(g_unit, g_whine, g_keep_open, g_popclick, g_tick);
     LeaveCriticalSection(&g_lock);
-    CheckMenuRadioItem(GetMenu(g_wnd), ID_HISS, ID_QUIET, w == 1 ? ID_HISS : w == 2 ? ID_WHINE : ID_QUIET,
-                       MF_BYCOMMAND);
-    WritePrivateProfileStringA("sound", "idle", w == 1 ? "hiss" : w == 2 ? "whine" : "off", g_ini);
+    CheckMenuRadioItem(m, ID_HISS, ID_UNITSOUND, IDLE_IDS[g_whine], MF_BYCOMMAND);
+    CheckMenuRadioItem(m, ID_OPEN_OFF, ID_OPEN_ALWAYS, ID_OPEN_OFF + g_keep_open, MF_BYCOMMAND);
+    CheckMenuItem(m, ID_POPCLICK, MF_BYCOMMAND | (g_popclick ? MF_CHECKED : MF_UNCHECKED));
+    CheckMenuItem(m, ID_TICK, MF_BYCOMMAND | (g_tick ? MF_CHECKED : MF_UNCHECKED));
+    WritePrivateProfileStringA("sound", "idle", IDLE_NAMES[g_whine], g_ini);
+    WritePrivateProfileStringA("sound", "keep_open", OPEN_NAMES[g_keep_open], g_ini);
+    WritePrivateProfileStringA("sound", "pop_click", g_popclick ? "1" : "0", g_ini);
+    WritePrivateProfileStringA("sound", "tick", g_tick ? "1" : "0", g_ini);
+}
+
+static void load_idle(void)
+{
+    char v[32];
+    int k;
+    GetPrivateProfileStringA("sound", "idle", "unit", v, sizeof v, g_ini);
+    for (k = 0; k < 4; k++)
+        if (!strcmp(v, IDLE_NAMES[k]))
+            g_whine = k;
+    GetPrivateProfileStringA("sound", "keep_open", "until", v, sizeof v, g_ini);
+    for (k = 0; k < 3; k++)
+        if (!strcmp(v, OPEN_NAMES[k]))
+            g_keep_open = k;
+    g_popclick = GetPrivateProfileIntA("sound", "pop_click", 1, g_ini) != 0;
+    g_tick = GetPrivateProfileIntA("sound", "tick", 1, g_ini) != 0;
 }
 
 /* ---- the serial port ------------------------------------------------------------------------------------------ */
@@ -358,9 +389,17 @@ static HMENU make_menu(void)
     AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
     AppendMenuA(unit, MF_STRING, ID_FACTORY, "Back to the &factory state (erases this unit's files)...");
     AppendMenuA(unit, MF_STRING, ID_EXIT, "E&xit");
+    AppendMenuA(sound, MF_STRING, ID_UNITSOUND, "Idle channel: as the &unit (hiss at even volumes, whine at odd)");
     AppendMenuA(sound, MF_STRING, ID_HISS, "Idle channel: &hiss");
     AppendMenuA(sound, MF_STRING, ID_WHINE, "Idle channel: &whine");
     AppendMenuA(sound, MF_STRING, ID_QUIET, "Idle channel: &silent");
+    AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(sound, MF_STRING, ID_OPEN_OFF, "Keep the channel open: &off (silent as soon as speech ends)");
+    AppendMenuA(sound, MF_STRING, ID_OPEN_UNTIL, "Keep the channel open: until the unit &clicks off");
+    AppendMenuA(sound, MF_STRING, ID_OPEN_ALWAYS, "Keep the channel open: &always");
+    AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(sound, MF_STRING, ID_POPCLICK, "The &pop when the channel opens, the click when it clicks off");
+    AppendMenuA(sound, MF_STRING, ID_TICK, "The 10 Hz &tick of the open channel");
     AppendMenuA(help, MF_STRING, ID_KEYS, "&Keys");
     AppendMenuA(help, MF_STRING, ID_ABOUT, "&About");
     AppendMenuA(bar, MF_POPUP, (UINT_PTR)unit, "&Firmware");
@@ -484,9 +523,16 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             start_unit(g_kind);
             return 0;
         }
-        case ID_HISS: set_whine(1); return 0;
-        case ID_WHINE: set_whine(2); return 0;
-        case ID_QUIET: set_whine(0); return 0;
+        case ID_HISS: g_whine = 1; apply_idle(); return 0;
+        case ID_WHINE: g_whine = 2; apply_idle(); return 0;
+        case ID_QUIET: g_whine = 0; apply_idle(); return 0;
+        case ID_UNITSOUND: g_whine = 3; apply_idle(); return 0;
+        case ID_OPEN_OFF: case ID_OPEN_UNTIL: case ID_OPEN_ALWAYS:
+            g_keep_open = LOWORD(wp) - ID_OPEN_OFF;
+            apply_idle();
+            return 0;
+        case ID_POPCLICK: g_popclick = !g_popclick; apply_idle(); return 0;
+        case ID_TICK: g_tick = !g_tick; apply_idle(); return 0;
         case ID_SERIAL_NONE: set_serial("", 0); return 0;
         default:
             if (LOWORD(wp) >= ID_RATE && LOWORD(wp) < ID_RATE + N_RATES) {
@@ -586,10 +632,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
                           480, 240, NULL, make_menu(), inst, NULL);
     ShowWindow(g_wnd, show);
     SetTimer(g_wnd, 1, 60000, NULL);
-    GetPrivateProfileStringA("sound", "idle", "hiss", v, sizeof v, g_ini);
-    g_whine = !strcmp(v, "whine") ? 2 : !strcmp(v, "off") ? 0 : 1;
-    CheckMenuRadioItem(GetMenu(g_wnd), ID_HISS, ID_QUIET, g_whine == 1 ? ID_HISS : g_whine == 2 ? ID_WHINE : ID_QUIET,
-                       MF_BYCOMMAND);
+    load_idle();
+    apply_idle();
     {
         int k, r = GetPrivateProfileIntA("sound", "rate", 44100, g_ini);
         for (k = 0; k < N_RATES; k++)
