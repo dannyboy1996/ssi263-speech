@@ -14,7 +14,14 @@ also borrows TGSpeechBox's.
 The APK carries no firmware -- this app is the one place it cannot ship -- so each user imports their own, as
 outspoken and Panthera take their engine data. Setup's "Import firmware…" (or `am start -n
 com.ssi263speech.tts/.SettingsActivity --es import <path|content: URI> [--es language en|es]`, which skips the confirm
-dialog; `--ez removefirmware true` removes it) takes:
+dialog; `--ez removefirmware true` removes it) takes the list below. A path under `/sdcard` is refused by scoped
+storage (EACCES); from adb, hand over the file's MediaStore URI with a grant:
+
+    adb shell "content query --uri content://media/external/file --projection _id --where \"_display_name='blt2000.exe'\""
+    adb shell am start -n com.ssi263speech.tts/.SettingsActivity -d content://media/external/file/<id> \
+        --grant-read-uri-permission --es import content://media/external/file/<id>
+
+It takes:
 
 - a zip, with the firmware at its top or one folder down; the NVDA add-on (`.nvda-addon`: `synthDrivers/_ssi263_blazie/`);
 - one file: a `.BNS`, or an update program (`.exe`/`.com`) holding the image, raw or as a zip behind its code
