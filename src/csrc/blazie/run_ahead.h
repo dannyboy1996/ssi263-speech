@@ -71,7 +71,9 @@ enum {
     RA_BRK_COMPLETION,             /* 0.7 draft: playback exhausted = finished; done at the last spoken load's end */
     RA_BRK_LIMIT,                  /* 0.7 draft: the capture limit ended as a success */
     RA_BRK_ALLOC,                  /* 0.7 draft: a failed allocation dropped the acknowledgement or the write */
-    RA_BRK_READING                 /* 0.7 draft: any answer over RA_READ_S moved up, also after a spoken phoneme */
+    RA_BRK_READING,                /* 0.7 draft: any answer over RA_READ_S moved up, also after a spoken phoneme */
+    RA_BRK_SLIVER                  /* 0.7 draft (the Braille Lite host): a lockstep slice in a block's rounding
+                                      sliver while the script still played -- the unit stalled at 44.1 kHz */
 };
 
 typedef struct {

@@ -280,6 +280,29 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
              ["--cases=9"], [r"^FAIL case 9 block 1: write values DIFFER at write \d+$", RA_SUM % 2])):
         CHECKS.append(check("run ahead CONTROL (%s, must fail)" % what, [PY, "run_ahead_equiv.py"] + args, env=env,
                             expect_fail=True, fail_marks=marks))
+    # at 44.1 kHz: a block's rounding sliver once ran a lockstep slice in the middle of the script, and the unit
+    # stalled (found by lane 2); its control puts that back
+    CHECKS.append(check("run ahead = lockstep, English at 44.1 kHz", [PY, "run_ahead_equiv.py", "--rate=44100"]))
+    CHECKS.append(check("run ahead CONTROL (the 0.7 draft's sliver slice at 44.1 kHz, must fail)",
+                        [PY, "run_ahead_equiv.py", "--rate=44100", "--cases=1"],
+                        env={"RUN_AHEAD_EQUIV_BREAK": "sliver", "RUN_AHEAD_EQUIV_SAY_LIMIT": "5"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.3 Select synthesizer dialog +NEVER DONE \(run ahead, 5 s\)", RA_SUM % 2]))
+    # the two lanes (run_ahead_lanes.py): lane 1, the lockstep's own schedule replayed from the capture -- times,
+    # values, request boundaries and audio identical; lane 2, the deliberate retiming classified and bounded against
+    # a finer and finer lockstep.  Their controls: the schedule shifted a sample, a boundary moved, answers misjudged
+    for lang in ([], ["--es"]):
+        CHECKS.append(check("run ahead lanes 1 and 2, %s" % ("Spanish" if lang else "English"),
+                            [PY, "run_ahead_lanes.py"] + lang))
+    LANES_SUM = r"^run ahead lanes \(English\): %d FAILED$"
+    for what, brk, args, marks in (
+            ("lane 1, schedule a sample late", "pace", ["--lane=1"],
+             [r"^FAIL lane 1 case 1: TIME differs at write \d+: .*; AUDIO differs from sample \d+", LANES_SUM % 2]),
+            ("lane 1, a boundary moved", "segment", ["--lane=1"],
+             [r"^FAIL lane 1 case 1: SEGMENT boundary at write \d+ in the capture only$", LANES_SUM % 2]),
+            ("lane 2, answers misjudged", "class", ["--lane=2"],
+             [r"^FAIL lane 2 case 1 step 0\.5000 ms: UNCLASSIFIED 40 ", LANES_SUM % 4])):
+        CHECKS.append(check("run ahead lanes CONTROL (%s, must fail)" % what, [PY, "run_ahead_lanes.py", "--quick"] + args,
+                            env={"RUN_AHEAD_LANES_BREAK": brk}, expect_fail=True, fail_marks=marks))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")

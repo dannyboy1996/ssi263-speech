@@ -219,9 +219,13 @@ long ra_play(run_ahead *r, ssi263 *chip, double out_rate, double seconds, double
             }
             r->seg = w->seg;
             due = r->pace[r->ri];
+            /* the schedule's times are where a host's run calls end: whole samples on, or a request (run until it) */
             k = (long)floor((due - now) * out_rate + 0.5);
-            if (k > 0) {
-                n += ssi263_run(chip, k < room ? k : (room > 0 ? room : 1), out + n);
+            if (due > now + 1e-9) {
+                long m = k < 1 ? 1 : k;
+                if (m > room)
+                    m = room > 0 ? room : 1;
+                n += ssi263_request(chip) ? ssi263_run(chip, m, out + n) : ssi263_run_until_request(chip, m, out + n);
                 continue;
             }
             apply(r, w);

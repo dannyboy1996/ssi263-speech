@@ -184,6 +184,8 @@ static void ra_cb_set_ar(void *ctx, int requesting)
 {
     bl_host *h = (bl_host *)ctx;
     bl_set_ar(h->unit, requesting);
+    if (h->log_ar)
+        log_write(h, 12, requesting);                      /* the stand-in's line to the unit (capture) */
     events(h);
 }
 
@@ -452,6 +454,8 @@ BL_API double bh_skip(bl_host *h, double seconds)
         h->n_buf = 0;
         t = ra_block(h, seconds);
         h->n_buf = keep;
+        if (h->ra.active)
+            t = seconds;
     }
     while (t < seconds - 1e-9) {
         double before, dt;
@@ -627,6 +631,10 @@ BL_API int bh_run(bl_host *h, double seconds, double step, const double **audio)
         bl_idle_begin(h->idle);
     if (h->ra.active || h->n_held)
         t = ra_block(h, seconds);
+    /* still playing the script: the block is full, whatever rounding left of it -- a lockstep slice now would give
+       the unit the chip's A/R behind the stand-in's back (a 44.1 kHz session stalled that way, Reply 107 lane 2) */
+    if (h->ra.active && h->ra.brk != RA_BRK_SLIVER)
+        t = seconds;
     while (t < seconds) {
         double before, st, dt, speed;
         long n, got;

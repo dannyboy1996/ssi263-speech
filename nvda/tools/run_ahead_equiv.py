@@ -16,7 +16,7 @@ given while the first still speaks, a setting sent mid-utterance.  It checks and
              writes captured, replayed at done and after, and phonemes loaded are reported.
   timing     say() to the first audible sample (chip ms), first to last spoken phoneme, last spoken load to done.
 
-    python run_ahead_equiv.py [--quick] [--es] [--cases=1,3]
+    python run_ahead_equiv.py [--quick] [--es] [--cases=1,3] [--rate=22050]
 The must-fail controls (nvda/tools/run_tests.py names the failure each must show):
     RUN_AHEAD_EQUIV_FLIP=1         one value flipped in the run-ahead log
     RUN_AHEAD_EQUIV_FLIP=send_mid  a spoken load flipped inside the classified window of a setting sent mid-line
@@ -26,6 +26,8 @@ The must-fail controls (nvda/tools/run_tests.py names the failure each must show
     RUN_AHEAD_EQUIV_DROP_SPOKEN=1  the run-ahead log cut before its last spoken load: a spoken load in the suffix
     RUN_AHEAD_EQUIV_OLD_SUFFIX=1   the 0.7 draft's end rule (up to 4 writes of any content): Astra's case accepted
     RUN_AHEAD_EQUIV_BREAK=completion  the host's 0.7-draft completion (run_ahead_break): AUDIO AFTER DONE
+    RUN_AHEAD_EQUIV_BREAK=sliver   the 0.7 draft's lockstep slice in a block's rounding sliver (--rate=44100: the
+                                   unit stalls, NEVER DONE)
     RUN_AHEAD_EQUIV_SAY_LIMIT=s    a say's limit in chip seconds (default 30)
 The texts are this file's own, none from the MASTER sessions (src/holdout_lines.txt).
 """
@@ -50,14 +52,14 @@ NEVER = ENV("RUN_AHEAD_EQUIV_NEVER") == "1"
 MUTE = ENV("RUN_AHEAD_EQUIV_MUTE") == "1"
 DROP_SPOKEN = ENV("RUN_AHEAD_EQUIV_DROP_SPOKEN") == "1"
 OLD_SUFFIX = ENV("RUN_AHEAD_EQUIV_OLD_SUFFIX") == "1"
-BREAK = {"": 0, "completion": 1}[ENV("RUN_AHEAD_EQUIV_BREAK", "")]
+BREAK = {"": 0, "completion": 1, "sliver": 5}[ENV("RUN_AHEAD_EQUIV_BREAK", "")]
 SAY_LIMIT = float(ENV("RUN_AHEAD_EQUIV_SAY_LIMIT", "30"))
 # say() to the first audible sample (chip time; the silence the driver's lead trim removes, and that the lockstep must
 # emulate before it): run ahead at most HEAD_AHEAD_MS (the unit's own leading pause and a stop's closure); the
 # lockstep at most HEAD_LOCKSTEP_MS (its x4 reading of a line: 251 ms for the longest line here)
 HEAD_AHEAD_MS = 100.0
 HEAD_LOCKSTEP_MS = 300.0
-RATE = 22050
+RATE = int(([a[7:] for a in sys.argv if a.startswith("--rate=")] or ["22050"])[0])
 BLOCK = 0.03
 POST_S = 0.3                            # the continuation after done, no new input
 THRESH = 0.003
