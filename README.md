@@ -145,6 +145,7 @@ Blazie add-on as `z180emu-source.zip`.
   Weirich, software by Douglas Geoffray), the Accent to Aicom Corporation. The Braille
   Lite's firmware is shared with permission.
 - The whole story, day by day and with who found what, is in [docs/history.md](docs/history.md).
+- Thanks, Derek, for your contributions.
 - And thanks to everyone listening, testing and telling me what sounds wrong. That's how
   a chip model turns into a voice you can read with.
 
