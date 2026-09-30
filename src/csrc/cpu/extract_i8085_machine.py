@@ -36,8 +36,8 @@ AFTER = {
     (129, 150): [
         "",
         "// CHANGED (ours): the T-states of a TRAP or RST 5.5/6.5/7.5 acceptance.  Upstream charges 11, the 8080's RST.",
-        "// Intel, MCS-80/85 Family User's Manual (Jan 1983): RST is 'States: 12 (8085), 11 (8080)' (printed page 5-15",
-        "// ff., the RST listing), and the hardware RESTART is that instruction generated internally -- 'it executes an",
+        "// Intel, MCS-80/85 Family User's Manual (Jan 1983): RST is 'States: 12 (8085), 11 (8080)' (printed page 5-14,",
+        "// the RST listing; PDF page 98 of the bitsavers scan), and the hardware RESTART is that instruction generated internally -- 'it executes an",
         "// OF machine cycle without issuing RD, generating the RESTART opcode instead' (section 2.3.5, printed page",
         "// 2-15, Figure 2-19: M1 (BI) T1-T6, then two MW cycles).",
         "constexpr int I8085_ACCEPT_T = 12;",
@@ -64,9 +64,14 @@ SUBS = [
      "\t\t\t\t// sampled at the next step's A, as Intel samples at the end of each instruction",
      "SIM's interrupt check", 1),
     ("\t\tm_PC.w.l += 2;",
+     "\t\t// CHANGED: an untaken 8085 conditional still reads its second byte -- Jcond is F R, Ccond S R (MCS-80/85\n"
+     "\t\t// Family User's Manual, 1983, the 8085 instruction table, printed 5-19; the longer sequence regardless of\n"
+     "\t\t// the condition is footnoted as the 8080A's) -- an acknowledge byte (index 1) when injected; the third\n"
+     "\t\t// byte is not read.  Upstream skips both.  The T-states (7, 9) already include that read.\n"
+     "\t\tread_arg();\n"
      "\t\tif (!m_in_acknowledge)   // CHANGED: an injected instruction's PC is held (Intel: INA inhibits the PC)\n"
-     "\t\t\tm_PC.w.l += 2;",
-     "a branch not taken in an acknowledge", 2),
+     "\t\t\tm_PC.w.l += 1;       // read_arg moved it past byte 2; byte 3 is skipped",
+     "a branch not taken: byte 2 read, the PC held in an acknowledge", 2),
 ]
 
 

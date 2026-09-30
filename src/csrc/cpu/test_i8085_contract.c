@@ -29,7 +29,11 @@
  *                   interrupted PC; 12 T; no instruction after it in the step (4)
  *   intr_call       an injected CALL 1234h: operands from acknowledge bytes 1 and 2, 18 T (4)
  *   intr_nop        an injected NOP: nothing pushed, 4 T, IE cleared, the interrupted PC runs next (4)
- *   intr_jcc        an injected JZ not taken: the PC is held (Intel: INA inhibits the PC increment) (4)
+ *   intr_jcc        an injected JZ not taken: 7 T, acknowledge bytes 0 and 1 (Intel: Jcond not taken is F R), the
+ *                   PC held (INA inhibits the PC increment) (4); intr_jcc_taken: JNZ taken, 10 T, bytes 0 1 2
+ *   intr_ccc        an injected CZ not taken: 9 T, bytes 0 and 1 (Ccond not taken is S R), nothing stacked;
+ *                   intr_ccc_taken: CNZ taken, 18 T, bytes 0 1 2, the interrupted PC stacked
+ *   jcc_reads       an ordinary JZ / CZ not taken reads its opcode and its second byte, not its third (7 / 9 T)
  *   intr_twice      each INTR acceptance asks the acknowledge from byte 0 again (4)
  *   intr_halt       INTR ends a HALT: the injected RST pushes the address after the HLT (4, 6)
  *   sid_sod         RIM reads SID into bit 7; SIM with SDE drives SOD, without it leaves SOD alone
@@ -61,9 +65,18 @@ typedef struct {
     int outs[16], n_outs;                      /* ports written */
     int drop[256];                             /* OUT to this port lowers line drop[p] - 1 */
     int sid, sod[8], n_sod;
+    int log_reads;                             /* record every read address while set */
+    uint32_t rd_addr[16];
+    int n_rd;
 } machine;
 
-static uint8_t rd(void *ctx, uint32_t a) { return ((machine *)ctx)->mem[a & 0xFFFF]; }
+static uint8_t rd(void *ctx, uint32_t a)
+{
+    machine *m = (machine *)ctx;
+    if (m->log_reads && m->n_rd < 16)
+        m->rd_addr[m->n_rd++] = a & 0xFFFF;
+    return m->mem[a & 0xFFFF];
+}
 static void wr(void *ctx, uint32_t a, uint8_t v)
 {
     machine *m = (machine *)ctx;
@@ -620,18 +633,58 @@ static void t_intr_nop(void)
     free_machine(m);
 }
 
-static void t_intr_jcc(void)
+/* an injected conditional (reset leaves F zero: Z clear): its T-states, the acknowledge bytes asked, where it goes */
+static void intr_cond(const char *name, int op, int want_t, int want_acks, uint32_t want_next, int want_stack)
 {
-    machine *m = intr_program(0xCA, 0x34, 0x12);   /* JZ 1234h, Z clear (reset leaves F zero) */
-    char d[200];
-    int i;
+    machine *m = intr_program(op, 0x34, 0x12);
+    char d[260];
+    int i, t5, ok_idx = 1;
     for (i = 0; i < 4; i++)
         i8085_step(m->cpu);
+    t5 = i8085_step(m->cpu);
     i8085_step(m->cpu);
-    i8085_step(m->cpu);
-    sprintf(d, "JZ not taken from the acknowledge: next boundary %04X (want 0006: the PC held)", m->pcs[5]);
-    report("intr_jcc", m->pcs[5] == 0x06, d);
+    for (i = 0; i < m->n_ack; i++)
+        ok_idx &= m->ack_idx[i] == i;
+    sprintf(d, "%d T (want %d); %d acknowledge bytes asked, in order from 0: %s (want %d); next boundary %04X (want "
+            "%04X); %d stack writes (want %d)", t5, want_t, m->n_ack, ok_idx ? "yes" : "NO", want_acks, m->pcs[5],
+            want_next, m->n_wr, want_stack);
+    report(name, t5 == want_t && m->n_ack == want_acks && ok_idx && m->pcs[5] == want_next && m->n_wr == want_stack, d);
     free_machine(m);
+}
+
+static void t_intr_jcc(void)
+{
+    intr_cond("intr_jcc", 0xCA, 7, 2, 0x0006, 0);          /* JZ, not taken: F R -- bytes 0 and 1; the PC held */
+    intr_cond("intr_jcc_taken", 0xC2, 10, 3, 0x1234, 0);   /* JNZ, taken: bytes 0 1 2 */
+    intr_cond("intr_ccc", 0xCC, 9, 2, 0x0006, 0);          /* CZ, not taken: S R */
+    intr_cond("intr_ccc_taken", 0xC4, 18, 3, 0x1234, 2);   /* CNZ, taken: the interrupted PC stacked */
+}
+
+/* an ordinary conditional not taken: the opcode and byte 2 are read, byte 3 is not */
+static void t_jcc_reads(void)
+{
+    static const struct { const char *name; int op, t; } cases[] = {{"jcc_reads", 0xCA, 7}, {"ccc_reads", 0xCC, 9}};
+    int k;
+    for (k = 0; k < 2; k++) {
+        machine *m = new_machine();
+        i8085_regs r;
+        char d[200];
+        int t;
+        org(m, 0);
+        lxi_sp(m, 0x8000);                      /* 0000 */
+        db(m, 3, cases[k].op, 0x34, 0x12);      /* 0003 JZ / CZ 1234h, not taken (Z clear) */
+        db(m, 1, NOP);                          /* 0006 */
+        i8085_step(m->cpu);
+        m->log_reads = 1;
+        t = i8085_step(m->cpu);
+        m->log_reads = 0;
+        i8085_regs_get(m->cpu, &r);
+        sprintf(d, "%d T (want %d); reads %d: %04X %04X (want 2: 0003 0004); PC %04X (want 0006)", t, cases[k].t,
+                m->n_rd, m->n_rd > 0 ? m->rd_addr[0] : 0, m->n_rd > 1 ? m->rd_addr[1] : 0, r.pc);
+        report(cases[k].name, t == cases[k].t && m->n_rd == 2 && m->rd_addr[0] == 3 && m->rd_addr[1] == 4
+                              && r.pc == 6, d);
+        free_machine(m);
+    }
 }
 
 /* INTR held; its handler (the injected RST 5's vector) is EI; RET: accepted again and again, the byte index from 0 */
@@ -764,6 +817,7 @@ int main(void)
     t_intr_call();
     t_intr_nop();
     t_intr_jcc();
+    t_jcc_reads();
     t_intr_twice();
     t_intr_halt();
     t_sid_sod();

@@ -97,8 +97,8 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
   charges 12 T-states for an accepted interrupt where the pinned MAME source charges 11 (Reply 78). Each such
   difference is decided from Intel's documentation and recorded; neither implementation is copied blindly.
 - **Decided from Intel's documentation** (2026-09-29, for review; MCS-80/85 Family User's Manual, Jan 1983):
-  - An acceptance of TRAP or RST 5.5/6.5/7.5 is **12 T-states** **(chip)**: the RST listing gives "States: 12
-    (8085), 11 (8080)", and the hardware RESTART is that instruction generated internally ("it executes an OF
+  - An acceptance of TRAP or RST 5.5/6.5/7.5 is **12 T-states** **(chip)**: the RST listing (printed 5-14) gives
+    "States: 12 (8085), 11 (8080)", and the hardware RESTART is that instruction generated internally ("it executes an OF
     machine cycle without issuing RD, generating the RESTART opcode instead", section 2.3.5, Figure 2-19: M1 of six
     states, then two memory writes). MAME's 11 is the 8080's; the extraction changes it (`I8085_ACCEPT_T`).
   - TRAP is **not** delayed by EI (5) **(chip)**: TRAP "is not subject to any mask or interrupt enable/disable
@@ -108,6 +108,14 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
     RD, and a CALL's two further INA cycles are three states each (section 2.3.4, Figures 2-17/2-18): an injected
     RST is 12, a CALL 18, a NOP 4 **(chip)**. The PC is not incremented during INA cycles, so a conditional branch
     not taken leaves it where the interrupt found it (MAME moved it by 2; changed).
+  - A conditional jump or call **not taken still reads its second byte** **(chip)**: the 8085 table (printed
+    5-19) gives Jcond F R / F R R and Ccond S R / S R R W W, the sequence regardless of the condition being
+    footnoted as the 8080A's. So an untaken one from the acknowledge asks for bytes 0 and 1 (7 or 9 T), a taken
+    one 0, 1 and 2 (10 or 18 T), and an ordinary untaken one reads its opcode and byte 2, not byte 3. MAME read
+    neither; changed (after Astra, Reply 98: `intr_jcc`, `intr_ccc` and their taken forms, `jcc_reads`,
+    `ccc_reads`).
+  - Intel excludes EI and DI as instructions supplied through INTR (printed 2-14 and 5-17): what the core does with
+    those bytes is the emulator's, not manufacturer-defined INTR behaviour.
   - PSW bits 1, 3 and 5 are "X: Undefined" (the PUSH PSW listing): the cores may differ there, and MAME keeps its
     undocumented V and K flags in them.
 

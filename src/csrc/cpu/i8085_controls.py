@@ -22,6 +22,11 @@ from contract_controls import RunError, run_tests  # noqa: E402
 DRV, GEN = "i8085_mame.cpp", "i8085_mame_machine.cpp"
 
 # a rule -> (its file, its code, the same code with the rule undone, the tests that must then fail -- and no others)
+BODY = "\t\t// CHANGED: an untaken 8085 conditional still reads its second byte -- Jcond is F R, Ccond S R (MCS-80/85\n\t\t// Family User's Manual, 1983, the 8085 instruction table, printed 5-19; the longer sequence regardless of\n\t\t// the condition is footnoted as the 8080A's) -- an acknowledge byte (index 1) when injected; the third\n\t\t// byte is not read.  Upstream skips both.  The T-states (7, 9) already include that read.\n\t\tread_arg();\n\t\tif (!m_in_acknowledge)   // CHANGED: an injected instruction's PC is held (Intel: INA inhibits the PC)\n\t\t\tm_PC.w.l += 1;       // read_arg moved it past byte 2; byte 3 is skipped"
+JMP = '\t\tm_icount -= jmp_taken();\n\t}\n\telse\n\t{\n'
+CALL = '\t\top_push(m_PC);\n\t\tm_PC = p;\n\t}\n\telse\n\t{\n'
+UPSTREAM = '\t\tif (!m_in_acknowledge)\n\t\t\tm_PC.w.l += 2;'
+
 VARIANTS = {
     # the step driver
     "TRAP not delayed by EI": (
@@ -31,7 +36,8 @@ VARIANTS = {
     "EI shadow ends at C": (
         DRV, "    d.m_after_ei = 0;                     // C\n", "",
         ["reset", "ei_shadow", "halt_edge", "accept_pc", "priority", "sim_reveal", "rst_levels", "intr_rst",
-         "intr_call", "intr_nop", "intr_jcc", "intr_twice", "intr_halt"]),
+         "intr_call", "intr_nop", "intr_jcc", "intr_jcc_taken", "intr_ccc", "intr_ccc_taken", "intr_twice",
+         "intr_halt"]),
     "HALT slot 4 T": (
         DRV, "        return 4;                         // a HALT slot (CONTRACT.md 6)", "        return 5;", ["halt_edge"]),
     "acceptance PC": (
@@ -45,13 +51,16 @@ VARIANTS = {
     "INTR injected at E": (
         GEN, "\t\tset_inte(0);\n\t\tm_inject_pending = true;",
         "\t\tset_inte(0);\n\t\tm_in_inta_func.n = 0;\n\t\texecute_one(read_inta());",
-        ["intr_rst", "intr_call", "intr_nop", "intr_jcc", "intr_halt"]),
+        ["intr_rst", "intr_call", "intr_nop", "intr_jcc", "intr_jcc_taken", "intr_ccc", "intr_ccc_taken",
+         "intr_halt"]),
     "no acceptance inside SIM": (
         GEN, "at the end of each instruction\n", "at the end of each instruction\n\t\t\t\tcheck_for_interrupts();\n",
         ["sim_reveal"]),
     "branch not taken in an acknowledge": (
-        GEN, "\t\tm_icount -= jmp_taken();\n\t}\n\telse\n\t{\n\t\tif (!m_in_acknowledge)",
-        "\t\tm_icount -= jmp_taken();\n\t}\n\telse\n\t{\n\t\tif (1)", ["intr_jcc"]),
+        GEN, JMP + BODY, JMP + BODY.replace("\t\tif (!m_in_acknowledge)", "\t\tif (1)"), ["intr_jcc"]),
+    # after Astra, Reply 98: an untaken conditional reads its second byte (Intel's 8085 table: F R / S R)
+    "untaken Jcond reads byte 2": (GEN, JMP + BODY, JMP + UPSTREAM, ["intr_jcc", "jcc_reads"]),
+    "untaken Ccond reads byte 2": (GEN, CALL + BODY, CALL + UPSTREAM, ["intr_ccc", "ccc_reads"]),
     # upstream rules the contract states
     "TRAP: the line dropping cancels": (
         GEN, "\t\telse if (!newstate)\n\t\t\tm_trap_pending = false;\n", "", ["trap_cancel"]),
