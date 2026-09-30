@@ -13,8 +13,9 @@ CONTRACT.md; execute_run's own opcodes (POP CS, the shifts by CL, ESC) are kept,
 (i186.cpp, i286.cpp) are not taken: the Accent-mini's driver needs only the 8086 (README.md).  The class it compiles
 against is i86_mame.hpp.
 
-The clock counts the substitutions correct come from Intel's manual (Astra, Reply 104; CONTRACT.md 4): each is its
-own named substitution, so i86_controls.py can put one back alone and see exactly its tests fail.
+The clock counts the substitutions correct come from Intel's manual (Astra, Replies 104 and 106; CONTRACT.md 4): each
+is its own named substitution, so i86_controls.py can put one back alone and see exactly its tests fail.  After
+Reply 106 every row is the 8086's (one CPU, no 8088 rows), and WAIT is Intel's 3 + 5n.
 """
 import hashlib
 import os
@@ -69,11 +70,18 @@ SUBS = [
      "\t\t\tCLK(HLT);   // CHANGED: HLT's own 2 T-states (the table's HLT); upstream ends the slice (m_icount = 0)\n"
      "\t\t\tm_halt = true;",
      "HLT's T-states", 1),
-    ("\t\t\t{\n\t\t\t\tm_icount = 0;\n\t\t\t\tm_ip--;\n\t\t\t}",
-     "\t\t\t{\n"
-     "\t\t\t\tCLK(WAIT);   // CHANGED: a WAIT that waits is a slot of WAIT's T-states per step; upstream ends the slice\n"
-     "\t\t\t\tm_ip--;\n\t\t\t}",
-     "WAIT's slot", 1),
+    # WAIT (Astra, Reply 106): Intel's 3 + 5n (Table 2-21, printed 2-67/PDF 90) -- 3 on entering the instruction,
+    # then 5 for each recheck of TEST (five-clock intervals: printed 2-18/PDF 41), one per step; TEST found active
+    # ends it.  An interrupt is accepted between rechecks (printed 2-24/PDF 47) with IP on the WAIT, so the handler
+    # returns to it and it is entered again: 3 (i86_mame.hpp's wait_clk and wait_hold)
+    ("\t\t\tif (m_test_state == 0)\n\t\t\t{\n\t\t\t\tm_icount = 0;\n\t\t\t\tm_ip--;\n\t\t\t}\n\t\t\telse\n"
+     "\t\t\t\tCLK(WAIT);",
+     "\t\t\twait_clk();   // CHANGED: 3 T on entry, 5 for each recheck (Intel's 3 + 5n; upstream charged 3, or ended "
+     "the slice)\n"
+     "\t\t\tif (m_test_state == 0)\n"
+     "\t\t\t\twait_hold();   // CHANGED: TEST inactive: IP back on the WAIT, the next step rechecks (upstream ended "
+     "the slice)",
+     "WAIT: 3 on entry, 5 a recheck", 1),
 ] + [
     # ---- clock counts from Intel's manual (Astra, Reply 104): The 8086 Family User's Manual, Oct 1979 (9800722-03),
     # Table 2-21, cited as printed page / PDF page.  Each is its own substitution, so a control can undo one alone.
@@ -124,6 +132,51 @@ SUBS = [
      "\t\t\t\t\tCLK(OVERRIDE);   // CHANGED: the REP prefix's own 2 T (Table 2-21, REP, printed 2-63/PDF 86): "
      "upstream charged none, a 0-T step\n",
      "a REP before a non-string instruction 2 T", 2),
+    # ---- the 8086's own rows (Astra, Reply 106: one CPU, the virtual 8086; no 8088 rows).  Upstream's stack,
+    # word-port, return, LDS/LES and word MUL/DIV rows are the 8088's: Intel's 8086 figure + 4 for every word
+    # transfer, the footnote's 8088 rule ("For the 8088, add four clocks for each 16-bit word transfer"), and its
+    # returns match neither CPU.  The 8086 adds its 4 only for a word transfer at an odd address, which read_word /
+    # write_word / the word port accessors already do (i86_mame.hpp's odd_word), once per actual transfer.
+    ("\t15,24,14,14,    /* pushes */",
+     "\t11,16,10,10,    /* pushes */   // CHANGED: PUSH r16 11, PUSH mem 16 + EA, PUSH sreg 10 (printed 2-63/PDF "
+     "86), PUSHF 10 (2-63/PDF 86); upstream 15, 24, 14, 14 (the 8088's)",
+     "the pushes: the 8086's", 1),
+    ("\t12,25,12,12,    /* pops */",
+     "\t 8,17, 8, 8,    /* pops */   // CHANGED: POP r16 8, POP mem 17 + EA, POP sreg 8 (printed 2-62/PDF 85), "
+     "POPF 8 (2-63/PDF 86); upstream 12, 25, 12, 12 (the 8088's)",
+     "the pops: the 8086's", 1),
+    ("\t10,14, 8,12,    /* port reads */",
+     "\t10,10, 8, 8,    /* port reads */   // CHANGED: IN AX,imm8 10 and IN AX,DX 8, as the byte forms (printed "
+     "2-55/PDF 78); upstream 14, 12 (the 8088's)",
+     "the word port reads: the 8086's", 1),
+    ("\t10,14, 8,12,    /* port writes */",
+     "\t10,10, 8, 8,    /* port writes */   // CHANGED: OUT imm8,AX 10 and OUT DX,AX 8, as the byte forms (printed "
+     "2-62/PDF 85); upstream 14, 12 (the 8088's)",
+     "the word port writes: the 8086's", 1),
+    ("\t20,32,24,31,    /* returns */",
+     "\t 8,18,12,17,    /* returns */   // CHANGED: RET 8, RETF 18, RET n 12, RETF n 17 (intra/inter-segment, no pop/"
+     "pop; printed 2-64/PDF 87); upstream 20, 32, 24, 31",
+     "the returns: the 8086's", 1),
+    ("\t\t2,24, 2, 3, 3,11,   /* misc */",
+     "\t\t2,16, 2, 3, 3,11,   /* misc */   // CHANGED: LDS/LES 16 + EA (printed 2-59/PDF 82); upstream 24 (the "
+     "8088's)",
+     "LDS/LES 16", 1),
+    ("\t70,118,76,128,  /* MUL */",
+     "\t70,118,76,124,  /* MUL */   // CHANGED: MUL m16 124 + EA, the low end of Intel's (124-139) + EA (printed "
+     "2-61/PDF 84); upstream 128 (the 8088's)",
+     "MUL m16 124", 1),
+    ("\t80,128,86,138,  /* IMUL */",
+     "\t80,128,86,134,  /* IMUL */   // CHANGED: IMUL m16 134 + EA, the low end of (134-160) + EA (printed 2-55/"
+     "PDF 78); upstream 138 (the 8088's)",
+     "IMUL m16 134", 1),
+    ("\t80,144,86,154,  /* DIV */",
+     "\t80,144,86,150,  /* DIV */   // CHANGED: DIV m16 150 + EA, the low end of (150-168) + EA (printed 2-54/PDF "
+     "77); upstream 154 (the 8088's)",
+     "DIV m16 150", 1),
+    ("\t101,165,107,175,/* IDIV */",
+     "\t101,165,107,171,/* IDIV */   // CHANGED: IDIV m16 171 + EA, the low end of (171-190) + EA (printed 2-55/"
+     "PDF 78); upstream 175 (the 8088's)",
+     "IDIV m16 171", 1),
     # the divide error (DIV, IDIV, AAM 0): its entry, charged when the instruction raises it, before the host's seam
     ("\tif (drv_intercept(int_num, trap))\n\t\treturn;\n",
      "\tif (m_in_instruction && trap)   // CHANGED: a divide error's entry, 51 -- a MODEL: Intel gives no figure. "

@@ -1012,18 +1012,18 @@ const uint8_t i8086_cpu_device::m_i8086_timing[] =
 		4, 4,83,60, /* arithmetic adjusts */
 		4, 4,           /* decimal adjusts */
 		2, 5,           /* sign extension */
-		2,24, 2, 3, 3,11,   /* misc */   // CHANGED: NOP 3 (Table 2-21, printed 2-62/PDF 85); upstream 2
+		2,16, 2, 3, 3,11,   /* misc */   // CHANGED: LDS/LES 16 + EA (printed 2-59/PDF 82); upstream 24 (the 8088's)   // CHANGED: NOP 3 (Table 2-21, printed 2-62/PDF 85); upstream 2
 
 	15,15,15,       /* direct JMPs */
 	11,18,24,       /* indirect JMPs */
 	19,28,          /* direct CALLs */
 	16,21,37,       /* indirect CALLs */
-	20,32,24,31,    /* returns */
+	 8,18,12,17,    /* returns */   // CHANGED: RET 8, RETF 18, RET n 12, RETF n 17 (intra/inter-segment, no pop/pop; printed 2-64/PDF 87); upstream 20, 32, 24, 31
 		4,16, 6,18, /* conditional JMPs */
 		5,17, 6,18, /* loops */
 
-	10,14, 8,12,    /* port reads */
-	10,14, 8,12,    /* port writes */
+	10,10, 8, 8,    /* port reads */   // CHANGED: IN AX,imm8 10 and IN AX,DX 8, as the byte forms (printed 2-55/PDF 78); upstream 14, 12 (the 8088's)
+	10,10, 8, 8,    /* port writes */   // CHANGED: OUT imm8,AX 10 and OUT DX,AX 8, as the byte forms (printed 2-62/PDF 85); upstream 14, 12 (the 8088's)
 
 		2, 8, 9,        /* move, 8-bit */
 		4,10,           /* move, 8-bit immediate */
@@ -1034,18 +1034,18 @@ const uint8_t i8086_cpu_device::m_i8086_timing[] =
 		4,17,           /* exchange, 8-bit */
 		4,17, 3,        /* exchange, 16-bit */
 
-	15,24,14,14,    /* pushes */
-	12,25,12,12,    /* pops */
+	11,16,10,10,    /* pushes */   // CHANGED: PUSH r16 11, PUSH mem 16 + EA, PUSH sreg 10 (printed 2-63/PDF 86), PUSHF 10 (2-63/PDF 86); upstream 15, 24, 14, 14 (the 8088's)
+	 8,17, 8, 8,    /* pops */   // CHANGED: POP r16 8, POP mem 17 + EA, POP sreg 8 (printed 2-62/PDF 85), POPF 8 (2-63/PDF 86); upstream 12, 25, 12, 12 (the 8088's)
 
 		3, 9,16,        /* ALU ops, 8-bit */
 		4,17,10,        /* ALU ops, 8-bit immediate */
 		3, 9,16,        /* ALU ops, 16-bit */
 		4,17,10,        /* ALU ops, 16-bit immediate */
 		4,17,10,        /* ALU ops, 16-bit w/8-bit immediate */
-	70,118,76,128,  /* MUL */
-	80,128,86,138,  /* IMUL */
-	80,144,86,154,  /* DIV */
-	101,165,107,175,/* IDIV */
+	70,118,76,124,  /* MUL */   // CHANGED: MUL m16 124 + EA, the low end of Intel's (124-139) + EA (printed 2-61/PDF 84); upstream 128 (the 8088's)
+	80,128,86,134,  /* IMUL */   // CHANGED: IMUL m16 134 + EA, the low end of (134-160) + EA (printed 2-55/PDF 78); upstream 138 (the 8088's)
+	80,144,86,150,  /* DIV */   // CHANGED: DIV m16 150 + EA, the low end of (150-168) + EA (printed 2-54/PDF 77); upstream 154 (the 8088's)
+	101,165,107,171,/* IDIV */   // CHANGED: IDIV m16 171 + EA, the low end of (171-190) + EA (printed 2-55/PDF 78); upstream 175 (the 8088's)
 		3, 2,15,15, /* INC/DEC */
 		3, 3,16,16, /* NEG/NOT */
 
@@ -2236,13 +2236,9 @@ bool i8086_common_cpu_device::common_op(uint8_t op)
 
 		case 0x9b: // i_wait
 			// Wait for assertion of /TEST
+			wait_clk();   // CHANGED: 3 T on entry, 5 for each recheck (Intel's 3 + 5n; upstream charged 3, or ended the slice)
 			if (m_test_state == 0)
-			{
-				CLK(WAIT);   // CHANGED: a WAIT that waits is a slot of WAIT's T-states per step; upstream ends the slice
-				m_ip--;
-			}
-			else
-				CLK(WAIT);
+				wait_hold();   // CHANGED: TEST inactive: IP back on the WAIT, the next step rechecks (upstream ended the slice)
 			break;
 
 		case 0x9c: // i_pushf

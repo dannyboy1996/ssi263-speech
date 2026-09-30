@@ -37,9 +37,9 @@ The cores never know which board they are in.
 | `i86_mame_machine.cpp` | **Generated; do not edit.** MAME's 8086: the inline helpers, the cycle tables, reset, an interrupt's entry (with the INT seam), the input lines, execute_run's own opcodes and every other instruction. |
 | `i86_mame.hpp` | Our class around it: one class with the member names MAME's code expects (from `i86.h`) and small stand-ins for the framework (the bus, the INTA vector, no coprocessor, no wait states). |
 | `i86_mame.cpp` | **Our step driver** (the contract's phases, following execute_run) and the `cpu.h` functions (`i86_*`, with `i86_regs_set`, `i86_next_pc` and `i86_aliased` for a host that stands in for DOS). It includes `i86_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
-| `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (24): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT, prefixes, REP, the trap flag, the alias counter, T-states, I/O, FLAGS. |
-| `i86_controls.py` | Its must-fail controls (18): each rule undone in a scratch copy, exactly its tests must fail. |
-| `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios; write values and times, audio, registers, host log, INIT memory and snapshots must all match (with must-fail controls). |
+| `test_i86_contract.c` | CONTRACT.md's clauses on the 8086 core, one test each (36): reset, INTR and its vector, the shadows, NMI, INT n/IRET, the INT seam, HLT, WAIT (3 + 5n, interrupted), prefixes, REP, the trap flag, the alias counter, T-states (Intel's 8086 rows, even and odd addresses), I/O, FLAGS, forward progress. |
+| `i86_controls.py` | Its must-fail controls (64): each rule undone in a scratch copy, exactly its tests must fail. |
+| `compare_i86_accent.py` | The Accent-mini (`src/hosts/accent.py`) on the MAME 8086 against Unicorn: scripted scenarios; write values and times, audio, registers, FLAGS (by its stated policy), host log, INIT memory and snapshots must all match (with must-fail controls). |
 | `census_i86_accent.py` | Which x86 SPKEMS.DVC needs: every block it runs under Unicorn, disassembled (needs capstone). |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
@@ -53,10 +53,10 @@ by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated; no b
 
 MAME's 8086 (the Accent-mini's PC, to replace Unicorn under `src/hosts/accent.py`) likewise: `test_i86_contract.exe`
 and `x64/`, `x86/pc86.dll` (`../pc86`) by `build_board.py`, `test_i86_contract` and `libpc86.so` by `build_linux.sh`.
-Gated: the contract tests, `compare_i86_accent.py --quick` with its eight controls (one value flipped; one write
+Gated: the contract tests, `compare_i86_accent.py --quick` with its twelve controls (one value flipped; one write
 time, one PCM sample, one register, one log line, one memory byte outside and one inside the allow-list, the MAME
-snapshot's registers perturbed), and driver_sim on the built add-on with `SSI263_ACCENT_CORE=mame`. Opt-in only:
-Unicorn stays the default.
+snapshot's registers perturbed; FLAGS: IF flipped, CF flipped, a masked bit changed, the snapshot's IF flipped), and
+driver_sim on the built add-on with `SSI263_ACCENT_CORE=mame`. Opt-in only: Unicorn stays the default.
 
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.
@@ -164,8 +164,12 @@ counted with a scratch-instrumented build, not in the tree):
   tool's pass/fail predicate (Astra, Reply 104: it used to fail only on write values): values, times, audio,
   registers, host log per scenario, INIT's snapshots, and memory after INIT byte for byte except an explicit
   allow-list of those 4 addresses, each still required to be a FLAGS image's byte (Unicorn's high nibble 0, MAME's
-  F, the low nibble equal). The registers are accent.py's `regs()`, FLAGS not among them (its bits 12-15 differ by
-  CPU, the undefined flags by core).
+  F, the low nibble equal). The registers are accent.py's `regs()`; FLAGS is compared on its own line by an
+  explicit policy (Astra, Reply 106; `FLAGS_POLICY` in the tool): sampled at every software interrupt the driver
+  raises (at the host's seam, before the host acts), every OUT and the end -- 323,705 samples in the full run, 133,112
+  of them in the demo dialogue -- bits 0-11 must be equal (IF, DF, TF, the fixed bits, and the arithmetic flags: none
+  has differed anywhere, so no undefined flag is masked), and bits 12-15 are masked but must be exactly 0h on
+  Unicorn (a 386 in real mode) and Fh on MAME (the 8086) at every sample. The INIT snapshots' FLAGS likewise.
 - **Timing, classified.** Both CPUs are driven the host's way, `cpu_ips` (5 million) instructions per second of chip
   time in slices, so a write's time can move only where the two count instructions differently and a slice ends in
   between. The known cases: (1) a REP string instruction with CX = n: Unicorn counts n + 1 (a last pass that finds
@@ -192,5 +196,9 @@ counted with a scratch-instrumented build, not in the tree):
   Astra's probe (an INT 21h vectored at itself, 0 T a step on MAME's counts) looped `i86_run(cpu, 1)` for ever.
   After the corrections the comparison is unchanged: every write identical in value and time, as the host counts
   steps.
-- **Known limits (MAME's, kept):** the stack and word-port rows are Intel's 8086 figure plus the 8088's 4 a word
-  transfer, and the returns match neither CPU (CONTRACT.md 4, open). The undefined flags are MAME's.
+- **One CPU, the 8086's rows** (Astra, Reply 106; CONTRACT.md 4): MAME's stack, word-port, LDS/LES and word MUL/DIV
+  rows (the 8088's 4 a word transfer built in) and its returns (neither CPU's) are Intel's 8086 figures, the odd-
+  address 4 added once per actual transfer; WAIT is 3 + 5n (entry 3, a 5-T recheck a step); the trap stays 50, the
+  sources' disagreement (51 in AP-67) recorded, not resolved. After these too, every write is identical in value and
+  time on 64- and 32-bit Python.
+- **Known limits (MAME's, kept):** MUL/DIV are one figure (Intel's lowest), and the undefined flags are MAME's.

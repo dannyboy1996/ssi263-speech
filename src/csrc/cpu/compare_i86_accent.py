@@ -3,13 +3,15 @@ in one process, and everything the migration promises compared -- and the run FA
 
   - every SSI-263 write: its value AND its time (the same writes, in the same order, at the same chip time)
   - the audio (the PCM, hashed block by block)
-  - the CPU registers at the end (accent.py's regs(): the general, segment and IP registers; FLAGS is not among them:
-    bits 12-15 read 1 on the 8086 and 0 on Unicorn's 386, and the undefined flags are each core's own)
+  - the CPU registers at the end (accent.py's regs(): the general, segment and IP registers)
+  - FLAGS, by an explicit policy (Astra, Reply 106; FLAGS_POLICY below), sampled at every software interrupt the
+    driver raises (the host's seam: INT 67h, 21h, 17h), at every OUT, and at the end
   - the host's log (DOS, EMS and the driver's stops, line by line)
   - init only: memory after INIT, byte for byte, except an explicit allow-list (ALLOWED_INIT_BYTES): the four stack
     bytes that are FLAGS images' high bytes, F-nibble on the 8086 and 0 on Unicorn, low nibble equal -- a listed byte
     must still match that pattern, and any other difference fails
-  - state only: the two INIT snapshots (registers, INIT's chip writes, the host's card/EMS state)
+  - state only: the two INIT snapshots (registers, FLAGS by the same policy, INIT's chip writes, the host's card/EMS
+    state)
 
     python src/csrc/cpu/compare_i86_accent.py [--quick] [--only SCENARIO[,SCENARIO]] [--control] [--dvc PATH]
 
@@ -29,7 +31,10 @@ Must-fail controls, each perturbing exactly ONE thing in the MAME run's results 
 on nothing else, with its own mark): --control flips one write's value; I86_COMPARE_PERTURB=time moves one write's
 time by 1 us, =pcm changes one PCM sample of the first audio block, =reg changes AX in the final registers, =log adds
 a line to the host's log, =mem changes one byte of memory after INIT outside the allow-list, =allowed one inside it
-(no longer a FLAGS image's byte), =snapshot changes the MAME snapshot's registers.  nvda/tools/run_tests.py runs each and checks its mark.
+(no longer a FLAGS image's byte), =snapshot changes the MAME snapshot's registers; for FLAGS (Reply 106): =flags flips
+IF in the middle sample of MAME's, =carry flips CF in MAME's final FLAGS (an arithmetic flag its last writer
+defines), =flagsmask clears bit 12 in MAME's middle sample (the masked bits must still be the recorded values),
+=snapflags flips IF in the MAME snapshot's FLAGS.  nvda/tools/run_tests.py runs each and checks its mark.
 
 Timing: both cores are coupled to the chip the host's way -- cpu_ips instructions per chip second, in slices: a
 compatibility policy kept from Unicorn, not a clock (src/csrc/cpu/README.md) -- so a write's time could differ only
@@ -48,6 +53,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.path.join(REPO, "src"))
 sys.path.insert(0, REPO)
 from hosts.accent import Accent  # noqa: E402
+from hosts.ucmini import UC_X86_REG_EFLAGS  # noqa: E402  (pc86.py answers it too: the 8086's FLAGS)
 from ssi263.native import SSI263C  # noqa: E402
 from tools.render_accent_demo import LINES  # noqa: E402
 
@@ -55,7 +61,7 @@ DVC = os.path.join(REPO, "firmware", "aicom-accent-mini", "SPKEMS.DVC")
 QUICK = "--quick" in sys.argv
 CONTROL = "--control" in sys.argv
 PERTURB = os.environ.get("I86_COMPARE_PERTURB", "")
-PERTURBS = ("", "time", "pcm", "reg", "log", "mem", "allowed", "snapshot")
+PERTURBS = ("", "time", "pcm", "reg", "log", "mem", "allowed", "snapshot", "flags", "carry", "flagsmask", "snapflags")
 CORES = ("unicorn", "mame")
 SCENARIOS = ("init", "demo", "settings", "cancel", "state")
 BLOCK = 0.03
@@ -71,6 +77,77 @@ def flags_image_byte(u, m):
     return (u & 0xF0) == 0x00 and (m & 0xF0) == 0xF0 and (u & 0x0F) == (m & 0x0F)
 
 
+# FLAGS_POLICY (Astra, Reply 106: FLAGS is compared, not left out because bits 12-15 differ).
+#   - Required everywhere: IF, DF and TF (bits 9, 10, 8), and the fixed bits 1, 3 and 5.
+#   - The arithmetic flags (CF, PF, AF, ZF, SF, OF) are required where their last writer defines them.  None of the
+#     samples below has shown an arithmetic difference in any scenario (the 8086's and Unicorn's results agree even
+#     where Intel's table says "U"), so none is masked: ARITH_UNDEFINED is 0 and all of bits 0-11 must be equal.  A
+#     difference found later fails the run; masking it needs a named entry here that shows the sample's last flag
+#     writer and the Table 2-21 column marking that flag undefined.
+#   - Masked from the equality, and only these: bits 12-15, reserved on the 8086, which reads them as 1 (F000h), and
+#     IOPL/NT/reserved on Unicorn's 386 in real mode, which reads 0.  Masked is not ignored: every sample must show
+#     exactly those recorded values, FLAGS_HIGH, or it fails.
+# The samples: every software interrupt the driver raises, at the host's seam, before the host services it (INT
+# 67h, 21h, 17h: the flags the driver's code left), every OUT the driver makes, and the FLAGS at the end (the idle
+# loop's).  A word OUT would be two samples on MAME (two byte accesses) and one on Unicorn: the driver has none, and
+# a different number of samples fails.  The INIT snapshots' FLAGS are held to the same policy.
+FLAGS_REQUIRED = 0x0700 | 0x002A                  # TF, IF, DF; the fixed bits 1, 3, 5
+FLAGS_ARITH = 0x08D5                              # OF, SF, ZF, AF, PF, CF
+ARITH_UNDEFINED = 0x0000                          # none needed (see above)
+FLAGS_COMPARED = (FLAGS_REQUIRED | FLAGS_ARITH) & ~ARITH_UNDEFINED
+FLAGS_MASKED = 0xF000
+FLAGS_HIGH = {"unicorn": 0x0000, "mame": 0xF000}   # the masked bits' recorded values
+assert FLAGS_COMPARED | FLAGS_MASKED == 0xFFFF
+FLAG_NAMES = ((0x0001, "CF"), (0x0004, "PF"), (0x0010, "AF"), (0x0040, "ZF"), (0x0080, "SF"), (0x0100, "TF"),
+              (0x0200, "IF"), (0x0400, "DF"), (0x0800, "OF"))
+
+
+def _sample_flags(method, kind):
+    """Wrap the host's hook `method` (bound when an Accent is built, so this runs first): a sample of FLAGS per call
+    on an Accent that has flag_samples, before the host acts."""
+    orig = getattr(Accent, method)
+
+    def hook(self, uc, *args):
+        samples = getattr(self, "flag_samples", None)
+        if samples is not None:
+            samples.append((kind, args[0], uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF))
+        return orig(self, uc, *args)
+    setattr(Accent, method, hook)
+
+
+_sample_flags("_int", "INT")
+_sample_flags("_out", "OUT")
+
+
+def flags_site(s):
+    return "the end" if s[0] == "end" else "%s %02Xh" % (s[0], s[1]) if s[0] == "INT" else "%s %03Xh" % (s[0], s[1])
+
+
+def flags_bits(x):
+    return "%04X (%s)" % (x, " ".join(n for b, n in FLAG_NAMES if x & b) or "fixed bits")
+
+
+def flags_problems(fu, fm):
+    """FLAGS_POLICY over two sample lists [(kind, number, flags)]; returns the problems, as text (none: [])."""
+    if len(fu) != len(fm) or any(a[:2] != b[:2] for a, b in zip(fu, fm)):
+        k = next((i for i, (a, b) in enumerate(zip(fu, fm)) if a[:2] != b[:2]), min(len(fu), len(fm)))
+        return ["samples differ in number or site (%d / %d; first at %d)" % (len(fu), len(fm), k)]
+    out = []
+    low = [i for i, (a, b) in enumerate(zip(fu, fm)) if (a[2] ^ b[2]) & FLAGS_COMPARED]
+    if low:
+        i = low[0]
+        out.append("DIFFER at %d of %d samples: first %d (%s): unicorn %04X, mame %04X, bits %s" % (
+            len(low), len(fu), i, flags_site(fu[i]), fu[i][2], fm[i][2], flags_bits((fu[i][2] ^ fm[i][2]) & 0x0FFF)))
+    high = [i for i, (a, b) in enumerate(zip(fu, fm))
+            if a[2] & FLAGS_MASKED != FLAGS_HIGH["unicorn"] or b[2] & FLAGS_MASKED != FLAGS_HIGH["mame"]]
+    if high:
+        i = high[0]
+        out.append("bits 12-15 not the recorded %04X / %04X at %d of %d samples: first %d (%s): unicorn %04X, mame "
+                   "%04X" % (FLAGS_HIGH["unicorn"], FLAGS_HIGH["mame"], len(high), len(fu), i, flags_site(fu[i]),
+                             fu[i][2], fm[i][2]))
+    return out
+
+
 class Run:
     """One core through one scenario: what the chip was told, the audio, and the CPU."""
 
@@ -78,6 +155,7 @@ class Run:
         self.core = core
         self.a = Accent(dvc, chip=SSI263C(), core=core)
         self.a.keep_writes = True
+        self.a.flag_samples = []                       # FLAGS_POLICY's samples (the hooks wrapped above)
         self.pcm = hashlib.sha256()
         self.blocks = 0
         self.t0 = time.perf_counter()
@@ -157,6 +235,8 @@ def compare(name, runs):
     wu, wm = list(u.a.writes), list(m.a.writes)
     regs_u, regs_m = u.a.regs(), m.a.regs()
     log_u, log_m = list(u.a.log), list(m.a.log)
+    fu = list(u.a.flag_samples) + [("end", 0, u.a.uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF)]
+    fm = list(m.a.flag_samples) + [("end", 0, m.a.uc.reg_read(UC_X86_REG_EFLAGS) & 0xFFFF)]
     # the must-fail controls: exactly one thing perturbed, in the MAME run's results
     if CONTROL and wm:
         t, reg, v = wm[len(wm) // 2]
@@ -168,6 +248,12 @@ def compare(name, runs):
         regs_m = regs_m.replace("ax=", "ax=1", 1) if "ax=" in regs_m else regs_m + " perturbed"
     if PERTURB == "log":
         log_m.append("(a line the control added)")
+    if PERTURB in ("flags", "flagsmask"):
+        k, n, f = fm[len(fm) // 2]
+        fm[len(fm) // 2] = (k, n, f ^ 0x0200 if PERTURB == "flags" else f & ~0x1000)   # IF; or bit 12 (masked)
+    if PERTURB == "carry":
+        k, n, f = fm[-1]
+        fm[-1] = (k, n, f ^ 0x0001)                    # CF at the end
     ok = True
     # values
     vu, vm = [(reg, v) for _, reg, v in wu], [(reg, v) for _, reg, v in wm]
@@ -192,6 +278,12 @@ def compare(name, runs):
         "identical" if u.pcm.digest() == m.pcm.digest() else "DIFFERS", u.blocks, m.blocks))
     ok &= line(regs_u == regs_m, name, "CPU registers %s" % (
         "identical" if regs_u == regs_m else "DIFFER (%s | %s)" % (regs_u, regs_m)))
+    bad = flags_problems(fu, fm)
+    n_int = sum(1 for s in fu if s[0] == "INT")
+    ok &= line(not bad, name, "FLAGS identical in bits 0-11 at %d samples (%d INTs, %d OUTs, the end); bits 12-15 "
+               "masked, %04X / %04X (unicorn / mame) at every one" % (len(fu), n_int, len(fu) - 1 - n_int,
+                                                                      FLAGS_HIGH["unicorn"], FLAGS_HIGH["mame"])
+               if not bad else "FLAGS " + "; ".join(bad))
     if log_u == log_m:
         ok &= line(True, name, "host log identical (%d lines)" % len(log_u))
     else:
@@ -256,9 +348,15 @@ def main():
         snap_m = dict(states["mame"])
         if PERTURB == "snapshot":
             snap_m["regs"] = ("the control's registers", snap_m["regs"])
+        if PERTURB == "snapflags":
+            snap_m["eflags"] ^= 0x0200                 # IF
         parts = [k for k in ("regs", "chip_writes", "host") if states["unicorn"][k] != snap_m[k]]
-        ok &= line(not parts, "state", "INIT snapshots: registers, INIT's chip writes and the host's card/EMS state %s"
-                   % ("identical" if not parts else "DIFFER in %s" % ", ".join(parts)))
+        if flags_problems([("end", 0, states["unicorn"]["eflags"] & 0xFFFF)], [("end", 0, snap_m["eflags"] & 0xFFFF)]):
+            parts.append("eflags")
+        ok &= line(not parts, "state", "INIT snapshots: registers, FLAGS (FLAGS_POLICY: %04X / %04X), INIT's chip "
+                   "writes and the host's card/EMS state %s" % (
+                       states["unicorn"]["eflags"] & 0xFFFF, snap_m["eflags"] & 0xFFFF,
+                       "identical" if not parts else "DIFFER in %s" % ", ".join(parts)))
     print("compare_i86_accent: %s" % ("every promised invariant identical in every scenario run" if ok else "FAILED"))
     sys.exit(0 if ok else 1)
 
