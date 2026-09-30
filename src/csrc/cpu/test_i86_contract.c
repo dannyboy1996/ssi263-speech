@@ -53,8 +53,9 @@
  *                  and so do an intercepted INT 21h in a loop, AAM 0 vectored at itself, a REP before NOP, REP
  *                  MOVSB with CX = 0.  Guarded: a run past 1000 boundaries has its instruction overwritten with a
  *                  NOP by the boundary callback, so a regression FAILS here instead of hanging (2, 4)
- *   step_cost_floor every first byte 00h-FFh, alone and after REP / REPNE, with no seam and with a seam that
- *                  services every interrupt: every step costs at least 2 T (2, 4)
+ *   step_cost_floor every first byte 00h-FFh, followed by 00h (a memory ModRM) or C0h (a register one), alone and
+ *                  after REP / REPNE, with no seam and with a seam that services every interrupt: every step costs
+ *                  at least 2 T (2, 4)
  *
  *   build: gcc -c test_i86_contract.c; g++ ... i86_mame.cpp   (../blazie/build_board.py does it)
  * Each line: "ok"/"FAIL", the test's name, the detail; the last line "all passed" or "FAILED"; exit status 0/1.
@@ -980,26 +981,28 @@ static void t_step_cost_floor(void)
 {
     static const int prefix[3] = { -1, 0xF3, 0xF2 };
     char d[240];
-    int seam, p, b, worst = 1000, worst_b = -1, worst_p = -1, worst_seam = -1;
+    int seam, p, b, mr, worst = 1000, worst_b = -1, worst_p = -1, worst_seam = -1, worst_mr = -1;
     for (seam = 0; seam < 2; seam++)
         for (p = 0; p < 3; p++)
-            for (b = 0; b < 256; b++) {
-                machine *m = new_machine_ex(seam, 0x0002);
-                i86_regs r;
-                int t;
-                m->claim = seam ? -1 : -2;
-                regs(m, &r); r.cx = 1; i86_regs_set(m->cpu, &r);
-                if (prefix[p] >= 0)
-                    db(m, 1, prefix[p]);
-                db(m, 6, b, 0, 0, 0, 0, 0);
-                t = i86_step(m->cpu);
-                if (t < worst) {
-                    worst = t; worst_b = b; worst_p = prefix[p]; worst_seam = seam;
+            for (mr = 0; mr < 2; mr++)          /* the byte after: 00h (a memory ModRM), C0h (a register one) */
+                for (b = 0; b < 256; b++) {
+                    machine *m = new_machine_ex(seam, 0x0002);
+                    i86_regs r;
+                    int t;
+                    m->claim = seam ? -1 : -2;
+                    regs(m, &r); r.cx = 1; i86_regs_set(m->cpu, &r);
+                    if (prefix[p] >= 0)
+                        db(m, 1, prefix[p]);
+                    db(m, 6, b, mr ? 0xC0 : 0, 0, 0, 0, 0);
+                    t = i86_step(m->cpu);
+                    if (t < worst) {
+                        worst = t; worst_b = b; worst_p = prefix[p]; worst_seam = seam; worst_mr = mr;
+                    }
+                    free_machine(m);
                 }
-                free_machine(m);
-            }
-    sprintf(d, "the cheapest step: %d T (first byte %02Xh, prefix %s, %s)", worst, worst_b,
-            worst_p < 0 ? "none" : worst_p == 0xF3 ? "REP" : "REPNE", worst_seam ? "the seam servicing" : "no seam");
+    sprintf(d, "the cheapest step: %d T (first byte %02Xh then %02Xh, prefix %s, %s)", worst, worst_b,
+            worst_mr ? 0xC0 : 0, worst_p < 0 ? "none" : worst_p == 0xF3 ? "REP" : "REPNE",
+            worst_seam ? "the seam servicing" : "no seam");
     report("step_cost_floor", worst >= 2, d);
 }
 
