@@ -27,7 +27,8 @@ CLOCK_HZ = 6144000.0
 CHORDS = ["8000000=5C", "18000000=7F", "28000000=07", "38000000=51"]   # 345, 123456, L, e
 BOOT_INSTR = 48000000
 PLAYING_MAX_S = 1.0                # longer than any phoneme the firmware loads (busy())
-UNANSWERED_S = 1.0                 # a given request left unanswered this long: the firmware is done (busy())
+UNANSWERED_S = 1.0                 # busy()'s host timeout policy: a request given to the firmware and left
+                                   # unanswered this long counts as the end (not proof it is, in every state)
 KEY_GAP = 10000000                 # instructions between boot keys (1.6 s of unit time)
 # Speech-menu letters (BL2000 help, 345-chord menu), as braille key codes: bit n-1 = dot n.
 # Punctuation t/m/s/z = total/most/some/none; n toggles digits / full numbers.
@@ -293,7 +294,8 @@ class Blazie:
             if not self.chip.request and (self.chip.time - self.last_load) < PLAYING_MAX_S:
                 return True
             # ... and while the chip's request has not reached the firmware, or reached it and is not answered yet:
-            # only a request given to the firmware and left unanswered for UNANSWERED_S is an end (Astra, Reply 100:
+            # only a request given to the firmware and left unanswered for UNANSWERED_S counts as an end -- a host
+            # timeout policy, not proof the firmware is done in every state (Astra, Replies 100-101:
             # a request raised at the end of a run() call, not yet forwarded, passed for one; and a line break's next
             # segment can take a while to translate).  The normal end never gets here (no speech since the last echo).
             if self.chip.request and not (self.ar and self.last_load < self.ar_time

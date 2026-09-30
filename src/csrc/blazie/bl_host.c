@@ -12,7 +12,8 @@
 
 #define CLOCK_HZ 6144000.0
 #define PLAYING_MAX_S 1.0              /* longer than any phoneme the firmware loads (bh_busy) */
-#define UNANSWERED_S 1.0               /* a given request left unanswered this long: the firmware is done */
+#define UNANSWERED_S 1.0               /* bh_busy's host timeout policy: a request given to the firmware and
+                                          left unanswered this long counts as the end (not a proof) */
 
 void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state);   /* ssi263dsp.c */
 

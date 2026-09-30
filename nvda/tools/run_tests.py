@@ -65,6 +65,11 @@ CHECKS.append(check("premature completion replay CONTROL (never done, must fail)
                     env={"PREMATURE_REPLAY_NEVER": "1"}, expect_fail=True,
                     fail_marks=[r"^FAIL +native +30 ms blocks +NEVER DONE", r"^FAIL +pipe +0.5 ms polling +NEVER DONE",
                                 r"^premature replay: 6 FAILED$"]))
+# ... and clean runs that never complete must not feed the latency comparison or the two-line reference (Astra, 101)
+CHECKS.append(check("premature completion replay CONTROL (clean never done, must fail)", [PY, "premature_replay.py"],
+                    env={"PREMATURE_REPLAY_NEVER": "clean"}, expect_fail=True,
+                    fail_marks=[r"^FAIL +native +a clean utterance NEVER DONE",
+                                r"^FAIL +pipe +the two-line reference NEVER DONE", r"^premature replay: 4 FAILED$"]))
 # and this runner's own must-fail judgement: silent exits, native crashes, tracebacks, missing marks never count
 CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
