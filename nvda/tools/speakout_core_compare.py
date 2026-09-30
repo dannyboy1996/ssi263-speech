@@ -7,15 +7,19 @@ The scenario: power on and the greeting spoken to its end, then sentences, each 
 ^X after 0.8 s.  Cores:
   unicorn     today's host (the reference)
   mame-steps  the MAME core coupled to chip time by steps at cpu_ips, counted as Unicorn counts its instructions
-              (so_board.h): every write's value AND time must be identical -- a difference would be the instructions'
-  mame        the MAME core coupled by its clocks at --clock (default: speakout.py's V40_HZ).  Slower or faster rules
+              (so_board.h): every write's value AND time must be identical -- a difference would be the instructions'.
+              The migration candidate (Astra, Reply 103)
+  mame        EXPERIMENTAL: the MAME core coupled by its clocks at --clock (default: speakout.py's V40_HZ, the
+              uPD70208-8's speed grade, not a measured clock; the unit's oscillator is unread and may be divided, and
+              no instructions-to-clocks ratio makes the two couplings equivalent).  Slower or faster rules
               change how many idle frames (PA at rate F: no phoneme ready when the chip asks) the firmware writes, so
               the SPEECH frames are compared: every utterance spoken to its end must have exactly Unicorn's (each
               frame's writes: the R0 prime, R1-R4, the phoneme); the cut one is compared up to the shorter.  The times
               are classified per utterance: where its first phoneme lands after the text was sent, idle frames inside
               it (a gap in the speech), and how its phonemes move against its first one.
 Exit 1 if a check fails.  SPEAKOUT_COMPARE_FLIP=1 flips one value in each MAME stream: both checks must then fail
-(run_tests' control).
+(run_tests' control).  A pass shows that this firmware's writes, in this scenario, do not depend on where the cores
+differ; it does not establish the CPU's semantics, its interrupt timing or the host's scheduling.
 
 The firmware is not in the repository: firmware/gw-micro-speakout/SPEAKOUT.HEX, or SSI263_SPEAKOUT_HEX.
 """

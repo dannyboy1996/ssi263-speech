@@ -15,9 +15,9 @@ out of the firmware (see the Speak-Out memory note for offsets):
 CPU time is coupled to chip time at `cpu_ips` instructions per chip second.
 
 The CPU is Unicorn's.  SSI263_SPEAKOUT_CORE (opt-in, for comparison; not yet accepted) selects MAME's V40 core
-instead, on the same board in C (src/csrc/speakout, through speakout_v40.py): "mame" couples CPU clocks to chip time
-at SSI263_SPEAKOUT_V40_HZ (default V40_HZ); "mame-steps" couples its steps at `cpu_ips`, as Unicorn's instructions
-are (nvda/tools/speakout_core_compare.py).
+instead, on the same board in C (src/csrc/speakout, through speakout_v40.py): "mame-steps" couples its steps at
+`cpu_ips`, as Unicorn's instructions are -- the candidate for replacing Unicorn under this host; "mame" couples CPU
+clocks to chip time at SSI263_SPEAKOUT_V40_HZ (default V40_HZ) -- experimental (nvda/tools/speakout_core_compare.py).
 """
 import os
 import sys
@@ -40,7 +40,8 @@ except ImportError:                       # the research tree: src/ on sys.path
 
 CHIP_BASE = 0xF0000 + 0xFE00
 IRQ_SERIAL, IRQ_CHIP = 1, 4
-V40_HZ = 8_000_000          # the MAME core's clock when coupled by clocks (the unit's crystal is not yet read)
+V40_HZ = 8_000_000          # "mame" (experimental): the uPD70208-8's speed grade, NOT a measured clock (the unit's
+                            # oscillator is not read, and the V40 may divide it)
 
 
 def _core():
@@ -294,10 +295,11 @@ class SpeakOutV40(SpeakOut):
     """The same host on MAME's V40 core (opt-in: SSI263_SPEAKOUT_CORE=mame or mame-steps; SpeakOut() returns one).
 
     Only the CPU changes: the board in C (src/csrc/speakout) has the same memory, the same chip window and the ICU and
-    SCU reduced as above; this class keeps the chip-time loop, the chip and its bookkeeping.  "mame" couples the core's
-    CLOCKS to chip time at clock_hz (a slice of n instructions above is n * clock_hz / cpu_ips clocks); "mame-steps"
-    couples its steps as Unicorn's instructions are, counted as Unicorn counts them (a REP ended by its count is one
-    more: so_board.h), for comparing the two cores step for step.
+    SCU reduced as above; this class keeps the chip-time loop, the chip and its bookkeeping.  "mame-steps" couples its
+    steps as Unicorn's instructions are, counted as Unicorn counts them (a REP ended by its count is one more:
+    so_board.h): the migration candidate, comparable with Unicorn step for step.  "mame" (experimental) couples the
+    core's CLOCKS to chip time at clock_hz (a slice of n instructions above is n * clock_hz / cpu_ips clocks); no
+    clock_hz is established for the unit.
     The chip's writes are applied after each slice, in order: nothing reads the chip during one."""
 
     def __init__(self, hex_path, chip=None, out_rate=44100, cpu_ips=1_500_000, core=None, clock_hz=None):

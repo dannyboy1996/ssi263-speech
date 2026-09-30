@@ -16,9 +16,10 @@ the CPU's. The firmware (`SPEAKOUT.HEX`) is not in the repository.
 | `build_board.py` | Windows build (w64devkit): `nvda/dist/speakout-lib/` gets `test_v40_contract.exe`, `test_so_board.exe`, `x64/` and `x86/speakout_v40.dll`. `build_linux.sh` builds the same tests and `libspeakout_v40.so`. |
 
 The CPU is `../cpu/v40_mame.cpp` (CONTRACT.md 12). Python reaches the board through `src/hosts/speakout_v40.py`;
-`SSI263_SPEAKOUT_CORE=mame` (clocks at `SSI263_SPEAKOUT_V40_HZ`, default 8 MHz) or `mame-steps` (steps coupled as
-Unicorn's instructions) makes `SpeakOut()` return the MAME-core host. `nvda/tools/speakout_core_compare.py` compares
-it with Unicorn.
+`SSI263_SPEAKOUT_CORE=mame-steps` (steps coupled as Unicorn's instructions: the candidate for replacing Unicorn) or
+`mame` (clocks at `SSI263_SPEAKOUT_V40_HZ`, default 8 MHz: **experimental** -- 8 MHz is the uPD70208-8's speed grade,
+not a measured clock; the unit's oscillator is unread and may be divided) makes `SpeakOut()` return the MAME-core
+host. `nvda/tools/speakout_core_compare.py` compares it with Unicorn.
 
 ## What the firmware touches (measured under Unicorn, boot and two sentences)
 
