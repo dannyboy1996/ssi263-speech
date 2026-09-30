@@ -108,7 +108,6 @@ class Pc86:
         if not self._p:
             raise Pc86Error("pc86_create failed")
         self._mem = lib.pc86_mem(self._p)
-        self._regs = I86Regs()
         self._pending = None
         self._in_cb = self._out_cb = self._int_cb = None
         self._thunks = (_IN(self._on_in), _OUT(self._on_out), _INT(self._on_int))
@@ -143,23 +142,26 @@ class Pc86:
 
     # ---- registers ----
     def reg_read(self, reg):
-        _lib.pc86_regs_get(self._p, byref(self._regs))
-        return getattr(self._regs, FIELD[reg])
+        r = I86Regs()                      # per call: another thread may read registers (the driver's watch)
+        _lib.pc86_regs_get(self._p, byref(r))
+        return getattr(r, FIELD[reg])
 
     def reg_write(self, reg, value):
-        _lib.pc86_regs_get(self._p, byref(self._regs))
-        setattr(self._regs, FIELD[reg], value & 0xFFFF)
-        _lib.pc86_regs_set(self._p, byref(self._regs))
+        r = I86Regs()                      # per call: another thread may read registers (the driver's watch)
+        _lib.pc86_regs_get(self._p, byref(r))
+        setattr(r, FIELD[reg], value & 0xFFFF)
+        _lib.pc86_regs_set(self._p, byref(r))
 
     # ---- running ----
     def emu_start(self, begin, until, timeout=0, count=0):
         """As uc_emu_start: begin sets IP (CS stays), until stops before the instruction at that linear address,
         count caps the steps (0: none)."""
-        _lib.pc86_regs_get(self._p, byref(self._regs))
-        ip = (begin - self._regs.cs * 16) & 0xFFFF
-        if ip != self._regs.ip:
-            self._regs.ip = ip
-            _lib.pc86_regs_set(self._p, byref(self._regs))
+        r = I86Regs()                      # per call: another thread may read registers (the driver's watch)
+        _lib.pc86_regs_get(self._p, byref(r))
+        ip = (begin - r.cs * 16) & 0xFFFF
+        if ip != r.ip:
+            r.ip = ip
+            _lib.pc86_regs_set(self._p, byref(r))
         self._pending = None
         _lib.pc86_run(self._p, count if count else (1 << 62), until & 0xFFFFF if until is not None else NO_UNTIL)
         if self._pending is not None:
