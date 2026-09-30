@@ -157,6 +157,31 @@ if os.path.isfile(IMPORT_TEST):
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
     CHECKS.append(check("MAME 8085 core: CPU contract tests", [os.path.join(LIB, "test_i8085_contract.exe")]))
+# MAME's V40 core (the Speak-Out's, src/csrc/cpu/v40_mame.cpp) and the Speak-Out board on it (src/csrc/speakout): opt-in,
+# not yet accepted (the add-on keeps Unicorn).  The contract's clauses, the board's own rules, and, with the firmware,
+# the board against today's Unicorn host (speakout_core_compare.py: steps coupled as Unicorn's instructions, every write
+# identical; clocks at 8 MHz, the speech frames identical, the times classified) with its must-fail control, and the
+# driver on the MAME core (SSI263_SPEAKOUT_CORE=mame).  Built by src/csrc/speakout/build_board.py.
+SO_LIB = os.path.join(os.path.dirname(HERE), "dist", "speakout-lib")
+if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
+    CHECKS.append(check("MAME V40 core: CPU contract tests", [os.path.join(SO_LIB, "test_v40_contract.exe")]))
+    CHECKS.append(check("Speak-Out board (MAME V40): its rules", [os.path.join(SO_LIB, "test_so_board.exe")]))
+    SO_HEX = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "gw-micro-speakout", "SPEAKOUT.HEX")
+    if os.path.isfile(SO_HEX) and os.path.isfile(os.path.join(SO_LIB, "x64", "speakout_v40.dll")):
+        CHECKS.append(check("Speak-Out: MAME V40 core against Unicorn", [PY, "speakout_core_compare.py"]))
+        CHECKS.append(check("Speak-Out: MAME V40 core CONTROL (a value flipped, must fail)",
+                            [PY, "speakout_core_compare.py"], env={"SPEAKOUT_COMPARE_FLIP": "1"}, expect_fail=True,
+                            fail_marks=[r"^mame-steps: write values DIFFER from Unicorn's at write \d+ of",
+                                        r"^  utterance 1: speech frames DIFFER at frame \d+",
+                                        r"^speakout cores: 2 FAILED$"]))
+        CHECKS.append(check("driver_sim speakout on the MAME V40 core", [PY, "-S", "driver_sim.py", "speakout", NVDA,
+                            "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
+        if os.path.isfile(PY37) and os.path.isdir(os.path.join(WIN7, "nvda2023app")):      # the x86 DLL
+            CHECKS.append(check("driver_sim speakout on the MAME V40 core (nvda2023app, 32-bit)",
+                                [PY37, "run37.py", "../driver_sim.py", "speakout", "nvda2023app", "rt"],
+                                env={"NVDA_APP": "nvda2023app", "SSI263_SPEAKOUT_CORE": "mame"}, cwd=WIN7))
+        CHECKS.append(check("complete_fuzz speakout on the MAME V40 core", [PY, "complete_fuzz.py", "150", "1"],
+                            env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "speakout", "SSI263_SPEAKOUT_CORE": "mame"}))
 # the Python wheel (python/): built from this tree's libraries, installed into a fresh venv, the chip audible and
 # deterministic and the Braille Lite byte for byte as bl.dll; its control (rate 70 asked for) must differ
 WHEEL_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "python", "test_wheel.py")

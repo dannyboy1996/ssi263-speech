@@ -80,3 +80,22 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
   the reset value on. `--control` (an 11-T acceptance) must be reported, and is. With `--trap-after-ei 1` (a
   TRAP raised right after an EI) the cores part: the MAME core takes TRAP at once (CONTRACT.md 5), the Python
   core runs the next instruction first.
+
+## The MAME V40 against Unicorn (first comparison, 2026-09-30)
+
+The Speak-Out on the board in `../speakout/`, against today's Unicorn host, same chip model, same scenario (the
+greeting, six sentences spoken to their end, one cut by ^X): `nvda/tools/speakout_core_compare.py`.
+
+- Steps coupled to chip time as Unicorn's instructions (`mame-steps`): all 4,268 SSI-263 writes identical, values
+  and times. One counting difference had to be matched first: Unicorn counts a REP string instruction that ends by
+  its count as n + 1 instructions (the exit test is one more), this core as n steps (`so_run_steps_unicorn`, tested
+  against Unicorn's own counts).
+- Clocks at 8 MHz (`mame`): every speech frame of every utterance identical (the cut one up to the cut). The firmware
+  writes more idle frames (PA at rate F) while its rules work, and the times move: an utterance's first phoneme lands
+  about twice as late after the text is sent (e.g. 74 against 34.5 ms, 160 against 69.5 ms), and phonemes inside
+  long utterances lag their first by up to 65 ms more than on Unicorn; the greeting gains 6 idle frames inside it.
+- Why: MAME charges this firmware 12.7 clocks per instruction on average (the V20's clock counts and its prefetch),
+  so Unicorn's 1.5 million instructions a second are a 19.1 MHz V40. At 19.1 MHz the times fall within a few ms of
+  Unicorn's (first phonemes within 5.5 ms, inside utterances within 16 ms, the same idle frames). The unit's crystal
+  is not yet read; 8 MHz is the uPD70208-8's rating (MAME's nec.cpp notes the V40 at 10 MHz, the V40HL up to 20).
+- No undefined opcode was executed.

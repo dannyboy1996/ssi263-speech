@@ -13,6 +13,11 @@ out of the firmware (see the Speak-Out memory note for offsets):
     frame (R0 = 00, R1, R2, R3, R4, then the phoneme byte into R0).
 
 CPU time is coupled to chip time at `cpu_ips` instructions per chip second.
+
+The CPU is Unicorn's.  SSI263_SPEAKOUT_CORE (opt-in, for comparison; not yet accepted) selects MAME's V40 core
+instead, on the same board in C (src/csrc/speakout, through speakout_v40.py): "mame" couples CPU clocks to chip time
+at SSI263_SPEAKOUT_V40_HZ (default V40_HZ); "mame-steps" couples its steps at `cpu_ips`, as Unicorn's instructions
+are (nvda/tools/speakout_core_compare.py).
 """
 import os
 import sys
@@ -35,6 +40,15 @@ except ImportError:                       # the research tree: src/ on sys.path
 
 CHIP_BASE = 0xF0000 + 0xFE00
 IRQ_SERIAL, IRQ_CHIP = 1, 4
+V40_HZ = 8_000_000          # the MAME core's clock when coupled by clocks (the unit's crystal is not yet read)
+
+
+def _core():
+    """SSI263_SPEAKOUT_CORE: unicorn (the default), mame or mame-steps."""
+    core = os.environ.get("SSI263_SPEAKOUT_CORE", "").strip().lower() or "unicorn"
+    if core not in ("unicorn", "mame", "mame-steps"):
+        raise ValueError("SSI263_SPEAKOUT_CORE=%s: unicorn, mame or mame-steps" % core)
+    return core
 
 
 def load_intel_hex(path):
@@ -59,6 +73,11 @@ def load_intel_hex(path):
 
 
 class SpeakOut:
+    def __new__(cls, *args, **kwargs):
+        if cls is SpeakOut and _core() != "unicorn":
+            cls = SpeakOutV40
+        return object.__new__(cls)
+
     def __init__(self, hex_path, chip=None, out_rate=44100, cpu_ips=1_500_000):
         self.chip = chip or SSI263(out_rate=out_rate)
         self.cpu_ips = cpu_ips
@@ -117,15 +136,17 @@ class SpeakOut:
     def _mem_write(self, uc, access, addr, size, value, _):
         reg = addr - CHIP_BASE
         if 0 <= reg <= 4:
-            v = value & 0xFF
-            self.chip.write(reg, v)
-            if self.keep_writes:
-                self.chip_writes.append((round(self.chip.time, 6), reg, v))
-            # Idle = the start-of-utterance routine (0x4318): PA/3 with R2 forced to rate F.
-            # Speech never uses rate F, and every frame first primes R0 with 00.
-            if reg == 0 and v != 0x00 and not (v == 0xC0 and (self.chip.regs[2] >> 4) == 0xF):
-                self.last_speech = self.chip.time
-                self.preparing = False
+            self._chip_write(reg, value & 0xFF)
+
+    def _chip_write(self, reg, v):
+        self.chip.write(reg, v)
+        if self.keep_writes:
+            self.chip_writes.append((round(self.chip.time, 6), reg, v))
+        # Idle = the start-of-utterance routine (0x4318): PA/3 with R2 forced to rate F.
+        # Speech never uses rate F, and every frame first primes R0 with 00.
+        if reg == 0 and v != 0x00 and not (v == 0xC0 and (self.chip.regs[2] >> 4) == 0xF):
+            self.last_speech = self.chip.time
+            self.preparing = False
 
     # ---- CPU ---------------------------------------------------------------------
     def _cpu(self, count):
@@ -184,20 +205,39 @@ class SpeakOut:
         if any(ch.isalnum() for ch in body.replace("\x05", "")) and not text.startswith("\x05"):
             self.preparing = True
             self.say_time = self.chip.time
-        self.rx.extend(text.encode("latin-1", "replace"))
+        self._queue(text.encode("latin-1", "replace"))
+
+    # the serial input and the firmware's memory: overridden by SpeakOutV40, whose board holds them
+    def _queue(self, data):
+        self.rx.extend(data)
+
+    def _drop_input(self):
+        self.rx.clear()
+        self.rx_byte = None
+
+    def _input_queued(self):
+        return bool(self.rx) or self.rx_byte is not None
+
+    def _word(self, addr):
+        return int.from_bytes(self.uc.mem_read(addr, 2), "little")
+
+    def _offer(self):
+        """A slice's start: the chip's request first, else a serial byte (loaded if none is)."""
+        if self.chip.request:
+            self._try_irq(IRQ_CHIP)
+        elif (self.rx or self.rx_byte is not None):
+            if self.rx_byte is None:
+                self.rx_byte = self.rx.pop(0)
+            self._try_irq(IRQ_SERIAL)
 
     def input_pending(self):
         """Text not yet taken in, or taken in and not yet spoken by the rules."""
-        if self.rx or self.rx_byte is not None:
+        if self._input_queued():
             return True
-        rd = int.from_bytes(self.uc.mem_read(0x1A32, 2), "little")
-        wr = int.from_bytes(self.uc.mem_read(0x1A30, 2), "little")
-        if rd != wr:
+        if self._word(0x1A32) != self._word(0x1A30):
             return True
         # the phoneme-frame ring the chip ISR consumes (0x1119: [0x243C] chases [0x243A])
-        rd = int.from_bytes(self.uc.mem_read(0x243C, 2), "little")
-        wr = int.from_bytes(self.uc.mem_read(0x243A, 2), "little")
-        return rd != wr
+        return self._word(0x243C) != self._word(0x243A)
 
     def busy(self, quiet=0.06, patience=1.5):
         """Still speaking: input pending, a line not yet started (up to `patience` s),
@@ -216,8 +256,7 @@ class SpeakOut:
         """Flush the box: drop queued input and send Ctrl-X, as a host would; then let any
         frames it had already queued play out SILENTLY (the chip keeps time, no sound),
         so none of the cut speech reaches the next utterance."""
-        self.rx.clear()
-        self.rx_byte = None
+        self._drop_input()
         self.preparing = False
         self.say("\x18")
         self.skip(0.02)
@@ -230,12 +269,7 @@ class SpeakOut:
         """Run the firmware with the chip keeping time but making no sound."""
         t = 0.0
         while t < seconds - 1e-9:
-            if self.chip.request:
-                self._try_irq(IRQ_CHIP)
-            elif (self.rx or self.rx_byte is not None):
-                if self.rx_byte is None:
-                    self.rx_byte = self.rx.pop(0)
-                self._try_irq(IRQ_SERIAL)
+            self._offer()
             before = self.chip.time
             self.chip.skip(min(step, seconds - t))
             dt = max(self.chip.time - before, 1e-5)
@@ -246,12 +280,7 @@ class SpeakOut:
     def run(self, seconds, step=0.0005):
         out, t = [], 0.0
         while t < seconds:
-            if self.chip.request:
-                self._try_irq(IRQ_CHIP)
-            elif (self.rx or self.rx_byte is not None):
-                if self.rx_byte is None:
-                    self.rx_byte = self.rx.pop(0)
-                self._try_irq(IRQ_SERIAL)
+            self._offer()
             before = self.chip.time
             y = self.chip.run_until_request(step) if not self.chip.request else self.chip.run(step / 4)
             out.append(y)
@@ -259,3 +288,73 @@ class SpeakOut:
             self._cpu(max(200, int(self.cpu_ips * dt)))
             t += dt
         return self.chip.dsp.concat(out)
+
+
+class SpeakOutV40(SpeakOut):
+    """The same host on MAME's V40 core (opt-in: SSI263_SPEAKOUT_CORE=mame or mame-steps; SpeakOut() returns one).
+
+    Only the CPU changes: the board in C (src/csrc/speakout) has the same memory, the same chip window and the ICU and
+    SCU reduced as above; this class keeps the chip-time loop, the chip and its bookkeeping.  "mame" couples the core's
+    CLOCKS to chip time at clock_hz (a slice of n instructions above is n * clock_hz / cpu_ips clocks); "mame-steps"
+    couples its steps as Unicorn's instructions are, counted as Unicorn counts them (a REP ended by its count is one
+    more: so_board.h), for comparing the two cores step for step.
+    The chip's writes are applied after each slice, in order: nothing reads the chip during one."""
+
+    def __init__(self, hex_path, chip=None, out_rate=44100, cpu_ips=1_500_000, core=None, clock_hz=None):
+        try:
+            from .speakout_v40 import Board
+        except ImportError:                   # the research tree
+            from hosts.speakout_v40 import Board  # noqa: E402
+        self.chip = chip or SSI263(out_rate=out_rate)
+        self.cpu_ips = cpu_ips
+        self.core = core or _core()
+        self.clock_hz = float(clock_hz or os.environ.get("SSI263_SPEAKOUT_V40_HZ") or V40_HZ)
+        self.board = Board(hex_path)
+        self.uc = None
+        self.port_log = {}
+        self.chip_writes = []
+        self.keep_writes = True
+        self.last_speech = -1.0
+        self.preparing = False
+        self.say_time = 0.0
+        self.insns = 0
+
+    def _cpu(self, count):
+        b = self.board
+        s0 = b.steps()
+        if self.core == "mame-steps":
+            b.run_steps_unicorn(count)
+        else:
+            b.run_cycles(int(count * self.clock_hz / self.cpu_ips))
+        for reg, v in b.take_writes():
+            self._chip_write(reg, v)
+        self.insns += b.steps() - s0
+
+    def _offer(self):
+        self.board.offer(self.chip.request)
+
+    def _queue(self, data):
+        self.board.send(data)
+
+    def _drop_input(self):
+        self.board.drop_input()
+
+    def _input_queued(self):
+        return self.board.input_queued()
+
+    def _word(self, addr):
+        return int.from_bytes(self.board.read(addr, 2), "little")
+
+    def call(self, addr):
+        raise NotImplementedError("the MAME core's board has no register access (start_self_test: Unicorn only)")
+
+    def start_self_test(self, max_steps=200000):
+        raise NotImplementedError("start_self_test: Unicorn only")
+
+    @property
+    def isr(self):
+        return self.board.icu_state()["isr"]
+
+    @property
+    def imr(self):
+        return self.board.icu_state()["imr"]
