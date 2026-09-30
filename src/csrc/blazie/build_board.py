@@ -10,7 +10,8 @@ w64devkit gcc, i686 (as bns_live.exe), one translation unit (bl_unity.c) with th
 The same two programs on MAME's Z180 core (../cpu/z180_mame.cpp, the corrected path; not yet accepted, see
 ../cpu/README.md), for comparing the cores:
   bl_live_mame.exe, test_bl_board_mame.exe
-and the CPU contract's own tests on that core, test_z180_contract.exe.
+and the CPU contract's own tests on that core, test_z180_contract.exe; and those of MAME's 8085 core (the Accent
+SA's, ../cpu/i8085_mame.cpp), test_i8085_contract.exe.
 """
 import os
 import subprocess
@@ -50,7 +51,9 @@ def build_mame(gcc, env):
             ("bl_board", os.path.join(HERE, "bl_board.c"), gcc, ["-O3", "-std=gnu89", "-DBL_Z180_MAME"]),
             ("bl_live", os.path.join(HERE, "bl_live.c"), gcc, ["-O3", "-std=gnu89"]),
             ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"]),
-            ("test_z180_contract", os.path.join(cpu, "test_z180_contract.c"), gcc, ["-O2", "-std=gnu89"])):
+            ("test_z180_contract", os.path.join(cpu, "test_z180_contract.c"), gcc, ["-O2", "-std=gnu89"]),
+            ("i8085_mame", os.path.join(cpu, "i8085_mame.cpp"), gxx, MAME_CXX + ["-Wno-sign-compare"]),
+            ("test_i8085_contract", os.path.join(cpu, "test_i8085_contract.c"), gcc, ["-O2", "-std=gnu89"])):
         objs[name] = os.path.join(obj, name + ".o")
         subprocess.run([cc] + flags + inc + ["-c", "-o", objs[name], src], env=env, check=True)
     core = [objs["bl_board"], objs["z180_mame"], objs["z180_asci"]]
@@ -63,6 +66,9 @@ def build_mame(gcc, env):
     subprocess.run([gxx] + MAME_CXX + MAME_LINK + inc + ["-o", os.path.join(OUT, "test_z180_whitebox.exe"),
                                                          os.path.join(cpu, "test_z180_whitebox.cpp"), objs["z180_asci"]],
                    env=env, check=True)
+    # MAME's 8085 core (the Accent SA's; no board yet): the CPU contract's tests, ../cpu/test_i8085_contract.c
+    subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, "test_i8085_contract.exe"),
+                                        objs["test_i8085_contract"], objs["i8085_mame"]], env=env, check=True)
 
 
 def main():

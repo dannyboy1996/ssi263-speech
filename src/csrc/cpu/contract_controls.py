@@ -136,13 +136,14 @@ class RunError(Exception):
     tests from the inventory, or exited with a code that does not match its report."""
 
 
-def run_tests(exe, inventory=None):
-    """Both test programs; returns (every test's result {name: ok}, the failing names).  The guard (after Astra,
-    Reply 93, whose child exiting 42 without output passed the old stdout-only check): each program must end with
-    its summary line ("all passed" / "FAILED"), exit 0 with "all passed" and 1 with "FAILED", and nothing else;
-    and, given the baseline's inventory, report exactly those tests, each once."""
+def run_tests(exe, inventory=None, suffixes=("", "_wb")):
+    """The test programs (exe + each suffix: here the contract and the white-box tests); returns (every test's result
+    {name: ok}, the failing names).  The guard (after Astra, Reply 93, whose child exiting 42 without output passed
+    the old stdout-only check): each program must end with its summary line ("all passed" / "FAILED"), exit 0 with
+    "all passed" and 1 with "FAILED", and nothing else; and, given the baseline's inventory, report exactly those
+    tests, each once.  i8085_controls.py uses it too."""
     results = {}
-    for e in (exe, exe + "_wb"):
+    for e in [exe + s for s in suffixes]:
         try:
             p = subprocess.run([e], capture_output=True, text=True, timeout=120)
         except subprocess.TimeoutExpired:

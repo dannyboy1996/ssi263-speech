@@ -1,0 +1,24 @@
+MAME's 8085 core: where it comes from.
+
+Upstream:  https://github.com/mamedev/mame
+Revision:  1c924ea79551fdfc3960bfa8ceb93fc1928c661b (the snapshot Astra reviewed, Reply 93)
+Path:      src/devices/cpu/i8085/
+Licence:   BSD-3-Clause, per file (LICENSE-BSD-3-Clause.txt beside this file)
+Authors:   Juergen Buchmueller, Roberto Fresca, Grull Osgo (i8085.cpp's copyright-holders line; thanks-to Marcel De Kogel)
+
+  i8085.cpp  sha256 d2f2f84466ee7f434a76de4a96b4f1110620bf7c5611b4ec00f46ca62270dc0e
+             https://raw.githubusercontent.com/mamedev/mame/1c924ea79551fdfc3960bfa8ceb93fc1928c661b/src/devices/cpu/i8085/i8085.cpp
+  i8085.h    sha256 205e7dfafe38f484a87ed862f4c664a2feddbd6e4cdb8dfe27804c020e503f41
+             https://raw.githubusercontent.com/mamedev/mame/1c924ea79551fdfc3960bfa8ceb93fc1928c661b/src/devices/cpu/i8085/i8085.h
+
+Nothing is copied unchanged.  ../extract_i8085_machine.py copies exact line ranges of i8085.cpp into
+../i8085_mame_machine.cpp (generated: the constants, the cycle and flag tables, the power-on values, reset, the input
+lines, the interrupt check, the helpers and every instruction), refusing to run unless the source's sha256 is the one
+above and every anchor line is in place; every change is named in the script and marked CHANGED in the output.
+i8085.h is restated, without the framework, in ../i8085_mame.hpp.
+
+NOT taken: the constructors, the address-space configuration, the state table and save states, the disassembler
+(8085dasm.*) and execute_run -- our step driver in ../i8085_mame.cpp follows it.
+
+To update: fetch the newer i8085.cpp, change REVISION and SHA256 in the script, move any anchors, re-run it and the
+tests (test_i8085_contract.c, i8085_controls.py), and record the new revision here.

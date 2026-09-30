@@ -96,6 +96,20 @@ Lines are set with `*_set_irq(line, asserted)` and sampled at A.
 - **The Python core (`src/hosts/i8085.py`) is not an oracle.** It delays TRAP through the instruction after EI, and
   charges 12 T-states for an accepted interrupt where the pinned MAME source charges 11 (Reply 78). Each such
   difference is decided from Intel's documentation and recorded; neither implementation is copied blindly.
+- **Decided from Intel's documentation** (2026-09-29, for review; MCS-80/85 Family User's Manual, Jan 1983):
+  - An acceptance of TRAP or RST 5.5/6.5/7.5 is **12 T-states** **(chip)**: the RST listing gives "States: 12
+    (8085), 11 (8080)", and the hardware RESTART is that instruction generated internally ("it executes an OF
+    machine cycle without issuing RD, generating the RESTART opcode instead", section 2.3.5, Figure 2-19: M1 of six
+    states, then two memory writes). MAME's 11 is the 8080's; the extraction changes it (`I8085_ACCEPT_T`).
+  - TRAP is **not** delayed by EI (5) **(chip)**: TRAP "is not subject to any mask or interrupt enable/disable
+    instruction" (section 2.2.7); the EI listing's delay concerns "the interrupt system". The Python core's NOP
+    before a queued TRAP is its own behaviour.
+  - An injected instruction's T-states are its own: "The INA cycle is identical to an OF cycle" except INTA for
+    RD, and a CALL's two further INA cycles are three states each (section 2.3.4, Figures 2-17/2-18): an injected
+    RST is 12, a CALL 18, a NOP 4 **(chip)**. The PC is not incremented during INA cycles, so a conditional branch
+    not taken leaves it where the interrupt found it (MAME moved it by 2; changed).
+  - PSW bits 1, 3 and 5 are "X: Undefined" (the PUSH PSW listing): the cores may differ there, and MAME keeps its
+    undocumented V and K flags in them.
 
 ## 5. EI
 
@@ -198,7 +212,6 @@ controls, each undoing one driver rule, are `contract_controls.py`):
 
 **Tests still to write:**
 - refresh stopped in sleep (the core doesn't model refresh), and IOSTOP stopping the ASCI;
-- the 8085's INTR injected instructions (with its core);
 - the bus order of the other stack writes (see 4), if a board ever depends on it.
 
 **After Astra, Replies 93/94:** `im0_rst_nowait` (13 T, R + 1), `im0_nop_nowait` (5 T), `im0_prefixed` (LD IX,nn
@@ -215,6 +228,17 @@ summary line and the full test inventory (a crash, a timeout or a missing test f
 (IX)/(IY), RETN, RETI), decided from the acknowledge bytes, not from the final PC: `im0_jpix_collision`/`_ordinary`,
 `im0_retn_collision`/`_ordinary`, `im0_wrap`; an injected LDIR runs one iteration with the PC put back
 (`im0_ldir_once`, a model choice).
+
+**Written for the MAME 8085 core** (`test_i8085_contract.c`, in run_tests and the Linux gate; its must-fail
+controls, each undoing one rule of the driver, a named change of the extraction or an upstream rule, are
+`i8085_controls.py`): `zero_budget`, `reset` (counts zeroed, a pending TRAP edge and the 7.5 latch dropped, the
+masks set, a held RST 5.5 sampled again), `two_cores`; `trap_ei` (TRAP at EI's boundary taken before the next
+instruction, 12 T), `ei_shadow`; `halt_edge` (the slot is 4 T, the HLT 5), `accept_pc`, `halt_masked`;
+`trap_cancel` (edge AND level), `trap_edge`, `trap_priority`, `rim_after_trap` (and `i8085_regs_get` does not
+consume it); `priority` (7.5, 6.5, 5.5, INTR); `rst75_latch` (latched while masked), `sim_reveal` (taken at the
+next step's A, not inside SIM's step), `sim_r75`, `rst_levels`; `intr_rst`, `intr_call` (acknowledge bytes 0, 1,
+2; 18 T), `intr_nop` (nothing pushed, 4 T), `intr_jcc`, `intr_twice` (the byte index restarts), `intr_halt`;
+`sid_sod`.
 
 **The legacy path's exceptions** (`test_z180_legacy.c`, on z180emu): `legacy_nmi_entry` (an NMI raised at a slice's
 first boundary stays pending through that 30-cycle call and is taken at the next call's entry; one-cycle calls take
