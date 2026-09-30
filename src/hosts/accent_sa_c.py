@@ -49,9 +49,11 @@ def _load(chip):
         return _lib
     if os.name != "nt":
         # the chip's functions come from the library native.py loaded: made global so libaccent_sa.so binds to it
-        chip_lib = getattr(sys.modules.get(type(chip).__module__), "_lib", None)
-        if chip_lib is not None:
-            ctypes.CDLL(chip_lib._name, mode=ctypes.RTLD_GLOBAL)
+        for cls in type(chip).__mro__:                 # SSI263C, or a subclass of it
+            chip_lib = getattr(sys.modules.get(cls.__module__), "_lib", None)
+            if chip_lib is not None:
+                ctypes.CDLL(chip_lib._name, mode=ctypes.RTLD_GLOBAL)
+                break
     tried = []
     for path in _candidates():
         if os.path.isfile(path):

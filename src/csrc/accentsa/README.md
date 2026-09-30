@@ -13,7 +13,7 @@ read from a folder or given in memory (`firmware/aicom-accent-sa`, in the reposi
 | `as_host.h`, `as_host.c` | The host: `accent_sa.py`'s `AccentSA` in C (say, run, skip, busy, boot, cancel, speaking), around the board and an SSI-263 (`../ssi263.h`): the caller's, or one made from the built-in defaults. ROMs from a folder (`ash_create_dir`) or memory (`ash_create`). The API of `accent_sa.dll` / `libaccent_sa.so`. |
 | `as_render.c` | The C API alone: the ROMs from a folder and a text into a WAV, no Python (`as_render <folder> "text" out.wav`). |
 | `test_as_board.c` | The board's rules on small programs in a synthetic u2 (no firmware): 11 tests. |
-| `as_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (17; in run_tests). |
+| `as_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (17). Run by hand, as `so_controls.py`: seventeen builds. |
 | `compare_accent_sa.py` | The C host against the Python host (the reference) on a scripted session: every write's value and chip time, the audio, and the counting events, identical; the core's own counting reported and classified. `ACCENTSA_COMPARE_FLIP=1`: its must-fail control. |
 | `build_board.py` | Windows build (w64devkit): `nvda/dist/accentsa-lib/` gets `test_as_board.exe`, `as_render.exe`, `x64/` and `x86/accent_sa.dll` (importing `ssi263.dll`, as `bl.dll` does). `../../../build_linux.sh` builds `test_as_board`, `as_render` and `libaccent_sa.so`. |
 

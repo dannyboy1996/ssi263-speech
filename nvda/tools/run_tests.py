@@ -404,20 +404,18 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
         CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame at 8 MHz: experimental smoke test)",
                             [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
 
-# The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; opt-in, SSI263_ACCENT_SA_CORE=c,
-# the add-on keeps the Python 8085): the board's rules (test_as_board.c) and their must-fail controls (as_controls.py:
-# each rule undone, exactly its tests fail); the C host against the Python host (compare_accent_sa.py --quick: every
-# write's value and chip time, the audio and the counting events identical) with two controls, one value flipped and
-# the core's own counting (writes identical, the counting predicate must catch it); the C API alone (as_render: the
-# ROMs from their folder, a text into a WAV, no Python); and the built add-on's Accent SA voice on it, 64- and 32-bit.
-# Built by src/csrc/accentsa/build_board.py.
+# The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; opt-in,
+# SSI263_ACCENT_SA_CORE=c, the add-on keeps the Python 8085): the board's rules (test_as_board.c; their must-fail
+# controls, seventeen builds, are accentsa/as_controls.py's, run by hand as so_controls.py); the C host against the
+# Python host (compare_accent_sa.py --quick: every write's value and chip time, the audio and the counting events
+# identical) with two controls, one value flipped and the core's own counting (writes identical, the counting
+# predicate must catch it); the C API alone (as_render: the ROMs from their folder, a text into a WAV, no Python); and
+# the built add-on's Accent SA voice on it, 64- and 32-bit.  Built by src/csrc/accentsa/build_board.py.
 ASA_LIB = os.path.join(os.path.dirname(HERE), "dist", "accentsa-lib")
 ASA_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "accentsa")
 ASA_ROMS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "aicom-accent-sa")
 if os.path.isfile(os.path.join(ASA_LIB, "test_as_board.exe")):
     CHECKS.append(check("Accent SA board (MAME 8085): its rules", [os.path.join(ASA_LIB, "test_as_board.exe")]))
-    CHECKS.append(check("Accent SA board: must-fail controls (each rule undone)",
-                        [PY, os.path.join(ASA_DIR, "as_controls.py")]))
     CHECKS.append(check("Accent SA: the C API alone (as_render)",
                         [os.path.join(ASA_LIB, "as_render.exe"), ASA_ROMS, "Testing one two three.",
                          os.path.join(HERE, "out", "as_render_test.wav")],
