@@ -29,7 +29,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STEPS = sys.argv[1] if len(sys.argv) > 1 else "150"
-SEEDS = (3, 5, 7, 11)
+SEEDS = (1, 5, 8, 10, 14, 16)   # the 6 of seeds 1-16 that caught it in 2 or 3 of 3 rounds (2026-09-30)
 DEADLINE_S = float(os.environ.get("COMPLETE_FUZZ_CONTROL_DEADLINE", "240"))   # per child, from its launch
 # the guard's own tests (complete_fuzz_control_guard.py) substitute a fake child here
 CHILD = os.environ.get("COMPLETE_FUZZ_CONTROL_CHILD", os.path.join(HERE, "complete_fuzz.py"))

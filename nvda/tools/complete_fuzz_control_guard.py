@@ -1,5 +1,5 @@
 """The guard of complete_fuzz_control.py, tested with fake children (after Astra, Reply 95, whose fixtures made the
-old wrapper pass on a crash and on an inconsistent summary).  Each case gives the four seeds a behaviour; the
+old wrapper pass on a crash and on an inconsistent summary).  Each case gives the wrapper's seeds a behaviour; the
 wrapper must CATCH only when a seed caught the bug properly and every other child finished properly.
 
     python complete_fuzz_control_guard.py
@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FAKE = r'''
 import os, sys, time
 seed = sys.argv[2]
-kind = dict(p.split(":") for p in os.environ["FAKE_SPEC"].split(","))[seed]
+kind = dict(p.split(":") for p in os.environ["FAKE_SPEC"].split(",")).get(seed, "clean")
 if kind == "caught":
     print("step 9: something ended with 3 of its 9 phonemes"); print("55 finished utterances checked, 1 incomplete"); sys.exit(1)
 if kind == "clean":
@@ -33,15 +33,15 @@ if kind == "hang":
     time.sleep(60)
 '''
 
-CASES = [   # (name, spec for seeds 3, 5, 7, 11, the wrapper must catch?)
-    ("one proper catch", "3:caught,5:clean,7:clean,11:clean", True),
-    ("all clean", "3:clean,5:clean,7:clean,11:clean", False),
-    ("a crash that says 'incomplete'", "3:crash,5:clean,7:clean,11:clean", False),
-    ("exit 1 with 0 incomplete", "3:inconsistent,5:clean,7:clean,11:clean", False),
-    ("exit 0 with 2 incomplete", "3:exit0_with_bad,5:clean,7:clean,11:clean", False),
-    ("too little coverage", "3:low_coverage,5:clean,7:clean,11:clean", False),
-    ("a catch beside a silent exit 42", "3:caught,5:silent42,7:clean,11:clean", False),
-    ("a catch beside a hung child", "3:caught,5:hang,7:clean,11:clean", False),
+CASES = [   # (name, spec for the wrapper's seeds -- unlisted ones are clean --, the wrapper must catch?)
+    ("one proper catch", "1:caught,5:clean,8:clean,10:clean", True),
+    ("all clean", "1:clean,5:clean,8:clean,10:clean", False),
+    ("a crash that says 'incomplete'", "1:crash,5:clean,8:clean,10:clean", False),
+    ("exit 1 with 0 incomplete", "1:inconsistent,5:clean,8:clean,10:clean", False),
+    ("exit 0 with 2 incomplete", "1:exit0_with_bad,5:clean,8:clean,10:clean", False),
+    ("too little coverage", "1:low_coverage,5:clean,8:clean,10:clean", False),
+    ("a catch beside a silent exit 42", "1:caught,5:silent42,8:clean,10:clean", False),
+    ("a catch beside a hung child", "1:caught,5:hang,8:clean,10:clean", False),
 ]
 
 bad = 0
