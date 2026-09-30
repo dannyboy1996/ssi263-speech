@@ -189,6 +189,8 @@ void as_board_rst75(as_board *b)
     i8085_set_irq(b->cpu, I8085_RST75, 0);
 }
 
+/* A carry and a held TRAP never meet: a carry follows an acceptance's step (its instruction the vector's JMP), a hold
+   only an EI's. */
 uint64_t as_board_run(as_board *b, uint64_t budget)
 {
     uint64_t done = b->carry;

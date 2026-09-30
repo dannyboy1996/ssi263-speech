@@ -61,6 +61,10 @@ Two longer random sessions with commands between texts (a scratch search, seeds 
 pass, and 32 of them give the same PCM as on the Python host byte for byte (the 33rd is the cancel timed by the wall
 clock). The C host runs the full session in about half a second where the Python host takes 8 to 16.
 
+The counting check needs the session to hold a carried acceptance, and where one falls depends on the chip's timing.
+If a retune of the chip (`params.py`) moves it out of the short `commands` part, `compare_accent_sa.py --find-split 300`
+prints the shortest command-and-text sessions that hold one on the C host; put one in its `COMMANDS`.
+
 ## Open questions
 
 - Android (the next step): `build_android.sh` compiles no C++ yet, and the 8085 core is C++17 (no exceptions, no RTTI).

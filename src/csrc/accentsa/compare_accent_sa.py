@@ -25,6 +25,12 @@ experimental): which writes move, by how much, and after which counting event.
 
 Must-fail controls: ACCENTSA_COMPARE_FLIP=1 flips one C write's value before comparing; ACCENTSA_COMPARE_SLICES=chip
 compares the C host on the core's own counting, which the counting predicate must catch (its writes stay identical).
+
+Where the carried acceptances fall depends on the chip's timing (boot() ends when A/R lets it).  If a retune of the chip
+(params.py) moves them out of the commands part, the counting check fails for that reason, not the C host's:
+    python src/csrc/accentsa/compare_accent_sa.py --find-split 300
+runs the C host (fast) on that many sessions of boot(), then twice a command, 50 ms and a short text, and prints the
+shortest that hold one; put its command and texts in COMMANDS below.
 """
 import argparse
 import os
@@ -48,7 +54,7 @@ TEXTS = ["Hello, this is the Accent S A.",
          "Numbers: 7, 42, 1999; the 3rd of May, (maybe) \"quoted\".",
          "A long sentence that the listener interrupts before it is over, because another one is waiting."]
 PARTS = ("greeting", "commands", "driver")
-CMD = "\x1bRH\x1bP3"               # rate H, pitch 3
+COMMANDS = (("\x1bRH\x1bP3", "Yes."), ("\x1bRH\x1bP3", "Hello there."))   # rate H, pitch 3 (--find-split)
 SPLIT = "acceptance ended the slice"
 HELD = "TRAP in EI's shadow"
 
@@ -119,8 +125,8 @@ def session(host, quick):
         return blocks
     if host.part == "commands":
         host.boot()
-        for text in ("Yes.", "Hello there."):
-            host.say(CMD, speech=False)
+        for cmd, text in host.commands:
+            host.say(cmd, speech=False)
             run(0.05)
             speak(text)
         return blocks
@@ -149,7 +155,7 @@ def run_python(quick, parts):
             chip = SpyChip()
             host = AccentSA(ROMS, chip=chip, core="python")
             host.keep_writes = False
-            host.part = part
+            host.part, host.commands = part, COMMANDS
             _HOST[0] = host
             blocks += session(host, quick)
             log += [(part,) + w for w in chip.log]
@@ -165,7 +171,7 @@ def run_c(quick, slices, parts):
         host = AccentSA(ROMS, chip=SSI263C(), core="c", slices=slices)
         assert isinstance(host, AccentSAC)
         host.keep_writes = False
-        host.part = part
+        host.part, host.commands = part, COMMANDS
         host.on_write = lambda t, reg, val, part=part: log.append((part, t, reg, val))
         blocks += session(host, quick)
         splits += host.get("splits")
@@ -186,11 +192,35 @@ def speech_rule():
     return len(cases), bad
 
 
+def find_split(n):
+    """The commands part's shape on the C host over n random sessions: the shortest that hold a carried acceptance."""
+    import random
+    texts = ["Yes.", "No, 42.", "It costs $3.50.", "Hello there.", "OK?", "Call 555-1212!", "Is it 3:45?"]
+    cmds = ["\x1bR%s\x1bP%d" % (r, p) for r in "0379AH" for p in (0, 3, 5, 9)] + ["\x1bV3", "\x1bM1", "\x1bM0\x1bV5"]
+    found = []
+    for seed in range(n):
+        rng = random.Random(seed)
+        host = AccentSA(ROMS, chip=SSI263C(), core="c")
+        host.keep_writes = False
+        host.part = "commands"
+        host.commands = tuple((rng.choice(cmds), rng.choice(texts)) for _ in range(2))
+        session(host, True)
+        if host.get("splits"):
+            found.append((host.chip.time, host.get("splits"), host.commands))
+    for t, k, c in sorted(found)[:5]:
+        print("%.2f s, %d carried: COMMANDS = %r" % (t, k, c))
+    print("%d of %d sessions hold one" % (len(found), n))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--only", choices=PARTS)
+    ap.add_argument("--find-split", type=int, metavar="N")
     a = ap.parse_args()
+    if a.find_split:
+        find_split(a.find_split)
+        return
     parts = (a.only,) if a.only else PARTS
     failed = 0
 

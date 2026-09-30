@@ -51,7 +51,9 @@ AS_API ssi263 *ash_chip(as_host *h);
 
 /* Bytes down the serial line.  speech: 1 = text to be spoken (the host speeds the 8085 up until its first phoneme and
    waits for it: busy's patience), 0 = commands only, -1 = decide as accent_sa.py does (a letter or digit outside the
-   ESC commands, Latin-1).  1, or 0 when out of memory (nothing taken). */
+   ESC commands, Latin-1).  -1 decides on the bytes given: accent_sa.py decides on the text before it is encoded, so a
+   caller with text outside Latin-1 (a letter that reaches the Accent as "?") decides itself, as accent_sa_c.py does.
+   1, or 0 when out of memory (nothing taken). */
 AS_API int ash_say(as_host *h, const unsigned char *bytes, int n, int speech);
 /* `seconds` of chip time in `step` slices (0.0005 s): the chip's audio at out_rate, in an internal buffer valid until
    the next call.  Returns the sample count (-1: out of memory). */
