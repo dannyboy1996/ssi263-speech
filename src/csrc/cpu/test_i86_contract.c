@@ -1162,7 +1162,7 @@ static void t_word_memory_counts(void)
 
 /* TEST r/m,imm: Intel's register,immediate 5 and memory,immediate 11 + EA (printed 2-67/PDF 90; MAME 4 and 10 + EA,
    the ALU's rows), byte and word, at an even and an odd BX: a word operand at an odd address + 4, a byte never.  The
-   rows these share upstream stay: TEST AL/AX,imm (A8/A9) 4 (2-67), CMP r8,imm 4 and CMP mem,imm 10 + EA (2-51/PDF 74).
+   rows these share upstream stay: TEST AL/AX,imm (A8/A9) 4 (2-67), CMP r8,imm 4 and CMP mem,imm 10 + EA (2-53/PDF 76).
    [BX]: EA 5 */
 static void t_test_imm_counts(void)
 {

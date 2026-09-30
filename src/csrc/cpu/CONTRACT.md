@@ -189,8 +189,10 @@ documented as it behaves):**
     with it stay: **LOOPNE taken 19** ("19 or 5", 2-60/PDF 83; MAME LOOP's 17; not taken 5, as LOOP's); **TEST
     r8/r16,imm 5** and **TEST m8/m16,imm 11 + EA** (2-67/PDF 90; MAME the ALU's 4 and CMP's 10 + EA). TEST AL/AX,imm
     (A8/A9) keeps its own 4 (the same page), as do the 80h-83h group's reg,imm 4 and CMP mem,imm 10 + EA. A word
-    TEST m16,imm at an odd address adds the 4 **(model**: the table's Transfers column shows none for this one row,
-    where every other memory-reading row shows its read; the operand is read, so it is counted as one transfer**)**.
+    TEST m16,imm at an odd address adds the 4 **(model**: the table's Transfers column shows "-" for this row, where
+    every other memory,immediate row shows its transfers (CMP's and MOV's 1, 2-53/PDF 76 and 2-61/PDF 84; ADD's and
+    the other ALU rows' 2) and TEST register,memory shows 1; the operand is read, so it is counted as one
+    transfer**)**.
     LOOP 17/5 and LOOPE 18/6 were already Intel's.
   - MUL/DIV are one figure each, the lowest of Intel's data-dependent ranges. Which physical PC drove the card
     (8086 or 8088) is not established and need not be: the core is a named virtual 8086.
