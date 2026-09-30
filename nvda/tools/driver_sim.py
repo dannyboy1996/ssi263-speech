@@ -159,14 +159,56 @@ cmds = module("speech.commands", IndexCommand=IndexCommand, PitchCommand=PitchCo
 module("speech", commands=cmds)
 
 mark = 0
+# Completion, owned (Astra, Reply 104; the same rule as fake_nvda_driver_test.py): "the queue empty and a done since
+# the speak" took the previous utterance's done while this one was still being spoken.  Each sequence spoken here ends
+# with an index of its own; it is complete when that index has been reached and a done follows it, with no other
+# utterance's index between.  A dead worker or running out of time is False, never a pass.
+OWNED_BASE = 900000
+owned = []
+# the must-fail control: the old rule put back, and a done forged after each speak (a previous utterance's, late)
+STALE = os.environ.get("DRIVER_SIM_STALE") == "1"
+
+
+def own(drv):
+    """Give every sequence drv speaks a trailing index of its own (as NVDA's speech manager ends each utterance)."""
+    speak = drv.speak
+
+    def owned_speak(seq):
+        owned.append((OWNED_BASE + len(owned), len(notified)))
+        speak(list(seq) + [IndexCommand(owned[-1][0])])
+        if STALE:
+            notified.append(("done", None))
+    drv.speak = owned_speak
+    return drv
+
+
+def completed(tok, since):
+    if STALE:
+        return d._queue.empty() and any(n[0] == "done" for n in notified[since:])
+    try:
+        p = notified.index(("index", tok), since)
+    except ValueError:
+        return False
+    for name, idx in notified[p + 1:]:
+        if name == "done":
+            return True
+        if name == "index" and isinstance(idx, int) and idx >= OWNED_BASE:
+            return False                     # the next utterance's index before this one's done: never done
+    return False
 
 
 def wait_idle(timeout=30):
+    if not owned:
+        return False
+    tok, since = owned[-1]
     t = time.perf_counter()
     while time.perf_counter() - t < timeout:
-        if d._queue.empty() and any(n[0] == "done" for n in notified[mark:]):
+        if completed(tok, since):
             return True
-        time.sleep(0.02)
+        w = getattr(d, "_worker", None)
+        if w is not None and not w.is_alive():
+            return False
+        time.sleep(0.005)
     return False
 
 
@@ -181,7 +223,7 @@ if WHICH == "both":
     for w in MODULE:
         m = importlib.import_module("synthDrivers." + MODULE[w])
         own = m.SSI263C.__module__ == "synthDrivers._ssi263_%s.ssi263.native" % w
-        d = m.SynthDriver()
+        d = own(m.SynthDriver())
         config_guard(w)
         time.sleep(0.3)
         mark = len(notified)
@@ -198,7 +240,7 @@ if WHICH == "both":
     sys.exit(0 if all_ok else 1)
 sd.__path__ = [BUILDS[WHICH]]
 drv = importlib.import_module("synthDrivers." + MODULE[WHICH])
-d = drv.SynthDriver()
+d = own(drv.SynthDriver())
 config_guard(WHICH)
 if SA:
     d._set_voice("sa")               # as NVDA does after loading the driver, from its config
@@ -349,7 +391,7 @@ for r in ("11025", "22050", "44100"):
 d._set_sampleRate("8000")                      # not offered: ignored
 ref = srate["44100"]
 srate_ok = srate_default and d._get_sampleRate() == "44100" and all(
-    ok and rate == int(r) and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
+    ok and ref[2] > 0 and ref[3] > 0 and rate == int(r) and abs(secs / ref[2] - 1) < 0.03 and abs(rms / ref[3] - 1) < 0.15
     for r, (ok, rate, secs, rms) in srate.items())
 print("sample rate: default 22 kHz %s; %s: %s" % (srate_default, ", ".join("%s %.2f s rms %.0f" % (r, v[2], v[3])
                                                                      for r, v in srate.items()), "ok" if srate_ok else "FAILED"))
