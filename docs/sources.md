@@ -57,6 +57,9 @@
   ships in the Blazie add-on.
 - **MAME's i8085** was the reference for the 8085's interrupt details; the CPU test
   programs TST8080 and 8080PRE checked the core.
+- **MAME's i8085** (BSD-3-Clause; Juergen Buchmueller, Roberto Fresca, Grull Osgo), at
+  revision 1c924ea7, is extracted into the library's 8085 core (`src/csrc/cpu/`, see
+  `mame_i8085/PINNED.txt`), with the changes Intel's MCS-80/85 Family User's Manual decides.
 
 ## People
 

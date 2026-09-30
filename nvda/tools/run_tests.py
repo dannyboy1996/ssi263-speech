@@ -117,6 +117,10 @@ if os.path.isfile(ANDROID_TEST):
     CHECKS.append(check("Android engine: native part as bl.dll", [PY, ANDROID_TEST]))
     CHECKS.append(check("Android engine CONTROL (rate dropped, must fail)", [PY, ANDROID_TEST],
                         env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True))
+# MAME's 8085 core (the Accent SA's, src/csrc/cpu/i8085_mame.cpp; not yet in a board): CONTRACT.md's clauses
+# (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
+if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
+    CHECKS.append(check("MAME 8085 core: CPU contract tests", [os.path.join(LIB, "test_i8085_contract.exe")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail

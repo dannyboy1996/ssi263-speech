@@ -16,12 +16,24 @@ The cores never know which board they are in.
 | `z180_trap.hpp` | Which prefixed opcodes the Z180 defines, from the manual's op code maps; every other one TRAPs. Ours; it decides, not MAME's tables. |
 | `z180_asci.hpp`, `z180_asci.cpp` | Our own byte-level serial ports (ASCI 0 and 1) with MAME's register method names, and a CSI/O stub. Divisors from the chip's registers, `/DCD0`, the interrupt as a level. |
 | `test_z180_zex.c` | Runs a CP/M instruction exerciser (zexdoc/zexall, not in the repo) on either core. |
+| `mame_i8085/` | Where MAME's 8085 comes from: `PINNED.txt` (the upstream revision, the files' hashes) and the licence text (BSD-3-Clause; Juergen Buchmueller, Roberto Fresca, Grull Osgo). Nothing of it is copied unchanged. |
+| `extract_i8085_machine.py` | Generates `i8085_mame_machine.cpp` from MAME's `i8085.cpp` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
+| `i8085_mame_machine.cpp` | **Generated; do not edit.** MAME's 8085: the tables, reset, the input lines, the interrupt check (acceptance 12 T, Intel's; INTR only accepted, its instruction injected at E), RIM/SIM, every instruction. |
+| `i8085_mame.hpp` | Our class around it: the member names MAME's code expects (from `i8085.h`) and small stand-ins for the framework (the bus, the INTR acknowledge, SID/SOD). |
+| `i8085_mame.cpp` | **Our step driver** (the contract's phases for the 8085) and the `cpu.h` functions. It includes `i8085_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
+| `test_i8085_contract.c` | CONTRACT.md's clauses on the 8085 core, one test each (TRAP, the RSTs, INTR's injected instructions, EI, HALT, RIM/SIM, SID/SOD, reset, two instances), T-states from Intel's manual. |
+| `i8085_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (the runner guard is `contract_controls.py`'s). |
+| `test_i8085_cpm.c` | Runs a CP/M 8080/8085 test program (TST8080, 8080PRE, 8080EXM, CPUTEST; GPL, not in the repo) on the 8085 core. |
+| `trace_i8085.py` | The 8085 core against the Python one (`src/hosts/i8085.py`) on the Accent SA firmware's boot: per-step registers at the boundary, the first differences by class. |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
 `test_bl_board_mame.exe`, beside the legacy ones) and `../../../build_linux.sh` (`test_bl_board_mame`). Gated in
 `nvda/tools/run_tests.py`: the spoken values of both goldens (`bns_equiv.py --values-only`; times are not
 compared, they legitimately differ), a must-fail control with one value flipped, and two units in one process.
 The shipped libraries still use the legacy core.
+
+MAME's 8085 (the Accent SA's CPU, to replace `src/hosts/i8085.py`) is built the same way: `test_i8085_contract.exe`
+by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated; no board runs it yet.
 
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.
@@ -46,3 +58,18 @@ build using only the MAME core is MIT plus MAME's BSD-3 notice.
   (`z180_trap.hpp`, from the manual's Tables 48-50), with ITC.TRAP/UFO and the stacked PC as the manual says.
 - Known limits of the MAME core: MAME's wait states (DCNTL, charged on every access; the legacy core
   charged them only in DMA).
+
+## The MAME 8085 against the Python core (first comparison, 2026-09-29)
+
+- The CP/M test programs (`test_i8085_cpm.c`; not in the repo): TST8080 ("CPU IS OPERATIONAL") and 8080PRE pass.
+  8080EXM: 2 of 25 groups pass; CPUTEST stops at its test 000Bh (INR B: F = 00h, "should contain 02h"). Both
+  check PSW bits 1, 3 and 5, which Intel leaves undefined on the 8085 (the PUSH PSW listing's "X") and an 8080
+  holds at 1, 0, 0; MAME keeps its undocumented V and K flags there. A scratch run with PUSH PSW forced to the
+  8080's bits (not a change to the core): 8080EXM 23 of 25, the two left being `aluop` (the 8085's ANA sets AC,
+  Intel's ANA listing), and CPUTEST reports no error before it waits for console input.
+- The Accent SA firmware (`trace_i8085.py`, both cores in lockstep on a stub board, 400,000 instructions of boot
+  and "Hello."): the same 312 SSI-263 writes at the same instructions, the same interrupts (TRAP 55, RST 6.5 14),
+  the same T-states for every instruction and acceptance (12), and the same registers except PSW bits 1/3/5 from
+  the reset value on. `--control` (an 11-T acceptance) must be reported, and is. With `--trap-after-ei 1` (a
+  TRAP raised right after an EI) the cores part: the MAME core takes TRAP at once (CONTRACT.md 5), the Python
+  core runs the next instruction first.
