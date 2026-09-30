@@ -24,7 +24,7 @@ enum { ID_EN = 100, ID_ES, ID_TNS, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_KEYS = 
 typedef struct { const char *name, *firmware, *state; } unit_kind;
 static const unit_kind KINDS[] = {
     {"Braille Lite 2000 (English)", "BL2ENG.BNS", "bl2_2003_warm.state"},
-    {"Braille Lite 2000 (Spanish)", "spanish\\BL2SPA.BNS", "spanish\\bl2spa_warm.state"},
+    {"Braille Lite 2000 (Spanish)", "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state"},
 };
 
 static HWND g_wnd;

@@ -27,7 +27,8 @@ menu, as moving a display would be; still to be confirmed on the unit).
 ## Firmware
 
 Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.BNS` + `bl2_2003_warm.state`, and
-`spanish\BL2SPA.BNS` + `spanish\bl2spa_warm.state`). Run from the source tree, the program finds
+`spanish\BL2SPA.BNS` + `spanish\bl2spa_fresh.state`, the state the Spanish driver uses; the "warm" one has
+speech off). Run from the source tree, the program finds
 `firmware/blazie/` itself; `firmware_dir=` in `[unit]` overrides both.
 
 ## Not yet
