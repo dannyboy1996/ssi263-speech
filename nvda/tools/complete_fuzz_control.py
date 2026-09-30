@@ -5,8 +5,9 @@ then passed when it had to fail).  Several seeds make a miss rarer; how much rar
 seeds share one machine's load, so their misses need not be independent).
 
 Every child must finish properly (after Astra, Reply 95): its last line exactly "<n> finished utterances checked,
-<m> incomplete", at least MIN_CHECKED utterances checked, and its exit status consistent with m (1 when m > 0, 0 when
-m = 0).  A crash, a malformed or inconsistent summary, too little coverage or a timeout makes the whole control
+<m> incomplete[, <l> late]", at least MIN_CHECKED utterances checked, and its exit status consistent with m + l (1
+when m + l > 0, 0 when both are 0); only m (short at the utterance's own completion) counts as a catch.  A child that
+could not identify a completion (Reply 104: exit 2, "COMPLETION NOT IDENTIFIED") has no summary: broken, not a catch.  A crash, a malformed or inconsistent summary, too little coverage or a timeout makes the whole control
 fail.  Each child's full output is kept in out/complete_fuzz_control/seed<N>.txt.
 
 Passes (exit 0) when at least one seed catches the bug and every child finished properly; otherwise exits 1.
@@ -33,7 +34,8 @@ DEADLINE_S = float(os.environ.get("COMPLETE_FUZZ_CONTROL_DEADLINE", "240"))   # 
 # the guard's own tests (complete_fuzz_control_guard.py) substitute a fake child here
 CHILD = os.environ.get("COMPLETE_FUZZ_CONTROL_CHILD", os.path.join(HERE, "complete_fuzz.py"))
 MIN_CHECKED = 40
-SUMMARY = re.compile(r"^(\d+) finished utterances checked, (\d+) incomplete$")
+# "..., <l> late" since Reply 104 (phonemes loaded after the utterance's own done, counted apart from incomplete)
+SUMMARY = re.compile(r"^(\d+) finished utterances checked, (\d+) incomplete(?:, (\d+) late)?$")
 OUT = os.path.join(HERE, "out", "complete_fuzz_control")
 
 env = dict(os.environ, SIM_SPEED="10", COMPLETE_FUZZ_050="1", PYTHON_COLORS="0")
@@ -78,11 +80,11 @@ for s, p, deadline in procs:
     elif not m:
         broken.append((s, "no proper summary (exit %d): %r" % (p.returncode, lines[-1][:80] if lines else "")))
     else:
-        checked, bad = int(m.group(1)), int(m.group(2))
+        checked, bad, late = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
         if checked < MIN_CHECKED:
             broken.append((s, "only %d utterances checked" % checked))
-        elif (bad > 0 and p.returncode != 1) or (bad == 0 and p.returncode != 0):
-            broken.append((s, "exit %d does not match %d incomplete" % (p.returncode, bad)))
+        elif (bad + late > 0 and p.returncode != 1) or (bad + late == 0 and p.returncode != 0):
+            broken.append((s, "exit %d does not match %d incomplete, %d late" % (p.returncode, bad, late)))
         elif bad > 0:
             caught.append(s)
     print("seed %d: exit %s, %s  (full output: %s)" % (s, "timeout" if timed_out else p.returncode,

@@ -52,6 +52,42 @@ for synth in ("speakout", "accent"):
 CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must be caught)", [PY, "complete_fuzz_control.py", "150"]))
 # the control's own guard: fake children that crash, mis-summarise, under-cover or hang must never count as a catch
 CHECKS.append(check("complete_fuzz CONTROL guard", [PY, "complete_fuzz_control_guard.py"]))
+# complete_fuzz's completion is owned (Astra, Reply 104): an utterance is complete at ITS OWN index and the done after
+# it, never at the previous utterance's done.  Each control breaks that one way and must end as that error (exit 2),
+# neither a pass nor an incomplete count; utterance 7 is past the five references, 0 is the first reference.  stale
+# done = the old rule put back, with a done forged after each speak (a previous utterance's, landing late); timeout =
+# the worker stuck inside the unit.
+for what, env, marks in (
+        ("stale done", {"COMPLETE_FUZZ_STALE": "1"},
+         [r"^reference #0 'Yes, it works\.': CompletionError: STALE DONE accepted for index 900000: the done at "
+          r"notification \d+ follows no owned index$", r"^complete_fuzz: COMPLETION NOT IDENTIFIED at reference #0 "]),
+        ("missing index", {"COMPLETE_FUZZ_NO_INDEX": "7"},
+         [r"CompletionError: MISSING INDEX: index 9000\d\d never reached, though \d+ done\(s\) came",
+          r"^complete_fuzz: COMPLETION NOT IDENTIFIED at step \d+, #\d+ .*\(MISSING INDEX\)"]),
+        ("missing done", {"COMPLETE_FUZZ_NO_DONE": "7"},
+         [r"CompletionError: MISSING DONE: index 9000\d\d reached, no done after it",
+          r"^complete_fuzz: COMPLETION NOT IDENTIFIED at step \d+, #\d+ .*\(MISSING DONE\)"]),
+        ("reference: missing done", {"COMPLETE_FUZZ_NO_DONE": "0"},
+         [r"^reference #0 'Yes, it works\.': CompletionError: MISSING DONE: index 900000 reached",
+          r"^complete_fuzz: COMPLETION NOT IDENTIFIED at reference #0 "]),
+        ("timeout", {"COMPLETE_FUZZ_HANG": "7"},
+         [r"CompletionError: TIMEOUT: neither index 9000\d\d nor any done in 5\.0 s",
+          r"^complete_fuzz: COMPLETION NOT IDENTIFIED at step \d+, #\d+ .*\(TIMEOUT\)"]),
+        ("worker death", {"COMPLETE_FUZZ_KILL_WORKER": "7"},
+         [r"CompletionError: WORKER DIED: the driver's worker thread",
+          r"^complete_fuzz: COMPLETION NOT IDENTIFIED at step \d+.*\(WORKER DIED\)"])):
+    CHECKS.append(check("complete_fuzz CONTROL (%s, must error)" % what, [PY, "complete_fuzz.py", "150", "1"],
+                        env=dict({"SIM_SPEED": "10", "COMPLETE_FUZZ_WAIT_S": "5"}, **env), expect_fail=True,
+                        fail_marks=marks, fail_codes=(2,)))
+# ... and the positive half: the same forged dones under the owned rule change nothing
+CHECKS.append(check("complete_fuzz, forged dones (owned rule)", [PY, "complete_fuzz.py", "150", "1"],
+                    env={"SIM_SPEED": "10", "COMPLETE_FUZZ_FORGE_DONE": "1"}))
+# the Accent-mini on MAME's 8086 core (opt-in; not gated before Reply 104 because the old rule failed it on seed 3)
+PC86_FUZZ = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib", "x64", "pc86.dll")
+if os.path.isfile(PC86_FUZZ):
+    CHECKS.append(check("complete_fuzz accent on the MAME 8086 core", [PY, "complete_fuzz.py", "150", "3"],
+                        env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "accent", "SSI263_ACCENT_CORE": "mame",
+                             "SSI263_PC86_DLL": PC86_FUZZ}))
 # the premature completion replayed from a caught live session (complete_fuzz seed 4): the cut line must be spoken
 # whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
 CHECKS.append(check("premature completion replay", [PY, "premature_replay.py"]))
