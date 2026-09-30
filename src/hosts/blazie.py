@@ -26,6 +26,7 @@ except ImportError:                       # the research tree: src/ on sys.path
 CLOCK_HZ = 6144000.0
 CHORDS = ["8000000=5C", "18000000=7F", "28000000=07", "38000000=51"]   # 345, 123456, L, e
 BOOT_INSTR = 48000000
+PLAYING_MAX_S = 1.0                # longer than any phoneme the firmware loads (busy())
 KEY_GAP = 10000000                 # instructions between boot keys (1.6 s of unit time)
 # Speech-menu letters (BL2000 help, 345-chord menu), as braille key codes: bit n-1 = dot n.
 # Punctuation t/m/s/z = total/most/some/none; n toggles digits / full numbers.
@@ -196,6 +197,7 @@ class Blazie:
         self.prep_step = None      # a coarser lockstep while preparing (None: the run() step)
         self._stale_f = 0          # ^F echoes owed by earlier say()s (the held flush line)
         self.last_speech = -1.0
+        self.last_load = -1.0
         self.feed_chip = False     # during boot, writes set chip state but make no audio
         self._cmd("B %d" % boot_instr)
         self._cmd("LIVE")
@@ -215,6 +217,8 @@ class Blazie:
                 _, reg, val = r.split()
                 reg, val = int(reg), int(val, 16)
                 self.chip.write(reg, val)
+                if reg == 0 and not (self.chip.regs[3] & 0x80):
+                    self.last_load = self.chip.time          # any phoneme, PA included (busy())
                 if reg == 0 and not (self.chip.regs[3] & 0x80) and (val & 0x3F):
                     self.last_speech = self.chip.time        # PA (code 00) is not speech
                     self.preparing = False
@@ -275,6 +279,16 @@ class Blazie:
         than it -- 8.4 s, a spelled-out Mastodon handle -- ended the utterance just before
         its echo, and the unit's remaining lines came out only with the next utterance."""
         if (self.chip.time - self.last_speech) < quiet:
+            return True
+        # The firmware is still inside an utterance while the chip plays a phoneme it loaded: in a pause it loads PA
+        # after PA, each within a few ms of the chip's A/R request; at the end it leaves A/R unanswered.  So "done"
+        # waits for that, whatever the ^F count says -- a count one echo short after some cancels (complete_fuzz
+        # seed 4, investigation of 2026-09-29) ended "One, two, three, four." at its comma.  Bounded by
+        # PLAYING_MAX_S: a chip the firmware has switched off is not playing.  Only while speech has loaded since
+        # the last ^F echo: at a real end the last echo follows all the speech, and the PA the firmware loads after
+        # it must not delay "done" (121 ms an utterance, measured); a miscounted echo comes before speech that follows.
+        if (self.last_speech > self.say_time and not self.chip.request
+                and (self.chip.time - self.last_load) < PLAYING_MAX_S):
             return True
         return self.owed() > 0 and (self.chip.time - max(self.say_time, self.last_speech)) < patience
 

@@ -11,6 +11,7 @@
 #include "bl_whine_table.h"
 
 #define CLOCK_HZ 6144000.0
+#define PLAYING_MAX_S 1.0              /* longer than any phoneme the firmware loads (bh_busy) */
 
 void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state);   /* ssi263dsp.c */
 
@@ -29,7 +30,7 @@ struct bl_host {
     unsigned char *tx;
     int n_tx, cap_tx;
     int sent_f, echo_f, stale_f;
-    double say_time, last_speech, turbo, prep_step;
+    double say_time, last_speech, last_load, turbo, prep_step;
     int preparing, turbo_between_lines;
     double *buf;
     int n_buf, cap_buf;
@@ -65,6 +66,8 @@ static void events(bl_host *h)
                     h->n_wl++;
                 }
             }
+            if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80))
+                h->last_load = ssi263_time(h->chip);        /* any phoneme, PA included (bh_busy) */
             if (reg == 0 && !(ssi263_reg(h->chip, 3) & 0x80) && (val & 0x3F)) {
                 h->last_speech = ssi263_time(h->chip);      /* PA (code 00) is not speech */
                 h->preparing = 0;
@@ -133,6 +136,7 @@ BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip,
     h->turbo = 4.0;
     h->prep_step = 0.0;                                    /* None */
     h->last_speech = -1.0;
+    h->last_load = -1.0;
     h->unit = bl_create(firmware, state, 5.0, key_at, key_val, n_keys, err, errlen);
     if (!h->unit) { free(h); return NULL; }
     bl_boot(h->unit, boot_instr);                          /* _cmd("B ...") */
@@ -194,6 +198,10 @@ BL_API int bh_busy(const bl_host *h, double quiet, double patience)
     double now = ssi263_time(h->chip);
     double since = h->say_time > h->last_speech ? h->say_time : h->last_speech;   /* max(say_time, last_speech) */
     if ((now - h->last_speech) < quiet)
+        return 1;
+    /* the firmware is still inside an utterance while the chip plays a phoneme it loaded -- when speech has loaded
+       since the last ^F echo (see blazie.py's busy) */
+    if (h->last_speech > h->say_time && !request(h) && (now - h->last_load) < PLAYING_MAX_S)
         return 1;
     return bh_owed(h) > 0 && (now - since) < patience;
 }

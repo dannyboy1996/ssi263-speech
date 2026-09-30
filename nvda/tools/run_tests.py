@@ -52,6 +52,13 @@ for synth in ("speakout", "accent"):
 CHECKS.append(check("complete_fuzz CONTROL (0.5.0 cancel, must be caught)", [PY, "complete_fuzz_control.py", "150"]))
 # the control's own guard: fake children that crash, mis-summarise, under-cover or hang must never count as a catch
 CHECKS.append(check("complete_fuzz CONTROL guard", [PY, "complete_fuzz_control_guard.py"]))
+# the premature completion replayed from a caught live session (complete_fuzz seed 4): the cut line must be spoken
+# whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
+CHECKS.append(check("premature completion replay", [PY, "premature_replay.py"]))
+CHECKS.append(check("premature completion replay CONTROL (0.6.0 busy, must be cut)", [PY, "premature_replay.py"],
+                    env={"PREMATURE_REPLAY_OLD": "1"}, expect_fail=True,
+                    fail_marks=[r"^native +CUT +3 of 13 phonemes before done: W UH1 N$",
+                                r"^pipe +CUT +3 of 13 phonemes before done: W UH1 N$", r"^premature replay: 2 FAILED$"]))
 # and this runner's own must-fail judgement: silent exits, native crashes, tracebacks, missing marks never count
 CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))

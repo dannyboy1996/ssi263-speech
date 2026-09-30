@@ -128,6 +128,16 @@ if os.environ.get("COMPLETE_FUZZ_050"):
         unit.echo_f = unit.sent_f
         return r
     unit.cancel = cancel_050
+    if hasattr(unit, "last_speech"):
+        # and 0.5.0's busy(): done once the ^F count says so and nothing but PA played for `quiet` -- the host's
+        # later check that the chip is not still playing a phoneme the firmware loaded makes a miscount harmless,
+        # so without taking it out too the control could not show a cut-off at all (2026-09-29)
+        def busy_050(quiet=0.1, patience=3.0):
+            now = unit.chip.time
+            if now - unit.last_speech < quiet:
+                return True
+            return unit.owed() > 0 and now - max(unit.say_time, unit.last_speech) < patience
+        unit.busy = busy_050
 
 said = []            # (text, cancelled after?)
 
