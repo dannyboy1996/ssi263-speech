@@ -74,6 +74,15 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
     CHECKS.append(check("library board: two units in one process", [os.path.join(LIB, "test_bl_board.exe"),
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
+    # CONTRACT.md 3: the legacy path's own exceptions (src/csrc/cpu/test_z180_legacy.c)
+    CHECKS.append(check("z180emu legacy path: its exceptions", [os.path.join(LIB, "test_z180_legacy.exe")]))
+# the Blazie emulator app (src/apps/blazie): its chord logic, and the unit headless (boot greeting heard, a chord
+# answered against the no-chord control, faster than real time)
+EMU = os.path.join(os.path.dirname(HERE), "dist", "blazie-emu")
+if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
+    CHECKS.append(check("Blazie emulator: chords", [os.path.join(EMU, "test_chords.exe")]))
+    CHECKS.append(check("Blazie emulator: the unit, headless", [os.path.join(EMU, "test_emu_unit.exe"),
+                        os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
 # MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
 # timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
@@ -91,7 +100,6 @@ if os.path.isfile(MAME_LIVE):
     # CONTRACT.md's clauses (src/csrc/cpu/test_z180_contract.c; its must-fail controls: cpu/contract_controls.py)
     CHECKS.append(check("MAME Z180 core: CPU contract tests", [os.path.join(LIB, "test_z180_contract.exe")]))
     CHECKS.append(check("MAME Z180 core: white-box tests", [os.path.join(LIB, "test_z180_whitebox.exe")]))
-    CHECKS.append(check("z180emu legacy path: its exceptions", [os.path.join(LIB, "test_z180_legacy.exe")]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail

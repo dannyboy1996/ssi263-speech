@@ -37,6 +37,8 @@ struct bl_unit {
     unsigned long long key_at[MAX_KEYS];
     unsigned char key_val[MAX_KEYS], key_latch;
     int n_keys, next_key, key_latched, hold_chord;
+    unsigned char live_keys[16];             /* bl_key: chords pressed live, delivered one per boundary when free */
+    int n_live_keys;
     int ff_state, ff_autoselect;
     unsigned char port_e0;
     unsigned site_release;
@@ -225,6 +227,12 @@ static void boundary(void *ctx, uint32_t pc)
         u->key_latch = u->key_val[u->next_key++];
         u->key_latched = 1;
         z180_set_irq(u->cpu, Z180_INT2, 1);
+    } else if (u->n_live_keys && !u->key_latched) {  /* a live chord, once the last one has been read */
+        u->hold_chord = -1;
+        u->key_latch = u->live_keys[0];
+        memmove(u->live_keys, u->live_keys + 1, (size_t)--u->n_live_keys);
+        u->key_latched = 1;
+        z180_set_irq(u->cpu, Z180_INT2, 1);
     }
 }
 
@@ -399,6 +407,14 @@ int bl_drop(bl_unit *u)
         u->ltail++;
     }
     return n6;
+}
+
+int bl_key(bl_unit *u, int chord)
+{
+    if (u->n_live_keys == (int)sizeof u->live_keys)
+        return 0;
+    u->live_keys[u->n_live_keys++] = (unsigned char)chord;
+    return 1;
 }
 
 unsigned long long bl_cycles(const bl_unit *u)

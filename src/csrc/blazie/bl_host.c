@@ -427,3 +427,8 @@ BL_API int bh_tx(const bl_host *h, const unsigned char **bytes)
     *bytes = h->tx;
     return h->n_tx;
 }
+
+int bh_key(bl_host *h, int chord)
+{
+    return bl_key(h->unit, chord);
+}

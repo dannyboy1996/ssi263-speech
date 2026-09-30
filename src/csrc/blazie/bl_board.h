@@ -38,6 +38,9 @@ void bl_queue(bl_unit *u, const unsigned char *bytes, int n);/* bns 'S': bytes f
 void bl_urgent(bl_unit *u, int byte);                        /* bns 'U': one byte delivered even under XOFF (^X) */
 int  bl_drop(bl_unit *u);                                    /* bns 'D': drop queued input; the ^F markers dropped */
 unsigned long long bl_cycles(const bl_unit *u);              /* CPU cycles so far */
+/* a braille key chord pressed live (port 40h: dot 1 = bit 0 .. dot 6 = bit 5, space = bit 6, bit 7 = an advance
+   key): latched with /INT2 at the next boundary after the last chord was read; 0 if 16 are already waiting */
+int  bl_key(bl_unit *u, int chord);
 
 /* the events since the last bl_clear_events, in order */
 int  bl_events(const bl_unit *u, const bl_event **events);
