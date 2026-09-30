@@ -1,0 +1,33 @@
+MAME's NEC core (the V40 of the Speak-Out): where it comes from.
+
+Upstream:  https://github.com/mamedev/mame
+Revision:  c0d3677674339a489efbad881047012ce8c2cc96 (origin/master, 2026-08-27)
+Path:      src/devices/cpu/nec/
+Licence:   BSD-3-Clause, per file (LICENSE-BSD-3-Clause.txt beside this file)
+Author:    Bryan McPhail (every copied file's copyright-holders line)
+
+sha256 of each file with LF line ends (as raw.githubusercontent.com serves it; a Windows checkout's CRLF is folded):
+  nec.cpp       a2456982d4998ca5cdc724080f193f43d9b8ac1eb880d8669194e9e99b3da2a6
+  nec.h         d5352079f764d37b9a15c72ea51373697a74004ebb518c16dbee87151f905276
+  necpriv.ipp   36852ebd2d3087565d93268fa4dd66c878e2af83b32b1af715076c983452fd66
+  necea.h       d67d42551b5bced80727b69ac69041239b632f7a65c7d52d16f0db4d5f291559
+  necmodrm.h    541e971a01f429d43e87f8ce74be1dee049d2a0445d3d75e2fedcb2eec8cf6b3
+  necmacro.h    e42a9b19cd06437732c3ba102e4ba909ff8affc4abf13e86347152b1fc97b08d
+  necinstr.h    2f7b787026e4b533e2208ef3721d355f5f1648054c074feca4f1b6467cc53e4f
+  necinstr.hxx  f70cc2ae5064066fe324b3f6486ac29f2fc4c8373cf5a3b879ffb25a8b277b04
+Read, not copied (the V40's parameters: v40_device at lines 572 and 584):
+  v5x.cpp       ca1057a67ab09d3a29ee2226f3b23b68ff155696453306db3df69858b77fd494   (copyright-holders: Patrick Mackinlay)
+
+Nothing is copied unchanged.  ../extract_v40_machine.py copies exact line ranges of those files into
+../v40_mame_machine.cpp (generated: the enums and macros, the class's members, fetch and the prefetch queue, the
+instruction table, reset, interrupts, every instruction, the input lines, the tables), refusing to run unless every
+file's sha256 is the one above and every anchor line is in place; every change is named in the script and marked
+CHANGED in the output.  The class's head (the framework's bases and overrides, nec.h lines 25-68) is the script's own.
+
+NOT taken: the constructors and device types, the address-space configuration, the state table and save states, the
+disassembler (necdasm.*), execute_run (our step driver in ../v40_mame.cpp follows it), the V33's translation map, the
+8080 emulation mode (nec80inst.hxx and its table: BRKEM is a fault of this core), the V25 (v25*.*), and v5x.cpp's
+on-chip peripherals (ICU, TCU, SCU, DMA: a board models what its firmware uses).
+
+To update: point the script at a newer checkout, change REVISION and SHA256 in it, move any anchors, re-run it and the
+tests (test_v40_contract.c, v40_controls.py), and record the new revision here.

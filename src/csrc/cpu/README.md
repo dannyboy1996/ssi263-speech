@@ -24,6 +24,13 @@ The cores never know which board they are in.
 | `test_i8085_contract.c` | CONTRACT.md's clauses on the 8085 core, one test each (TRAP, the RSTs, INTR's injected instructions, EI, HALT, RIM/SIM, SID/SOD, reset, two instances), T-states from Intel's manual. |
 | `i8085_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (the runner guard is `contract_controls.py`'s). |
 | `test_i8085_cpm.c` | Runs a CP/M 8080/8085 test program (TST8080, 8080PRE, 8080EXM, CPUTEST; GPL, not in the repo) on the 8085 core. |
+| `mame_nec/` | Where MAME's NEC core (the V40, the Speak-Out's CPU) comes from: `PINNED.txt` (the upstream revision, each file's hash) and the licence text (BSD-3-Clause; Bryan McPhail). Nothing of it is copied unchanged. |
+| `extract_v40_machine.py` | Generates `v40_mame_machine.cpp` from eight files of MAME's `src/devices/cpu/nec/` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
+| `v40_mame_machine.cpp` | **Generated; do not edit.** MAME's V20/V40 instruction set: the class's members, fetch and the prefetch queue, the instruction table, reset, interrupts, every instruction. No 8080 mode, no V33 map, no on-chip peripherals. |
+| `v40_mame.hpp` | The shim MAME's NEC code compiles against: the bus (8-bit, 20-bit addresses), I/O, the interrupt acknowledge, `logerror`. |
+| `v40_mame.cpp` | **Our step driver** (the contract's phases for the V40: one REP iteration per step, HALT, the undefined-opcode count) and the `cpu.h` functions. It includes `v40_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
+| `test_v40_contract.c` | CONTRACT.md 12's clauses on the V40 core, one test each (22). |
+| `v40_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (19). |
 | `trace_i8085.py` | The 8085 core against the Python one (`src/hosts/i8085.py`) on the Accent SA firmware's boot: per-step registers at the boundary, the first differences by class. |
 
 Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `bl_live_mame.exe`,
