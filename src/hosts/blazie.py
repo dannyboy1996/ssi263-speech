@@ -27,6 +27,7 @@ CLOCK_HZ = 6144000.0
 CHORDS = ["8000000=5C", "18000000=7F", "28000000=07", "38000000=51"]   # 345, 123456, L, e
 BOOT_INSTR = 48000000
 PLAYING_MAX_S = 1.0                # longer than any phoneme the firmware loads (busy())
+UNANSWERED_S = 1.0                 # a given request left unanswered this long: the firmware is done (busy())
 KEY_GAP = 10000000                 # instructions between boot keys (1.6 s of unit time)
 # Speech-menu letters (BL2000 help, 345-chord menu), as braille key codes: bit n-1 = dot n.
 # Punctuation t/m/s/z = total/most/some/none; n toggles digits / full numbers.
@@ -181,6 +182,7 @@ class Blazie:
                                      creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
                                      cwd=os.path.dirname(os.path.abspath(exe)))
         self.ar = None
+        self.ar_time = -1.0
         self.tx = []               # bytes the unit sent back (XON/XOFF, ^F markers)
         # ^F bookkeeping.  The unit echoes each ^F in speaking order, but it holds the
         # last line it received (an empty flush line, CR ^F) until the next arrives, so
@@ -287,9 +289,16 @@ class Blazie:
         # PLAYING_MAX_S: a chip the firmware has switched off is not playing.  Only while speech has loaded since
         # the last ^F echo: at a real end the last echo follows all the speech, and the PA the firmware loads after
         # it must not delay "done" (121 ms an utterance, measured); a miscounted echo comes before speech that follows.
-        if (self.last_speech > self.say_time and not self.chip.request
-                and (self.chip.time - self.last_load) < PLAYING_MAX_S):
-            return True
+        if self.last_speech > self.say_time:
+            if not self.chip.request and (self.chip.time - self.last_load) < PLAYING_MAX_S:
+                return True
+            # ... and while the chip's request has not reached the firmware, or reached it and is not answered yet:
+            # only a request given to the firmware and left unanswered for UNANSWERED_S is an end (Astra, Reply 100:
+            # a request raised at the end of a run() call, not yet forwarded, passed for one; and a line break's next
+            # segment can take a while to translate).  The normal end never gets here (no speech since the last echo).
+            if self.chip.request and not (self.ar and self.last_load < self.ar_time
+                                          and self.chip.time - self.ar_time >= UNANSWERED_S):
+                return True
         return self.owed() > 0 and (self.chip.time - max(self.say_time, self.last_speech)) < patience
 
     def cancel(self, limit=3.0, quiet=None, cut=None):
@@ -332,6 +341,8 @@ class Blazie:
         while t < seconds - 1e-9:
             if self.chip.request != self.ar:
                 self.ar = self.chip.request
+                if self.ar:
+                    self.ar_time = self.chip.time    # when the firmware was given the request (busy())
                 self._cmd("A %d" % (1 if self.ar else 0))
             before = self.chip.time
             self.chip.skip(seconds - t)
@@ -348,6 +359,8 @@ class Blazie:
         while t < seconds:
             if self.chip.request != self.ar:
                 self.ar = self.chip.request
+                if self.ar:
+                    self.ar_time = self.chip.time    # when the firmware was given the request (busy())
                 self._cmd("A %d" % (1 if self.ar else 0))
             before = self.chip.time
             st = self.prep_step if (self.preparing and self.prep_step) else step

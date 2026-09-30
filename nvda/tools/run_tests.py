@@ -57,8 +57,14 @@ CHECKS.append(check("complete_fuzz CONTROL guard", [PY, "complete_fuzz_control_g
 CHECKS.append(check("premature completion replay", [PY, "premature_replay.py"]))
 CHECKS.append(check("premature completion replay CONTROL (0.6.0 busy, must be cut)", [PY, "premature_replay.py"],
                     env={"PREMATURE_REPLAY_OLD": "1"}, expect_fail=True,
-                    fail_marks=[r"^native +CUT +3 of 13 phonemes before done: W UH1 N$",
-                                r"^pipe +CUT +3 of 13 phonemes before done: W UH1 N$", r"^premature replay: 2 FAILED$"]))
+                    fail_marks=[r"^FAIL +native +30 ms blocks +CUT 3 of 13 phonemes at done, 8 MORE after: W UH1 N$",
+                                r"^FAIL +pipe +30 ms blocks +CUT 3 of 13 phonemes at done, 8 MORE after: W UH1 N$",
+                                r"^premature replay: 2 FAILED$"]))
+# ... and a busy() that is never false must fail every case, not pass on the phonemes it collected (Astra, Reply 100)
+CHECKS.append(check("premature completion replay CONTROL (never done, must fail)", [PY, "premature_replay.py"],
+                    env={"PREMATURE_REPLAY_NEVER": "1"}, expect_fail=True,
+                    fail_marks=[r"^FAIL +native +30 ms blocks +NEVER DONE", r"^FAIL +pipe +0.5 ms polling +NEVER DONE",
+                                r"^premature replay: 6 FAILED$"]))
 # and this runner's own must-fail judgement: silent exits, native crashes, tracebacks, missing marks never count
 CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))

@@ -12,6 +12,7 @@
 
 #define CLOCK_HZ 6144000.0
 #define PLAYING_MAX_S 1.0              /* longer than any phoneme the firmware loads (bh_busy) */
+#define UNANSWERED_S 1.0               /* a given request left unanswered this long: the firmware is done */
 
 void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state);   /* ssi263dsp.c */
 
@@ -30,7 +31,7 @@ struct bl_host {
     unsigned char *tx;
     int n_tx, cap_tx;
     int sent_f, echo_f, stale_f;
-    double say_time, last_speech, last_load, turbo, prep_step;
+    double say_time, last_speech, last_load, ar_time, turbo, prep_step;
     int preparing, turbo_between_lines;
     double *buf;
     int n_buf, cap_buf;
@@ -99,6 +100,8 @@ static void set_ar(bl_host *h)
     int r = request(h);
     if (r != h->ar) {
         h->ar = r;
+        if (r)
+            h->ar_time = ssi263_time(h->chip);             /* when the firmware was given the request (bh_busy) */
         bl_set_ar(h->unit, r);
         events(h);
     }
@@ -137,6 +140,7 @@ BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip,
     h->prep_step = 0.0;                                    /* None */
     h->last_speech = -1.0;
     h->last_load = -1.0;
+    h->ar_time = -1.0;
     h->unit = bl_create(firmware, state, 5.0, key_at, key_val, n_keys, err, errlen);
     if (!h->unit) { free(h); return NULL; }
     bl_boot(h->unit, boot_instr);                          /* _cmd("B ...") */
@@ -201,8 +205,14 @@ BL_API int bh_busy(const bl_host *h, double quiet, double patience)
         return 1;
     /* the firmware is still inside an utterance while the chip plays a phoneme it loaded -- when speech has loaded
        since the last ^F echo (see blazie.py's busy) */
-    if (h->last_speech > h->say_time && !request(h) && (now - h->last_load) < PLAYING_MAX_S)
-        return 1;
+    if (h->last_speech > h->say_time) {
+        if (!request(h) && (now - h->last_load) < PLAYING_MAX_S)
+            return 1;
+        /* ... and while the request has not reached the firmware, or reached it and is not answered yet (see
+           blazie.py's busy; Astra, Reply 100) */
+        if (request(h) && !(h->ar == 1 && h->last_load < h->ar_time && now - h->ar_time >= UNANSWERED_S))
+            return 1;
+    }
     return bh_owed(h) > 0 && (now - since) < patience;
 }
 
