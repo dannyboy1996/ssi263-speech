@@ -28,9 +28,9 @@ The cores never know which board they are in.
 | `extract_v40_machine.py` | Generates `v40_mame_machine.cpp` from eight files of MAME's `src/devices/cpu/nec/` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
 | `v40_mame_machine.cpp` | **Generated; do not edit.** MAME's V20/V40 instruction set: the class's members, fetch and the prefetch queue, the instruction table, reset, interrupts, every instruction. No 8080 mode, no V33 map, no on-chip peripherals. |
 | `v40_mame.hpp` | The shim MAME's NEC code compiles against: the bus (8-bit, 20-bit addresses), I/O, the interrupt acknowledge, `logerror`. |
-| `v40_mame.cpp` | **Our step driver** (the contract's phases for the V40: one REP iteration per step, HALT, the undefined-opcode count) and the `cpu.h` functions. It includes `v40_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
-| `test_v40_contract.c` | CONTRACT.md 12's clauses on the V40 core, one test each (22). |
-| `v40_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (19). |
+| `v40_mame.cpp` | **Our step driver** (the contract's phases for the V40: one REP iteration per step, NEC's interrupt deferrals and HALT release, the undefined-opcode count) and the `cpu.h` functions. It includes `v40_mame_machine.cpp`. The header comment lists every deliberate difference from MAME. |
+| `test_v40_contract.c` | CONTRACT.md 12's clauses on the V40 core, one test each (28). |
+| `v40_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (28). |
 | `trace_i8085.py` | The 8085 core against the Python one (`src/hosts/i8085.py`) on the Accent SA firmware's boot: per-step registers at the boundary, the first differences by class. |
 | `mame_i86/` | Where MAME's 8086 comes from: `PINNED.txt` (the upstream revision, the files' hashes) and the licence text (BSD-3-Clause; Carl). Nothing of it is copied unchanged. |
 | `extract_i86_machine.py` | Generates `i86_mame_machine.cpp` from MAME's `i86.cpp` and `i86inline.h` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |
@@ -103,16 +103,46 @@ greeting, six sentences spoken to their end, one cut by ^X): `nvda/tools/speakou
 - Steps coupled to chip time as Unicorn's instructions (`mame-steps`): all 4,268 SSI-263 writes identical, values
   and times. One counting difference had to be matched first: Unicorn counts a REP string instruction that ends by
   its count as n + 1 instructions (the exit test is one more), this core as n steps (`so_run_steps_unicorn`, tested
-  against Unicorn's own counts).
-- Clocks at 8 MHz (`mame`): every speech frame of every utterance identical (the cut one up to the cut). The firmware
-  writes more idle frames (PA at rate F) while its rules work, and the times move: an utterance's first phoneme lands
-  about twice as late after the text is sent (e.g. 74 against 34.5 ms, 160 against 69.5 ms), and phonemes inside
-  long utterances lag their first by up to 65 ms more than on Unicorn; the greeting gains 6 idle frames inside it.
-- Why: MAME charges this firmware 12.7 clocks per instruction on average (the V20's clock counts and its prefetch),
-  so Unicorn's 1.5 million instructions a second are a 19.1 MHz V40. At 19.1 MHz the times fall within a few ms of
-  Unicorn's (first phonemes within 5.5 ms, inside utterances within 16 ms, the same idle frames). The unit's crystal
-  is not yet read; 8 MHz is the uPD70208-8's rating (MAME's nec.cpp notes the V40 at 10 MHz, the V40HL up to 20).
+  against Unicorn's own counts). **This is the migration candidate** for replacing Unicorn under the existing host
+  (Astra, Reply 103): the host's scheduling stays what it is, and only the CPU changes.
+- Clocks at 8 MHz (`mame`), **experimental**: every speech frame of every utterance identical (the cut one up to the
+  cut). The firmware writes more idle frames (PA at rate F) while its rules work, and the times move: an utterance's
+  first phoneme lands about twice as late after the text is sent (e.g. 74 against 34.5 ms, 160 against 69.5 ms), and
+  phonemes inside long utterances lag their first by up to 65 ms more than on Unicorn; the greeting gains 6 idle
+  frames inside it.
+- MAME charges this firmware 12.7 clocks per instruction on average (the V20's clock counts and its prefetch), so
+  Unicorn's 1.5 million instructions a second match a 19.1 MHz V40 on this workload, where the times fall within a
+  few ms of Unicorn's. That ratio is this workload's, not a conversion constant, and neither 8 MHz nor 19.1 MHz is
+  this board's clock: 8 MHz is the uPD70208-8's speed grade, not a measurement; the unit's oscillator is not read,
+  and the V40 may divide it to get its CPU clock.
+- **What the identical frames do not show** (withdrawn, after Astra, Reply 103: an earlier draft read this comparison
+  as "the clock is the open quantity, not the CPU"). Matching this firmware's speech frames leaves the CPU's
+  semantics, its interrupt timing and the host's scheduling each open; four interrupt rules of the V40 were wrong in
+  this core while the frames matched (next).
 - No undefined opcode was executed.
+
+## NEC's interrupt rules on the V40 (after Astra, Reply 103; 2026-09-30)
+
+NEC's 1990 16-bit V-Series Data Book (the uPD70208 section, printed p.34, PDF p.159) and Instruction Manual
+U11301EJ5V0UMJ1 (printed pp.80, 98, 118) corrected four behaviours and added two deferrals MAME lacks (CONTRACT.md 12):
+EI delays INT, not NMI, through the next instruction; a move FROM a segment register, POP DS0/DS1 and a completed POLL
+defer NMI and INT like MOV/POP SS; an INT with IE = 0 releases HALT without an acknowledge, execution resuming after
+the HLT and the INT waiting for IE. Astra's four probes (`v40_manual_probe.c`) now pass on the core; each rule has its
+test and its must-fail control (`v40_controls.py`).
+
+What they change on the Speak-Out (`speakout_core_compare.py`, the same scenario; which rules the firmware reaches was
+counted with a scratch-instrumented build, not in the tree):
+- The firmware executes EI 1.86 million times, MOV r/m,sreg 8, POP DS1 931,415, POP DS0 2,949 (`mame-steps`), and
+  never HLT, POLL or BUSLOCK: the HALT release and the POLL deferral are never reached.
+- An interrupt was pending right after an EI 102 times (`mame-steps`), after nothing else the new rules cover. Each is
+  a slice edge: the host offers the chip's or the serial request at a slice's start when IE is set, and the slice
+  before ended on an EI. Unicorn (and the old core) vectored before the next instruction; the corrected core runs it
+  first. `mame-steps`: every one of the 4,268 writes still identical to Unicorn's, values and times; the clock total
+  moved by 4 (451,891,320 to 451,891,324).
+- `mame` at 8 MHz: 31 deferrals after EI and 1 after POP DS1 changed the run from utterance 1 on: 4,532 writes against
+  4,552, 794 acceptances against 798, every speech frame still identical to Unicorn's; the idle frames written with
+  utterances 2, 3 and 6 changed (19, 28, 41 against 18, 27, 47; still none inside an utterance) and speech phonemes
+  moved by -9.6 to +4.4 ms. The coupling's times were already not the chip's (above).
 
 ## The MAME 8086 against Unicorn (first comparison, 2026-09-30)
 

@@ -2,12 +2,13 @@
 (v40_mame.cpp), the shim (v40_mame.hpp), a named change of the extraction or an upstream rule the contract states
 (v40_mame_machine.cpp) -- in a temporary copy, and exactly that rule's tests must then fail.  Proves the tests see
 what they claim to (the repo's rule for any fix claim).  The runner guard (exit code, summary line, the full test
-inventory) is contract_controls.py's.  Not in run_tests: twenty C++ builds take a minute or two.
+inventory) is contract_controls.py's.  Not in run_tests: 29 C++ builds take a few minutes.
 
     python src/csrc/cpu/v40_controls.py
 
 No control is possible for the statics made members (Mod_RM, parity_table, nec_popa_tmp): the tables are the same in
-every instance, so two cores agree with them shared too; two_cores checks the instances stay apart.
+every instance, so two cores agree with them shared too; two_cores checks the instances stay apart.  Nor for reset
+clearing EI's delay (drv_ei_shadow): reset clears IE, and the delay is spent by the first instruction after it.
 """
 import os
 import shutil
@@ -36,13 +37,27 @@ VARIANTS = {
         DRV, "static const int V40_HALT_SLOT = 2;", "static const int V40_HALT_SLOT = 3;",
         ["halt_int", "mode8080_fault"]),
     "an acceptance ends HALT": (
-        DRV, "    m_halted = 0;                            // an acceptance ends HALT\n", "",
-        ["halt_int", "halt_masked"]),
+        DRV, "            m_halted = 0;                    // an acceptance ends HALT\n", "",
+        ["ei_halt", "halt_int", "halt_nmi"]),
     "no acceptance in a shadow": (
-        DRV, "    if (!m_pending_irq || m_no_interrupt)", "    if (!m_pending_irq)", ["sreg_shadow"]),
+        DRV, "    if (m_pending_irq && !m_no_interrupt) {", "    if (m_pending_irq) {",
+        ["pop_sreg_shadow", "poll_shadow", "sreg_from_shadow", "sreg_shadow"]),
     "the shadow runs down at C": (
         DRV, "    if (d.m_no_interrupt)                    // C\n        d.m_no_interrupt--;\n", "",
-        ["prefix_atomic", "rep_seg_irq", "sreg_shadow"]),   # the tests that load a segment register
+        ["pop_sreg_shadow", "poll_shadow", "prefix_atomic", "rep_seg_irq", "sreg_from_shadow", "sreg_shadow"]),
+    # NEC's rules (after Astra, Reply 103: V40 data book 1990 p.34; instruction manual pp.80, 98, 118)
+    "EI's delay lets NMI through (driver)": (
+        DRV, "        if (nmi || (m_IF && !drv_ei_shadow)) {", "        if ((nmi && !drv_ei_shadow) || (m_IF && !drv_ei_shadow)) {",
+        ["ei_nmi"]),
+    "a masked INT releases HALT": (
+        DRV, "    if (m_halted && (m_pending_irq & INT_IRQ))\n        m_halted = 0;", "",
+        ["halt_masked_wake"]),
+    "the release keeps the INT pending": (
+        DRV, "        m_halted = 0;                        // a masked INT releases HALT:",
+        "        { m_halted = 0; m_pending_irq &= ~INT_IRQ; }   // dropped:", ["halt_masked_wake"]),
+    "the release is no acceptance": (
+        DRV, "        if (nmi || (m_IF && !drv_ei_shadow)) {", "        if (nmi || m_halted || (m_IF && !drv_ei_shadow)) {",
+        ["halt_masked_wake"]),
     "acceptance PC": (
         DRV, "    c->pc = linear(d, d.m_ip);               // A's callbacks see the interrupted address\n", "",
         ["halt_int", "int_accept"]),
@@ -61,22 +76,35 @@ VARIANTS = {
         SHIM, "        write_byte(a, (u8)v);\n        write_byte(a + 1, (u8)(v >> 8));",
         "        write_byte(a + 1, (u8)(v >> 8));\n        write_byte(a, (u8)v);", ["word_order"]),
     # the extraction's named changes
-    "INT with IE = 0 leaves HALT alone": (
+    "INT releases HALT at A, not at the line": (
         GEN, "\t\tm_pending_irq |= INT_IRQ;\n", "\t\tm_pending_irq |= INT_IRQ;\n\t\tm_halted = 0;\n",
-        ["halt_int", "halt_masked"]),   # upstream wakes at the line: the instruction after HLT runs first
+        ["halt_int", "halt_masked_wake"]),   # upstream wakes at the line: the instruction after HLT runs first
     "NMI ends HALT at its acceptance": (
-        GEN, "\t\tm_pending_irq |= NMI_IRQ;\n", "\t\tm_pending_irq |= NMI_IRQ;\n\t\tm_halted = 0;\n", ["halt_masked"]),
+        GEN, "\t\tm_pending_irq |= NMI_IRQ;\n", "\t\tm_pending_irq |= NMI_IRQ;\n\t\tm_halted = 0;\n", ["halt_nmi"]),
+    "EI delays INT": (
+        GEN, "CLK(2); drv_ei_shadow=1; }", "CLK(2); }", ["ei_halt", "ei_shadow", "halt_masked_wake", "reset"]),
+    "EI's delay is its own, not m_no_interrupt": (   # Astra: a shadow that holds NMI off too is wrong for EI
+        GEN, "CLK(2); drv_ei_shadow=1; }", "CLK(2); m_no_interrupt=1; }", ["ei_nmi"]),
+    "a move FROM a segment register defers": (
+        GEN, "\tm_no_interrupt=1;   // CHANGED: a move FROM", "\t// a move FROM", ["sreg_from_shadow"]),
+    "POP DS1 defers": (
+        GEN, "CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP SS", "CLKS(12,8,5);   }   // as POP SS",
+        ["pop_sreg_shadow"]),
+    "POP DS0 defers": (
+        GEN, "CLKS(12,8,5);   m_no_interrupt=1; }   // CHANGED: as POP DS1", "CLKS(12,8,5);   }   // as POP DS1",
+        ["pop_sreg_shadow"]),
+    "a completed POLL defers": (
+        GEN, "m_ip--; else m_no_interrupt=1; CLK(5); }", "m_ip--; CLK(5); }", ["poll_shadow"]),
     # upstream rules the contract states
     "reset drops a pending NMI": (
         GEN, "\tm_pending_irq = 0;\n", "", ["reset"]),
     "POP SS shadow": (
-        GEN, "CLKS(12,8,5);   m_no_interrupt=1; }", "CLKS(12,8,5); }", ["sreg_shadow"]),
+        GEN, "POP(Sreg(SS));     CLKS(12,8,5);   m_no_interrupt=1; }", "POP(Sreg(SS));     CLKS(12,8,5); }",
+        ["sreg_shadow"]),
     "the acceptance consumes INT": (
         GEN, "\t\tm_irq_state = CLEAR_LINE;\n\t\tm_pending_irq &= ~INT_IRQ;\n", "\t\tm_irq_state = CLEAR_LINE;\n",
-        ["halt_int", "int_accept", "rep_irq", "rep_seg_irq", "reset", "sreg_shadow"]),   # a held line taken again
-    "EI without a shadow (MAME)": (
-        GEN, "OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); }",
-        "OP( 0xfb, i_ei    ) { SetIF(1);         CLK(2); m_no_interrupt=1; }", ["ei_no_shadow", "reset"]),
+        ["ei_halt", "ei_shadow", "halt_int", "halt_masked_wake", "int_accept", "poll_shadow", "pop_sreg_shadow",
+         "rep_irq", "rep_seg_irq", "reset", "sreg_from_shadow", "sreg_shadow"]),   # a held line taken again
 }
 
 CXX = ["-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-Wno-sign-compare"]

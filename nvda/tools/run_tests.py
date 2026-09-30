@@ -164,7 +164,8 @@ if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
 # MAME's V40 core (the Speak-Out's, src/csrc/cpu/v40_mame.cpp) and the Speak-Out board on it (src/csrc/speakout): opt-in,
 # not yet accepted (the add-on keeps Unicorn).  The contract's clauses, the board's own rules, and, with the firmware,
 # the board against today's Unicorn host (speakout_core_compare.py: steps coupled as Unicorn's instructions, every write
-# identical; clocks at 8 MHz, the speech frames identical, the times classified) with its must-fail control, and the
+# identical -- the migration candidate; clocks at 8 MHz, experimental: a speed grade, not a measured clock -- the
+# speech frames identical, the times classified) with its must-fail control, and the
 # driver on the MAME core (SSI263_SPEAKOUT_CORE=mame).  Built by src/csrc/speakout/build_board.py.
 SO_LIB = os.path.join(os.path.dirname(HERE), "dist", "speakout-lib")
 if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
