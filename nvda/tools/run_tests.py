@@ -144,15 +144,19 @@ if os.path.isfile(ANDROID_TEST):
     CHECKS.append(check("Android engine CONTROL (rate dropped, must fail)", [PY, ANDROID_TEST],
                         env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAILED: 4 case\(s\) differ$", r"^ok +desktop +spanish "]))
-# ... its firmware import (src/csrc/blazie/bl_firmware.c, bl_state.c): files found and refused by content, and the
-# states made from the firmware alone = the shipped ones, byte for byte and in speech; the control holds the wrong
-# chord at the English warm reset and must differ in the state and in every English case
+# ... its firmware import (src/csrc/blazie/bl_firmware.c, bl_state.c): files found and refused by content, only the
+# releases on the list taken, and the states made from the firmware alone = the listed ones, byte for byte and in
+# speech; one control holds the wrong chord at the English warm reset and must differ in the state and in every
+# English case, the other drops the list and must take the unknown releases
 IMPORT_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_import_native.py")
 if os.path.isfile(IMPORT_TEST):
-    CHECKS.append(check("Android import: firmware by content, states made on the device", [PY, IMPORT_TEST]))
+    CHECKS.append(check("Android import: known firmware only, states made on the device", [PY, IMPORT_TEST]))
     CHECKS.append(check("Android import CONTROL (wrong warm-reset chord, must fail)", [PY, IMPORT_TEST],
                         env={"SSI263_IMPORT_TEST_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAIL generated English state = the shipped", r"^import: 7 FAILED$"]))
+    CHECKS.append(check("Android import CONTROL (the list dropped, must fail)", [PY, IMPORT_TEST],
+                        env={"SSI263_IMPORT_TEST_BREAK": "hash"}, expect_fail=True,
+                        fail_marks=[r"^FAIL a release not on the list", r"^import: 2 FAILED$"]))
 # MAME's 8085 core (the Accent SA's, src/csrc/cpu/i8085_mame.cpp; not yet in a board): CONTRACT.md's clauses
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):

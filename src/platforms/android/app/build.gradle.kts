@@ -89,7 +89,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
-// The JVM tests' must-fail control: -Pssi263ImportBreak=1 switches FirmwareImport's layout rules off.
+// The JVM tests' must-fail controls: -Pssi263ImportBreak=1 switches FirmwareImport's layout rules off,
+// -Pssi263ImportBreak=state its knowing a state file.
 tasks.withType<Test>().configureEach {
-    if (project.hasProperty("ssi263ImportBreak")) systemProperty("ssi263.import.break", "1")
+    if (project.hasProperty("ssi263ImportBreak"))
+        systemProperty("ssi263.import.break", project.property("ssi263ImportBreak").toString())
 }

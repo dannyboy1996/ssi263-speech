@@ -1,9 +1,12 @@
 """An APK must carry no Braille Lite firmware -- the app is the one place it can NOT ship: no firmware or state by
-name, and no ROM image by content (F3 C3 xx xx FF "COPYRIGHT") in any file, the source archive's members included.
+name, no ROM image by content (F3 C3 xx xx FF "COPYRIGHT") and no unit state by content (the 786432 bytes every
+state has: it holds what the firmware wrote) in any file, the source archive's members included.
 
     python check_apk_no_firmware.py <apk>...        prints what it looked at; exit 1 on any hit
     python check_apk_no_firmware.py --control <BL2ENG.BNS> <apk>
                                                     the control: the firmware added under a bland name; must FAIL
+    python check_apk_no_firmware.py --control <bl2_2003_warm.state> <apk>
+                                                    ... and a state under a bland name; must FAIL
 """
 import io
 import re
@@ -13,11 +16,14 @@ import zipfile
 
 IMAGE = re.compile(rb"\xF3\xC3..\xFFCOPYRIGHT", re.S)
 NAMES = re.compile(r"(?i)\.(bns|tns|state)$")
+STATE_SIZE = 786432                         # bl_save_state's: battery-backed RAM + file flash
 
 
 def scan(label, data, hits, depth=0):
     if IMAGE.search(data):
         hits.append("%s: a ROM image" % label)
+    if depth > 0 and len(data) == STATE_SIZE:
+        hits.append("%s: a unit's state, by its size" % label)
     if depth < 2 and data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for n in z.namelist():
@@ -46,7 +52,7 @@ def with_firmware(data, firmware):
 def main():
     args = sys.argv[1:]
     control = None
-    if args[:1] == ["--control"]:            # --control <firmware .BNS> <apk>: this run must FAIL
+    if args[:1] == ["--control"]:            # --control <firmware .BNS or .state> <apk>: this run must FAIL
         control, args = args[1], args[2:]
     bad = 0
     for apk in args:

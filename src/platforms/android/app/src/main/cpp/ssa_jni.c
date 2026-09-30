@@ -142,8 +142,8 @@ static unsigned char *bytes_of(JNIEnv *env, jbyteArray a, jsize *n)
     return p;
 }
 
-/* bl_firmware.h's blv_import_firmware: BLV_FW_ENGLISH 0, _SPANISH 1, _OTHER 2; or negative, the reason in
-   nativeImportError. */
+/* bl_firmware.h's blv_import_firmware: BLV_FW_ENGLISH 0 or _SPANISH 1, the release's label in nativeImportError; or
+   negative (_NONE, _REFUSED, _WRITE, _UNKNOWN), the reason in nativeImportError. */
 JNIEXPORT jint JNICALL FN(nativeImportFirmware)(JNIEnv *env, jclass cls, jbyteArray jdata, jstring jout)
 {
     jsize n;
@@ -161,17 +161,30 @@ JNIEXPORT jint JNICALL FN(nativeImportFirmware)(JNIEnv *env, jclass cls, jbyteAr
     return r;
 }
 
-/* blv_state_language: 0 or 1 when the bytes are the state the voice ships with for that release, else -1. */
-JNIEXPORT jint JNICALL FN(nativeStateLanguage)(JNIEnv *env, jclass cls, jbyteArray jdata)
+/* blv_state_check: 1 when the state is the one blv_make_state makes from that release's .BNS, else 0. */
+JNIEXPORT jboolean JNICALL FN(nativeStateCheck)(JNIEnv *env, jclass cls, jstring jbns, jstring jstate)
 {
-    jsize n;
-    unsigned char *data = bytes_of(env, jdata, &n);
-    int r;
+    const char *bns, *state;
+    int r = 0;
     (void)cls;
-    if (!data) return -1;
-    r = blv_state_language(data, (long)n);
-    free(data);
-    return r;
+    bns = (*env)->GetStringUTFChars(env, jbns, NULL);
+    state = (*env)->GetStringUTFChars(env, jstate, NULL);
+    if (bns && state)
+        r = blv_state_check(bns, state);
+    if (bns) (*env)->ReleaseStringUTFChars(env, jbns, bns);
+    if (state) (*env)->ReleaseStringUTFChars(env, jstate, state);
+    return r ? JNI_TRUE : JNI_FALSE;
+}
+
+/* The list of releases the import accepts, by label (bl_firmware.c's KNOWN). */
+JNIEXPORT jobjectArray JNICALL FN(nativeKnownFirmware)(JNIEnv *env, jclass cls)
+{
+    int n = blv_firmware_count(), k;
+    jobjectArray out = (*env)->NewObjectArray(env, n, (*env)->FindClass(env, "java/lang/String"), NULL);
+    (void)cls;
+    for (k = 0; out && k < n; k++)
+        (*env)->SetObjectArrayElement(env, out, k, (*env)->NewStringUTF(env, blv_firmware_label(k)));
+    return out;
 }
 
 static int state_progress(void *ctx, double done)

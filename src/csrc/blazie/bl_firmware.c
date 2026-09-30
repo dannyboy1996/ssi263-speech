@@ -8,24 +8,37 @@
 #define FILE_ROM_OFFSET 0x3000             /* bl_board.c's: where bl_create reads the image from */
 #define ROM_SIZE 0x40000
 
-/* The releases the voice ships for, by the sha256 of their image (the .BNS from 3000h to its end). */
+BL_API int blv_firmware_break = 0;
+
+/* The list: every Braille Lite 2000 release the import accepts, by the sha256 of its image (the .BNS from 3000h,
+   `length` bytes), with the sha256 of the state blv_make_state makes from it (bl_state.c, the language's recipe).
+   Each was found on Tomi's disks, booted through its recipe and made to speak (test_import_native.py makes the state
+   and checks it against the hash here, then speaks with it) before it was listed.  Every other image on those disks
+   is another unit's (Braille 'n Speak, Type 'n Speak, Braille Lite 18 and 40), refused by bl_create's sites.
+     June 5, 2003 English: "FS june2003" -- blt2000.exe (a zip behind its code) and its BL2ENG.BNS; the NVDA add-on's.
+     September 20, 2000 English: ONCE's "braillehablado" disk, blite2000/BL2ENG.BNS.  The English recipe fits it: its
+       prompts during the recipe are June 2003's but for one power-on sentence, the keys land on the same prompts,
+       and it speaks the Android test's cases as June 2003 does to within a few samples.
+     September 20, 2000 Spanish ("versión del 20 de Septiembre de 2000 ver. a"): ONCE's disk, blite2000/BL2SPA.BNS;
+       the Spanish unit's reset (bl2spa_fresh.state). */
 static const struct {
     int language;
     long length;
-    const char *sha256;
+    const char *sha256;                    /* the image */
+    const char *state;                     /* the state made from it */
+    const char *label;
 } KNOWN[] = {
-    {BLV_FW_ENGLISH, 262074, "ff8f30ec67397638c9a28c9738e7550b3c886ce42f647c462e06ded6e1576d51"},
-    {BLV_FW_SPANISH, 261746, "eedd606e3644c22bd24d5bebd6ebd79286e5f0e6bdb6f638f8f6955ab2be4ed7"},
+    {BLV_FW_ENGLISH, 262074, "ff8f30ec67397638c9a28c9738e7550b3c886ce42f647c462e06ded6e1576d51",
+     "fc6dffeff8c4be355455223291dabf26b0ebd567c1c02e3399f1dd1d0056e8c7",
+     "Braille Lite English: the June 5, 2003 revision"},
+    {BLV_FW_ENGLISH, 262067, "c840112f81f7337255cff290c58ed2d74d6f29f6fa056daf6a36db149a87cd4b",
+     "86a0d41e5d37decb1b79adba526ad1a2072ca977ff94606c20065252918465fc",
+     "Braille Lite English: ONCE's September 20, 2000 revision"},
+    {BLV_FW_SPANISH, 261746, "eedd606e3644c22bd24d5bebd6ebd79286e5f0e6bdb6f638f8f6955ab2be4ed7",
+     "2ad81f5fe40ba259dec7eaa323b443b74edc3acfe41be1c30c6ed3b569f55bca",
+     "Braille Lite Spanish: ONCE's September 20, 2000 revision"},
 };
-
-/* The states blv_make_state makes from them, as the NVDA add-on ships them. */
-static const struct {
-    int language;
-    const char *sha256;
-} STATES[] = {
-    {BLV_FW_ENGLISH, "fc6dffeff8c4be355455223291dabf26b0ebd567c1c02e3399f1dd1d0056e8c7"},
-    {BLV_FW_SPANISH, "2ad81f5fe40ba259dec7eaa323b443b74edc3acfe41be1c30c6ed3b569f55bca"},
-};
+#define N_KNOWN ((int)(sizeof KNOWN / sizeof *KNOWN))
 
 /* ---- sha256 (FIPS 180-4) -------------------------------------------------------------------------------------- */
 static const unsigned long K256[64] = {
@@ -116,53 +129,107 @@ BL_API long blv_find_image(const unsigned char *data, long n)
     return -1;
 }
 
-BL_API int blv_import_firmware(const unsigned char *data, long n, const char *out_bns, char *err, int errlen)
+/* The release on the list whose image starts `image` (n bytes available), or -1. */
+static int release_of(const unsigned char *image, long n)
+{
+    int k;
+    for (k = 0; k < N_KNOWN; k++)
+        if (n >= KNOWN[k].length && sha256_is(image, KNOWN[k].length, KNOWN[k].sha256))
+            return k;
+    return -1;
+}
+
+BL_API int blv_import_firmware(const unsigned char *data, long n, const char *out_bns, char *msg, int msglen)
 {
     long at = blv_find_image(data, n), len;
-    int language = BLV_FW_OTHER, ok;
-    size_t k;
+    int k, ok;
     FILE *f;
     bl_unit *u;
     static const unsigned char zeros[FILE_ROM_OFFSET];
     if (at < 0) {
-        snprintf(err, errlen, "no Braille Lite firmware in it");
+        snprintf(msg, msglen, "no Braille Lite firmware in it");
         return BLV_FW_NONE;
     }
-    len = n - at < ROM_SIZE ? n - at : ROM_SIZE;
-    for (k = 0; k < sizeof KNOWN / sizeof *KNOWN; k++)
-        if (n - at >= KNOWN[k].length && sha256_is(data + at, KNOWN[k].length, KNOWN[k].sha256)) {
-            language = KNOWN[k].language;
-            len = KNOWN[k].length;            /* a program that embeds it may carry more after it */
-            break;
-        }
+    k = release_of(data + at, n - at);
+    /* a program that embeds a release may carry more after it: only the release is written */
+    len = k >= 0 ? KNOWN[k].length : n - at < ROM_SIZE ? n - at : ROM_SIZE;
     f = fopen(out_bns, "wb");
     if (!f) {
-        snprintf(err, errlen, "cannot write %s", out_bns);
+        snprintf(msg, msglen, "cannot write %s", out_bns);
         return BLV_FW_WRITE;
     }
     ok = fwrite(at == FILE_ROM_OFFSET ? data : zeros, 1, FILE_ROM_OFFSET, f) == FILE_ROM_OFFSET &&
          fwrite(data + at, 1, (size_t)len, f) == (size_t)len;
     if (fclose(f) != 0 || !ok) {
         remove(out_bns);
-        snprintf(err, errlen, "cannot write %s", out_bns);
+        snprintf(msg, msglen, "cannot write %s", out_bns);
         return BLV_FW_WRITE;
     }
-    /* the voice's own check: bl_create refuses an image whose sites it cannot find */
-    u = bl_create(out_bns, NULL, 20.0, NULL, NULL, 0, err, errlen);
+    /* the voice's own check: bl_create refuses an image whose sites it cannot find (another Blazie unit) */
+    u = bl_create(out_bns, NULL, 20.0, NULL, NULL, 0, msg, msglen);
     if (!u) {
         remove(out_bns);
-        snprintf(err, errlen, "Braille Lite firmware, but not a release this voice can run");
+        snprintf(msg, msglen, "Braille Lite firmware, but not a release this voice can run");
         return BLV_FW_REFUSED;
     }
     bl_destroy(u);
-    return language;
+    if (k < 0 && blv_firmware_break) {           /* the control: the list dropped */
+        snprintf(msg, msglen, "%s", "a release not on the list (the control)");
+        return BLV_FW_ENGLISH;
+    }
+    if (k < 0) {
+        /* the voice could start it, but it was never heard: another country's release may lay its memory out
+           differently, and its state recipe is not known */
+        remove(out_bns);
+        snprintf(msg, msglen, "Braille Lite 2000 firmware, but not a release this app knows");
+        return BLV_FW_UNKNOWN;
+    }
+    snprintf(msg, msglen, "%s", KNOWN[k].label);
+    return KNOWN[k].language;
 }
 
-BL_API int blv_state_language(const unsigned char *data, long n)
+BL_API int blv_firmware_count(void)
 {
-    size_t k;
-    for (k = 0; k < sizeof STATES / sizeof *STATES; k++)
-        if (sha256_is(data, n, STATES[k].sha256))
-            return STATES[k].language;
-    return -1;
+    return N_KNOWN;
+}
+
+BL_API const char *blv_firmware_label(int release)
+{
+    return release >= 0 && release < N_KNOWN ? KNOWN[release].label : NULL;
+}
+
+BL_API int blv_firmware_language(int release)
+{
+    return release >= 0 && release < N_KNOWN ? KNOWN[release].language : -1;
+}
+
+/* A whole file, malloc'd; NULL when it cannot be read or is larger than `cap`. */
+static unsigned char *read_file(const char *path, long cap, long *n)
+{
+    FILE *f = fopen(path, "rb");
+    unsigned char *p = NULL;
+    long size;
+    if (!f)
+        return NULL;
+    if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) >= 0 && size <= cap && fseek(f, 0, SEEK_SET) == 0 &&
+        (p = (unsigned char *)malloc((size_t)size + 1)) != NULL && fread(p, 1, (size_t)size, f) != (size_t)size) {
+        free(p);
+        p = NULL;
+    }
+    if (p)
+        *n = size;
+    fclose(f);
+    return p;
+}
+
+BL_API int blv_state_check(const char *bns_path, const char *state_path)
+{
+    long bn = 0, sn = 0;
+    unsigned char *bns = read_file(bns_path, FILE_ROM_OFFSET + ROM_SIZE, &bn);
+    unsigned char *state = bns ? read_file(state_path, 4L << 20, &sn) : NULL;
+    int k = bns && bn > FILE_ROM_OFFSET ? release_of(bns + FILE_ROM_OFFSET, bn - FILE_ROM_OFFSET) : -1;
+    int ok = k >= 0 && state && sha256_is(state, sn, KNOWN[k].state);
+    free(bns);
+    free(state);
+    return ok;
 }

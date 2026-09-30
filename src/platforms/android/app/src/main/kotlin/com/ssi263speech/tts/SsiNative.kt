@@ -48,18 +48,21 @@ object SsiNative {
 
     // ---- the firmware import (bl_firmware.h, bl_state.h, ssa_probe) ------------------------------------------------
 
-    const val FW_OTHER = 2
     const val FW_NONE = -1
     const val FW_REFUSED = -2
+    const val FW_UNKNOWN = -4
 
-    /** Find the Braille Lite ROM image in these bytes by its content and write it to `out` as a .BNS: [ENGLISH] or
-     * [SPANISH] for the releases the voice ships for, [FW_OTHER] for another the voice can run; [FW_NONE] when there
-     * is no firmware in them, [FW_REFUSED] when it is not firmware the voice can run -- the reason in
-     * [nativeImportError]. */
+    /** Find the Braille Lite ROM image in these bytes by its content and, when it is a release on the list
+     * (bl_firmware.c's), write it to `out` as a .BNS: [ENGLISH] or [SPANISH], the release's label in
+     * [nativeImportError]; [FW_NONE] when there is no firmware in them, [FW_REFUSED] when it is another unit's,
+     * [FW_UNKNOWN] when it is a Braille Lite 2000 release not on the list -- the reason in [nativeImportError]. */
     external fun nativeImportFirmware(data: ByteArray, out: String): Int
 
-    /** [ENGLISH] or [SPANISH] when the bytes are the state the voice ships with for that release, else -1. */
-    external fun nativeStateLanguage(data: ByteArray): Int
+    /** The releases on the list, by label. */
+    external fun nativeKnownFirmware(): Array<String>
+
+    /** The state at `state` is the one [nativeMakeState] makes from the release at `bns`. */
+    external fun nativeStateCheck(bns: String, state: String): Boolean
 
     /** Make the unit's state from its firmware, as the shipped one was made: 1, or 0 with the reason in
      * [nativeImportError].  Seconds long: never on the main thread. */
