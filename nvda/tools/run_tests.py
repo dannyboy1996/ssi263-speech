@@ -294,7 +294,8 @@ if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
 # the board against today's Unicorn host (speakout_core_compare.py: steps coupled as Unicorn's instructions, every write
 # identical -- the migration candidate; clocks at 8 MHz, experimental: a speed grade, not a measured clock -- the
 # speech frames identical, the times classified) with its must-fail control, and the
-# driver on the MAME core (SSI263_SPEAKOUT_CORE=mame).  Built by src/csrc/speakout/build_board.py.
+# driver on the MAME core: the candidate mame-steps gated, mame a smoke test (Astra, Reply 105).  Built by
+# src/csrc/speakout/build_board.py.
 SO_LIB = os.path.join(os.path.dirname(HERE), "dist", "speakout-lib")
 if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
     CHECKS.append(check("MAME V40 core: CPU contract tests", [os.path.join(SO_LIB, "test_v40_contract.exe")]))
@@ -307,14 +308,21 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
                             fail_marks=[r"^mame-steps: write values DIFFER from Unicorn's at write \d+ of",
                                         r"^  utterance 1: speech frames DIFFER at frame \d+",
                                         r"^speakout cores: 2 FAILED$"]))
-        CHECKS.append(check("driver_sim speakout on the MAME V40 core", [PY, "-S", "driver_sim.py", "speakout", NVDA,
-                            "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
+        # the gates run the migration candidate, mame-steps (Astra, Reply 105); mame (8 MHz clocks) is a labelled
+        # experimental smoke test only -- passing it is not passing the candidate
+        CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame-steps, the candidate)",
+                            [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"],
+                            env={"SSI263_SPEAKOUT_CORE": "mame-steps"}))
         if os.path.isfile(PY37) and os.path.isdir(os.path.join(WIN7, "nvda2023app")):      # the x86 DLL
-            CHECKS.append(check("driver_sim speakout on the MAME V40 core (nvda2023app, 32-bit)",
+            CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame-steps, nvda2023app, 32-bit)",
                                 [PY37, "run37.py", "../driver_sim.py", "speakout", "nvda2023app", "rt"],
-                                env={"NVDA_APP": "nvda2023app", "SSI263_SPEAKOUT_CORE": "mame"}, cwd=WIN7))
-        CHECKS.append(check("complete_fuzz speakout on the MAME V40 core", [PY, "complete_fuzz.py", "150", "1"],
-                            env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "speakout", "SSI263_SPEAKOUT_CORE": "mame"}))
+                                env={"NVDA_APP": "nvda2023app", "SSI263_SPEAKOUT_CORE": "mame-steps"}, cwd=WIN7))
+        CHECKS.append(check("complete_fuzz speakout on the MAME V40 core (mame-steps, the candidate)",
+                            [PY, "complete_fuzz.py", "150", "1"],
+                            env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "speakout",
+                                 "SSI263_SPEAKOUT_CORE": "mame-steps"}))
+        CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame at 8 MHz: experimental smoke test)",
+                            [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
 
 # MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
 # clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
