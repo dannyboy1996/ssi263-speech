@@ -157,6 +157,23 @@ if os.path.isfile(IMPORT_TEST):
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
     CHECKS.append(check("MAME 8085 core: CPU contract tests", [os.path.join(LIB, "test_i8085_contract.exe")]))
+# MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
+# clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
+# both CPUs, every chip write's value identical (cpu/compare_i86_accent.py), with its control (one value flipped);
+# and the built add-on on it (SSI263_ACCENT_CORE=mame)
+if os.path.isfile(os.path.join(LIB, "test_i86_contract.exe")):
+    CHECKS.append(check("MAME 8086 core: CPU contract tests", [os.path.join(LIB, "test_i86_contract.exe")]))
+PC86 = os.path.join(LIB, "x64", "pc86.dll")
+if os.path.isfile(PC86):
+    CMP86 = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "cpu", "compare_i86_accent.py")
+    CHECKS.append(check("MAME 8086 core: Accent-mini writes = Unicorn's", [PY, CMP86, "--quick"],
+                        env={"SSI263_PC86_DLL": PC86}))
+    CHECKS.append(check("MAME 8086 core: Accent-mini writes CONTROL (one value flipped, must fail)",
+                        [PY, CMP86, "--quick", "--control"], env={"SSI263_PC86_DLL": PC86}, expect_fail=True,
+                        fail_marks=[r"^FAIL init +write values DIFFER at write 8 of 17/17",
+                                    r"^FAIL state +write values DIFFER at write \d+ of", r"^compare_i86_accent: FAILED$"]))
+    CHECKS.append(check("driver_sim accent on the MAME 8086 core (NVDA 64-bit)", [PY, "-S", "driver_sim.py", "accent",
+                        NVDA, "rt"], env={"SSI263_ACCENT_CORE": "mame", "SSI263_PC86_DLL": PC86}))
 # the Python wheel (python/): built from this tree's libraries, installed into a fresh venv, the chip audible and
 # deterministic and the Braille Lite byte for byte as bl.dll; its control (rate 70 asked for) must differ
 WHEEL_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "python", "test_wheel.py")

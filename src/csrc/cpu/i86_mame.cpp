@@ -204,6 +204,7 @@ void i86_set_irq(i86 *c, int line, int asserted)
 uint64_t i86_cycles(const i86 *c) { return c->cycles; }
 uint64_t i86_steps(const i86 *c) { return c->steps; }
 uint32_t i86_pc(const i86 *c) { return c->pc; }
+uint32_t i86_next_pc(const i86 *c) { return i86_linear(*c->dev); }
 
 void i86_regs_get(const i86 *c, i86_regs *out)
 {

@@ -89,14 +89,10 @@ void pc86_set_hooks(pc86 *p, pc86_in_fn in_fn, pc86_out_fn out_fn, pc86_int_fn i
 uint64_t pc86_run(pc86 *p, uint64_t count, uint32_t until)
 {
     uint64_t n = 0;
-    i86_regs r;
     p->stop = 0;
     while (n < count && !p->stop) {
-        if (until != PC86_NO_UNTIL) {
-            i86_regs_get(p->cpu, &r);
-            if (((((uint32_t)r.cs << 4) + r.ip) & 0xFFFFF) == until)
-                break;
-        }
+        if (until != PC86_NO_UNTIL && i86_next_pc(p->cpu) == until)
+            break;
         i86_step(p->cpu);
         n++;
     }

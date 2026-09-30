@@ -67,6 +67,14 @@ mkdir -p "$OUT/obj_i8085"
 $CXX $MAME -Wno-sign-compare -c -o "$OUT/obj_i8085/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i8085/test_i8085_contract.o" "$SRC/cpu/test_i8085_contract.c"
 $CXX -o "$OUT/test_i8085_contract" "$OUT/obj_i8085/test_i8085_contract.o" "$OUT/obj_i8085/i8085_mame.o"
+# MAME's 8086 core (src/csrc/cpu/i86_mame.cpp, the Accent-mini's PC): the CPU contract's tests, and libpc86.so
+# (src/csrc/pc86) for the Accent-mini host's opt-in CPU (src/hosts/pc86.py, SSI263_ACCENT_CORE=mame).  Own folder.
+mkdir -p "$OUT/obj_i86"
+$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_i86/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
+$CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i86/test_i86_contract.o" "$SRC/cpu/test_i86_contract.c"
+$CXX -o "$OUT/test_i86_contract" "$OUT/obj_i86/test_i86_contract.o" "$OUT/obj_i86/i86_mame.o"
+$CC -O3 -std=gnu89 -fPIC -I$SRC/cpu -c -o "$OUT/obj_i86/pc86.o" "$SRC/pc86/pc86.c"
+$CXX -shared -o "$OUT/libpc86.so" "$OUT/obj_i86/pc86.o" "$OUT/obj_i86/i86_mame.o"
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"

@@ -123,6 +123,8 @@ void i86_set_irq(i86 *c, int line, int asserted);
 uint64_t i86_cycles(const i86 *c);
 uint64_t i86_steps(const i86 *c);
 uint32_t i86_pc(const i86 *c);                     /* the saved instruction start, linear (CS * 16 + IP, 20 bits) */
+uint32_t i86_next_pc(const i86 *c);                /* x86 only: CS * 16 + IP now, where the next step starts unless
+                                                      an interrupt is accepted (a host's "run until" test) */
 void i86_regs_get(const i86 *c, i86_regs *out);
 /* x86 only: a host that stands in for DOS and the BIOS (the Accent-mini's) writes registers between steps and from
    bus->intercept -- far calls into the driver, a service's results, the carry flag, a saved machine.  `halted` is

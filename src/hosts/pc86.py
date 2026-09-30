@@ -181,6 +181,10 @@ class Pc86:
     def steps(self):
         return _lib.pc86_steps(self._p)
 
+    @property
+    def aliased(self):
+        return _lib.pc86_aliased(self._p, None, None)
+
     def hook_add(self, htype, callback, user_data=None, begin=1, end=0, arg1=0):
         if htype == UC_HOOK_INTR:
             self._int_cb = (callback, user_data)
