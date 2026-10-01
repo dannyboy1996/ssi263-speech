@@ -36,10 +36,7 @@ from ._ssi263_blazie import ssi263_numwords as numwords
 from ._ssi263_blazie import ssi263_rates as rates
 from ._ssi263_blazie import blazie_idle
 from ._ssi263_blazie.ssi263.native import SSI263C      # the chip in C
-try:
-    from ._ssi263_blazie.native_blazie import NativeBlazie
-except Exception:                                       # an add-on built without it: the pipe host only
-    NativeBlazie = None
+from ._ssi263_blazie.native_blazie import NativeBlazie
 
 BLOCK_S = 0.03
 # After speech, with "keep the channel open" and the hiss or whine on, the unit keeps running in real time: its
@@ -78,8 +75,8 @@ def _click(rate):
 _now = time.perf_counter           # the idle tail's clock (a test may speed it up)
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 # 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
-# no child process and no pipe. The pipe compatibility host also uses MAME's Z180,
-# and SSI263_BLAZIE_PIPE=1 forces it (A/B).
+# no child process and no pipe. SSI263_BLAZIE_PIPE=1 explicitly selects the MAME
+# pipe reference for development comparisons; a native failure never selects it silently.
 DLL = os.path.join(_ENGINE_DIR, "bin", "x64" if sys.maxsize > 2 ** 32 else "x86", "bl.dll")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
 STATE = os.path.join(_ENGINE_DIR, "bl2_2003_warm.state")
@@ -272,7 +269,7 @@ class SynthDriver(SynthDriver):
 
     @classmethod
     def check(cls):
-        return all(os.path.isfile(p) for p in (FIRMWARE, STATE)) and (os.path.isfile(DLL) or os.path.isfile(EXE))
+        return all(os.path.isfile(p) for p in (FIRMWARE, STATE, DLL))
 
     def __init__(self):
         super().__init__()
@@ -530,14 +527,10 @@ class SynthDriver(SynthDriver):
                   key_gap=1500000, board_lowpass_hz=BOARD_LOWPASS_HZ,
                   # the snapshot has inflection on; only turning it off needs the status-menu keys
                   status=() if self._infl else ("inflection_off",))
-        unit = None
-        if NativeBlazie is not None and os.path.isfile(DLL) and os.environ.get("SSI263_BLAZIE_PIPE") != "1":
-            try:
-                unit = NativeBlazie(DLL, firmware, state, **kw)
-            except Exception:
-                log.warning("Blazie: the in-process unit failed to start; using the emulator process", exc_info=True)
-        if unit is None:
+        if os.environ.get("SSI263_BLAZIE_PIPE") == "1":     # development comparison, never an automatic fallback
             unit = Blazie(EXE, firmware, state, **kw)
+        else:
+            unit = NativeBlazie(DLL, firmware, state, **kw)
         unit.send(b"\x18")
         unit.send(b"\r\x06")
         unit.run(0.3)
