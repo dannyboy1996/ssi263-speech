@@ -1,13 +1,11 @@
-"""No machine paths inside the built native binaries, and bl.dll reproducible from the add-on's source zip.
+"""No machine paths in release binaries; a clean MAME source build reproduces the native goldens.
 
     python tools/check_binary_paths.py
 
-1. Every built .dll / .exe / .so under nvda/dist (the blazie library and the add-on builds) is searched for a
-   drive-letter path, a Windows or POSIX home folder, or a "\\git\\" checkout path.  z180emu's z180.c keeps
-   __FILE__ in the core, so build_board.py and build_linux.sh map the checkout's path to "." (-fmacro-prefix-map).
-2. bl.dll (x64) is rebuilt from the add-on's z180emu-source.zip exactly as its BUILD-bl.txt says, and must
-   reproduce both golden vectors bit for bit: the zip is the complete corresponding source (GPL), shown by use.
-   (It is not byte-identical to the shipped DLL; the two builds differ in their source paths.)
+1. Built release DLLs, executables and shared libraries are searched for embedded machine paths.
+2. bl.dll (x64) is rebuilt from a clean temporary copy of the current MAME board/core sources, using the
+   release builder's object list. It must reproduce both protected native-host goldens bit for bit.
+   This checks source/build reproducibility, not binary identity or a legacy source-distribution requirement.
 Exit 1 on either failure.
 """
 import glob
@@ -17,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import zipfile
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -27,47 +25,67 @@ import build_board as B                 # noqa: E402
 
 MACHINE = re.compile(rb"(?i)[a-z]:[\\/](?:[ -~]{0,80})|\\users\\|/home/|/Users/|\\git\\")
 DIST = os.path.join(REPO, "nvda", "dist")
-ENG = os.path.join(DIST, "blazie-build", "synthDrivers", "_ssi263_blazie")
+
+
+def machine_paths(filename):
+    data = Path(filename).read_bytes()
+    hits = sorted(set(m.group().decode("latin-1")[:90] for m in MACHINE.finditer(data)))
+    # System DLL names and format strings are not paths into this machine.
+    return [h for h in hits if re.search(r"(?i)git|users|home|z180", h)]
 
 
 def main():
     bad = 0
     files = [f for pat in ("blazie-lib/**/*.dll", "blazie-lib/*.exe", "*-build/**/*.dll", "*-build/**/*.exe",
-                           "linux/**/*.so")
+                           "linux/**/*.so", "blazie-emu/blazie_*.exe", "sapi-0.7.0/x*/*.dll",
+                           "sapi-0.7.0/synthDrivers/**/*.dll")
              for f in glob.glob(os.path.join(DIST, pat), recursive=True)]
     for f in sorted(set(files)):
-        data = open(f, "rb").read()
-        hits = sorted(set(m.group().decode("latin-1")[:90] for m in MACHINE.finditer(data)))
-        # system DLL names and format strings are not paths into this machine; only report path-like hits
-        hits = [h for h in hits if re.search(r"(?i)git|users|home|z180", h)]
+        hits = machine_paths(f)
         if hits:
             bad += 1
             print("MACHINE PATH in %s: %s" % (os.path.relpath(f, REPO), hits[:3]))
     print("%d native binaries searched, %d with a machine path" % (len(set(files)), bad))
+    if not files:
+        print("FAIL: no native binaries found; build the release first")
+        bad += 1
 
-    z = zipfile.ZipFile(os.path.join(ENG, "z180emu-source.zip"))
-    d = tempfile.mkdtemp()
+    old_here, old_out = B.HERE, B.OUT
     try:
-        z.extractall(d)
-        shutil.copy(os.path.join(REPO, "src", "ssi263", "_bin", "x64", "ssi263.dll"), d)
-        bindir = repo_paths.bin_dir("W64DEVKIT", path_fallback=True)
-        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
-        r = subprocess.run([os.path.join(bindir, "gcc.exe")] + B.DLL_FLAGS
-                           + ["-I.", "-Iz180", "-o", "bl.dll", "blazie/bl_unity.c", "blazie/bl_host.c",
-                              "blazie/bl_voice.c", "blazie/bl_firmware.c", "blazie/bl_state.c", "ssi263.dll"], cwd=d, env=env, capture_output=True, text=True)
-        ok = r.returncode == 0
-        tools = os.path.join(REPO, "nvda", "tools")
-        for lang in ("en", "es") if ok else ():
-            g = subprocess.run([sys.executable, "bns_equiv.py", os.path.join(d, "bl.dll"), "--native",
-                                "--against=" + os.path.join(tools, "golden", "blazie_%s.txt" % lang)]
-                               + (["--es"] if lang == "es" else []), cwd=tools, capture_output=True, text=True,
-                               env=dict(os.environ, PYTHON_COLORS="0"))
-            ok = ok and g.returncode == 0
-        print("bl.dll rebuilt from the add-on's source zip: %s" % (
-            "reproduces both goldens bit for bit" if ok else "FAILED (%s)" % r.stderr[-200:]))
-        bad += not ok
+        with tempfile.TemporaryDirectory(prefix="ssi263-mame-rebuild-") as folder:
+            d = Path(folder).resolve()
+            assert d.is_relative_to(Path(tempfile.gettempdir()).resolve())
+            source = Path(REPO) / "src" / "csrc"
+            for name in ("blazie", "cpu"):
+                shutil.copytree(source / name, d / name,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            for header in source.glob("*.h"):
+                shutil.copy2(header, d / header.name)
+            B.HERE, B.OUT = str(d / "blazie"), str(d / "out")
+            target = d / "out" / "x64"
+            target.mkdir(parents=True)
+            chip = target / "ssi263.dll"
+            shutil.copy2(Path(REPO) / "src/ssi263/_bin/x64/ssi263.dll", chip)
+            bindir = repo_paths.bin_dir("W64DEVKIT", path_fallback=True)
+            env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+            B.build_mame_dll("x64", bindir, env, [], str(chip))
+            rebuilt = target / "bl.dll"
+            hits = machine_paths(rebuilt)
+            if hits:
+                print("MACHINE PATH in clean MAME rebuild: %s" % hits[:3])
+                bad += 1
+            tools = os.path.join(REPO, "nvda", "tools")
+            for lang in ("en", "es"):
+                g = subprocess.run([sys.executable, "bns_equiv.py", str(rebuilt), "--native",
+                                    "--against=" + os.path.join(tools, "golden", "blazie_%s.txt" % lang)]
+                                   + (["--es"] if lang == "es" else []), cwd=tools, capture_output=True, text=True,
+                                   timeout=120, env=dict(os.environ, PYTHON_COLORS="0"))
+                print("clean MAME rebuild, %s native golden: %s" % (lang, "PASS" if g.returncode == 0 else "FAIL"))
+                if g.returncode:
+                    print((g.stdout + g.stderr)[-2000:])
+                    bad += 1
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        B.HERE, B.OUT = old_here, old_out
     sys.exit(1 if bad else 0)
 
 

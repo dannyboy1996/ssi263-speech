@@ -39,5 +39,18 @@ passed, why = R.judge_control(R.check("t", ["x"], expect_fail=True, fail_marks=M
 ok = not passed
 bad += not ok
 print("%-4s %-34s -> %s" % ("ok" if ok else "FAIL", "a timeout", "accepted" if passed else "rejected: " + why))
+# A positive output predicate supplements successful exit; it must never replace it.
+# Previously matching text followed by exit 42 was accepted (Astra, release review).
+for name, code, want in (
+        ("positive text and successful exit", 'print("EXPECTED")', True),
+        ("positive text then exit 42", 'print("EXPECTED"); raise SystemExit(42)', False),
+        ("positive text then traceback", 'print("EXPECTED"); raise RuntimeError("broken")', False),
+        ("successful exit, missing text", 'print("WRONG")', False)):
+    c = R.check("fixture: " + name, [sys.executable, "-c", code], cwd=R.HERE,
+                ok=lambda out: "EXPECTED" in out)
+    _n, passed, _s, why, _last = R.run(c)
+    ok = passed == want
+    bad += not ok
+    print("%-4s %-34s -> %s" % ("ok" if ok else "FAIL", name, "accepted" if passed else "rejected: " + why))
 print("control judgement: %s" % ("PASS" if not bad else "%d FAILED" % bad))
 sys.exit(1 if bad else 0)

@@ -874,7 +874,7 @@ def run(c):
         p = subprocess.run(c["argv"], cwd=c["cwd"], env=env, capture_output=True, text=True, timeout=LIMIT,
                            encoding="utf-8", errors="replace")
         out, code = p.stdout + p.stderr, p.returncode
-        passed = (c["ok"](out) if c["ok"] else code == 0)
+        passed = code == 0 and (c["ok"](out) if c["ok"] else True)
         why = "" if passed else "exit %d" % code
     except subprocess.TimeoutExpired:
         out, passed, why, timed_out = "", False, "TIMEOUT after %d s" % LIMIT, True
