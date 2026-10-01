@@ -42,6 +42,21 @@ from gi.repository import Atspi, GLib   # noqa: E402
 
 failures = 0
 ran = 0
+
+
+def atk_version():
+    """This system's ATK, the one the program loads: 2.46 gave AtkObject::announcement, 2.50 ::notification; an
+    older ATK has neither, and the program can only update its status bar (main_gtk.c's set_status)."""
+    try:
+        gi.require_version("Atk", "1.0")
+        from gi.repository import Atk
+        return (Atk.get_major_version(), Atk.get_minor_version())
+    except (ImportError, ValueError):
+        return None
+
+
+ATK = atk_version()
+ANNOUNCES = ATK is None or ATK >= (2, 46)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -296,6 +311,18 @@ def run_main(exe, fw, tmp, want):
         events = []
         listener = Atspi.EventListener.new(lambda e: events.append((e.type, str(e.any_data))))
         listener.register("object:announcement")
+        if not ANNOUNCES:
+            print("skip announce: ATK %d.%d has no announcement signal (the status bar's text is checked instead)"
+                  % ATK)
+
+        def said(prefix, n0):
+            """what the screen reader was told since event n0 that starts with prefix: the announcements, or with an
+            ATK that cannot announce, the status bar's text"""
+            if ANNOUNCES:
+                return [t for k, t in events[n0:] if t.startswith(prefix)]
+            sb = find(app, "status bar")
+            t = name(sb) if sb is not None else ""
+            return [t] if t.startswith(prefix) else []
 
         if want("settings"):
             ini = os.path.join(emu.cfg, "blazie_emu.ini")
@@ -367,7 +394,7 @@ def run_main(exe, fw, tmp, want):
                 xdo("key", "ctrl+a")
                 xdo("type", "--delay", "5", out)
                 xdo("key", "Return")
-            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Exported ")], 15)
+            ann = wait(lambda: said("Exported ", n0), 15)
             size = os.path.getsize(out) if os.path.isfile(out) else 0
             check("export: file chooser, image, announced", chooser is not None and size > 0 and bool(ann)
                   and out in ann[0], "chooser %s; %s %d bytes; announced %r" % (
@@ -409,10 +436,10 @@ def run_main(exe, fw, tmp, want):
             n0 = len(events)
             if item is not None:
                 click(item)
-            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Switched to")], 20)
+            ann = wait(lambda: said("Switched to", n0), 20)
             renamed = wait(lambda: name(emu.area()).startswith("Braille Lite 2000 (Spanish): keyboard"), 5)
             check("announced: the unit switched", bool(ann) and "Spanish" in ann[0] and renamed,
-                  "object:announcement %r; area %s" % (ann[0] if ann else None,
+                  "said %r; area %s" % (ann[0] if ann else None,
                                                       "renamed" if renamed else "NOT renamed: %r" % name(emu.area())))
             emu.focus()
 
@@ -423,7 +450,7 @@ def run_main(exe, fw, tmp, want):
             n0 = len(events)
             if item is not None:
                 click(item)
-            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Switched to")], 20)
+            ann = wait(lambda: said("Switched to", n0), 20)
             renamed = wait(lambda: name(emu.area()).startswith("Braille 'n Speak 2000 (Slovak): keyboard"), 5)
             check("Braille 'n Speak 2000 Slovak: switched", item is not None and bool(ann)
                   and "Braille 'n Speak 2000 (Slovak)" in ann[0] and renamed,
@@ -444,7 +471,7 @@ def run_main(exe, fw, tmp, want):
                 xdo("key", "ctrl+a")
                 xdo("type", "--delay", "5", out)
                 xdo("key", "Return")
-            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Exported ")], 15)
+            ann = wait(lambda: said("Exported ", n0), 15)
             bf = os.path.join(os.path.dirname(os.path.abspath(exe)), "blazie_files")
             got = image_folders(bf, out, os.path.join(tmp, "bns_sk.unpacked")) if os.path.isfile(out) else None
             ref_img = os.path.join(tmp, "bns_sk_ref.img")

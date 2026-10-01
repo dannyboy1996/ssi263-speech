@@ -175,6 +175,13 @@ static void trace(const char *fmt, ...)
 }
 
 /* ---- the status line, the title, the keyboard area's name -------------------------------------------------------- */
+/* AtkLive came with ATK 2.50 (the "notification" signal's politeness); Debian 11 has 2.36 and Debian 12 2.46.  A build
+   there names the value itself; at run time a newer ATK's signal is still found by name and used. */
+#if ATK_CHECK_VERSION(2, 50, 0)
+#define LIVE_POLITE ((gint)ATK_LIVE_POLITE)
+#else
+#define LIVE_POLITE ((gint)1)                   /* ATK 2.50's AtkLive: NONE 0, POLITE 1, ASSERTIVE 2 */
+#endif
 /* the status line's text; announce: also said by the screen reader now (ATK's announcement, at-spi's
    object:announcement, which Orca speaks) */
 static void set_status(int announce, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -193,7 +200,7 @@ static void set_status(int announce, const char *fmt, ...)
                                                    "announcement" (2.46); an older ATK: the label's text only */
         AtkObject *a = gtk_widget_get_accessible(g_status);
         if (g_signal_lookup("notification", G_OBJECT_TYPE(a)))
-            g_signal_emit_by_name(a, "notification", text, (gint)ATK_LIVE_POLITE);
+            g_signal_emit_by_name(a, "notification", text, LIVE_POLITE);
         else if (g_signal_lookup("announcement", G_OBJECT_TYPE(a)))
             g_signal_emit_by_name(a, "announcement", text);
     }
