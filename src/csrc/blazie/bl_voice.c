@@ -29,6 +29,7 @@ struct bl_voice {
     int encoding;
     int rate, pitch, tone, volume, pack;          /* NVDA's scales */
     int run_ahead;                                /* the driver's runAhead (blv_set_run_ahead) */
+    blv_numbers_fn numbers;                       /* the driver's numberWords (blv_set_numbers); NULL: off */
     int sent_rate, sent_pitch, sent_tone;         /* unit.sent_settings */
     double gain;
     int lead, active;
@@ -103,6 +104,11 @@ BL_API void blv_set(bl_voice *v, int rate, int pitch, int tone, int volume, int 
 BL_API void blv_set_run_ahead(bl_voice *v, int on)
 {
     v->run_ahead = on != 0;
+}
+
+BL_API void blv_set_numbers(bl_voice *v, blv_numbers_fn fn)
+{
+    v->numbers = fn;
 }
 
 /* ---- _unit_rate, _unit_pitch (int() of a positive float = floor) ---------------------------------------------- */
@@ -395,27 +401,58 @@ static int lines(const unsigned *t, int n, int pack, int *ws, int *we, span *out
     return no;
 }
 
-/* ---- the text the driver hands unit.say(): currencies, _clean, _lines, encoded, each line \r ^F, one more \r ^F.
-   malloc'd into *out (the caller frees it); returns the number of lines (0: nothing to say) -------------------------- */
-static int say_bytes(const char *utf8, int encoding, int pack, unsigned char **out, int *out_len)
+/* ---- the driver's `if self._numbers: text = _numbers(text, unit.lang)`, between _clean and _lines: the caller's fn
+   (bl_numbers.h) on the cleaned text as UTF-8, its answer decoded back.  *t replaced (malloc'd); returns the count, or
+   -1 when out of memory (the text then goes on as it was) -------------------------------------------------------------- */
+static int numbers(blv_numbers_fn fn, unsigned **t, int m, int encoding)
+{
+    unsigned char *u = (unsigned char *)malloc((size_t)m * 4 + 1);
+    char *w;
+    unsigned *r;
+    int i, k = 0;
+    if (!u) return -1;
+    for (i = 0; i < m; i++) {
+        unsigned c = (*t)[i];
+        if (c < 0x80) u[k++] = (unsigned char)c;
+        else if (c < 0x800) { u[k++] = (unsigned char)(0xC0 | (c >> 6)); u[k++] = (unsigned char)(0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) {
+            u[k++] = (unsigned char)(0xE0 | (c >> 12)); u[k++] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
+            u[k++] = (unsigned char)(0x80 | (c & 0x3F));
+        } else {
+            u[k++] = (unsigned char)(0xF0 | (c >> 18)); u[k++] = (unsigned char)(0x80 | ((c >> 12) & 0x3F));
+            u[k++] = (unsigned char)(0x80 | ((c >> 6) & 0x3F)); u[k++] = (unsigned char)(0x80 | (c & 0x3F));
+        }
+    }
+    u[k] = 0;
+    w = fn((const char *)u, encoding);
+    free(u);
+    if (!w) return -1;
+    r = (unsigned *)malloc(sizeof(unsigned) * (strlen(w) + 1));
+    if (!r) { free(w); return -1; }
+    k = utf8_decode(w, r);
+    free(w);
+    free(*t);
+    *t = r;
+    return k;
+}
+
+/* ---- the text the driver hands unit.say(): currencies, _clean, (_numbers), _lines, encoded, each line \r ^F, one
+   more \r ^F.  malloc'd into *out (the caller frees it); returns the number of lines (0: nothing to say) -------------- */
+static int say_bytes(const char *utf8, int encoding, int pack, blv_numbers_fn fn, unsigned char **out, int *out_len)
 {
     int n = (int)strlen(utf8), m, nl, k, w, len = 0;
     unsigned *cps, *cur, *t;
-    int *ws, *we;
-    span *ln;
-    unsigned char *data;
+    int *ws = NULL, *we = NULL;
+    span *ln = NULL;
+    unsigned char *data = NULL;
     *out = NULL;
     *out_len = 0;
     /* sizes: currencies() writes at most 8 code points per one it reads ("£.5" -> "50 pence"), _clean 3 ("...") */
     cps = (unsigned *)malloc(sizeof(unsigned) * (size_t)(n + 1));
     cur = (unsigned *)malloc(sizeof(unsigned) * (size_t)(8 * n + 16));
     t = (unsigned *)malloc(sizeof(unsigned) * (size_t)(24 * n + 48));
-    ws = (int *)malloc(sizeof(int) * (size_t)(24 * n + 48));
-    we = (int *)malloc(sizeof(int) * (size_t)(24 * n + 48));
-    ln = (span *)malloc(sizeof(span) * (size_t)(24 * n + 48));
-    data = (unsigned char *)malloc((size_t)(24 * n + 48) * 2 + 16);
-    if (!cps || !cur || !t || !ws || !we || !ln || !data) {
-        free(cps); free(cur); free(t); free(ws); free(we); free(ln); free(data);
+    if (!cps || !cur || !t) {
+        free(cps); free(cur); free(t);
         return 0;
     }
     m = utf8_decode(utf8, cps);
@@ -425,6 +462,18 @@ static int say_bytes(const char *utf8, int encoding, int pack, unsigned char **o
     else
         memcpy(cur, cps, sizeof(unsigned) * (size_t)m);
     m = clean(cur, m, encoding, t);
+    if (fn) {
+        int r = numbers(fn, &t, m, encoding);
+        if (r >= 0) m = r;
+    }
+    ws = (int *)malloc(sizeof(int) * (size_t)(m + 1));
+    we = (int *)malloc(sizeof(int) * (size_t)(m + 1));
+    ln = (span *)malloc(sizeof(span) * (size_t)(m + 1));
+    data = (unsigned char *)malloc((size_t)m * 3 + 16);
+    if (!ws || !we || !ln || !data) {
+        free(cps); free(cur); free(t); free(ws); free(we); free(ln); free(data);
+        return 0;
+    }
     nl = lines(t, m, pack, ws, we, ln);
     /* unit.say(lines): each line encoded ("replace" -> '?'), then \r ^F; one more \r ^F flushes */
     for (k = 0; k < nl; k++) {
@@ -449,8 +498,13 @@ static int say_bytes(const char *utf8, int encoding, int pack, unsigned char **o
 
 BL_API int blv_say_bytes(const char *utf8, int encoding, int pack, unsigned char *out, int cap)
 {
+    return blv_say_bytes_with(utf8, encoding, pack, NULL, out, cap);
+}
+
+BL_API int blv_say_bytes_with(const char *utf8, int encoding, int pack, blv_numbers_fn fn, unsigned char *out, int cap)
+{
     unsigned char *data;
-    int len, nl = say_bytes(utf8, encoding, pack, &data, &len);
+    int len, nl = say_bytes(utf8, encoding, pack, fn, &data, &len);
     (void)nl;
     if (data && len <= cap)
         memcpy(out, data, (size_t)len);
@@ -481,7 +535,7 @@ BL_API int blv_speak(bl_voice *v, const char *utf8)
         bh_cancel(v->host, 3.0, -1.0, -1.0);
         v->fault = 0;
     }
-    nl = say_bytes(utf8, v->encoding, v->pack, &data, &len);
+    nl = say_bytes(utf8, v->encoding, v->pack, v->numbers, &data, &len);
     if (nl) {
         bh_set_int(v->host, "turbo_between_lines", v->pack);
         if (bh_say(v->host, data, len) < 0 && !blv_break_fault) {   /* refused: say so, never silently */

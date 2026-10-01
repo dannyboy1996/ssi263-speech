@@ -1,0 +1,21 @@
+# sapi/ -- the SSI-263 voices as a SAPI 5 engine
+
+Since 0.7.5 the voices run inside the program that speaks, in C, with no Python and no helper process: the engine DLL
+loads `ssi263speech.dll` (the native voices, `src/csrc/voices.h`) from its own folder and the firmware from
+`{app}\firmware`.
+
+| File | What it is |
+| --- | --- |
+| `ssi263_sapi.cpp`, `.def` | The engine DLL (x86, x64; MSVC `/MT`): COM class, SAPI's fragments and bookmarks, the settings from HKCU, the voices in-process. |
+| `ssi_native.c`, `.h` | Loads `ssi263speech.dll` and maps the dialog's settings and SAPI's rate and pitch onto the voice table. Shared by the DLL and `ssi_serve.c`. |
+| `ssi_serve.c` | `ssi263_serve.exe`: the old pipe protocol over the native voices, a test and build tool (`--list` and `--files` make the stage's `voices.txt` and firmware). Never installed. |
+| `ssi_serve.py` | 0.7.0's Python server over the NVDA drivers. It is no longer shipped and stays as the reference the native voices are held to. |
+| `sapi_harness.cpp` | Drives the development DLL through `ISpTTSEngine` with nothing registered (`build.ps1 -Dev`). |
+| `build.ps1` | The stage, `nvda\dist\sapi` (`-Dev`: `nvda\dist\sapi-dev`). Build `python src\csrc\build_ssi263speech.py` first. |
+| `installer.iss` | The Inno Setup installer: DLLs, firmware, licences, `voices.txt`, settings. |
+| `register.ps1` | The COM class and one token per voice in `voices.txt`, in both registry views (run elevated). |
+| `settings.ps1`, `settings_launcher.c` | The settings dialog and its console-free launcher. |
+| `test_native.py` | The native voices against `ssi_serve.py`, byte for byte over the wire, 64- and 32-bit (run_tests). |
+| `test_sapi_engine.py` | The development DLL through SAPI's interface against `ssi_serve.py`, byte for byte (run_tests). |
+| `test_serve.py` | The reference server's own checks (run_tests). |
+| `test_sapi.ps1`, `test_sapi_settings.ps1` | Through SAPI and System.Speech, for an installed build (machine-wide tokens: SAPI refuses voice tokens under HKCU). |

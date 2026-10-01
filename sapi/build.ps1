@@ -1,58 +1,105 @@
-param([string]$Stage = "")
-# Stage the SSI-263 SAPI engine: both DLL bitnesses, the pipe server, the three add-ons' driver folders exactly
-# as the NVDA add-ons ship them (run nvda\build_blazie.py, build_speakout.py and build_accent.py first), and the
-# embeddable Python that runs the server.  Template: outspoken-nvda's sapi/build.ps1 (panthera-speech's).
+param([string]$Stage = "", [switch]$Dev)
+# Stage the SSI-263 SAPI engine: both DLL bitnesses, each beside the native voices of its width (ssi263speech.dll),
+# the firmware those voices need, their licences, and the voice list the installer registers.  No Python, no pipe
+# server, no NVDA driver files: the voices run in the caller's process (ssi263_sapi.cpp).  Template: outspoken-nvda's
+# sapi/build.ps1 (panthera-speech's).
 #
-# The stage lands in nvda\dist\sapi, beside the built add-ons: it carries the same firmware, so it is never
-# committed.
+# First: python src\csrc\build_ssi263speech.py  (build\win\{x86,x64}\ssi263speech.dll and the serve host that lists
+# the voices; a release build of the same exports may stand in its place).
+#
+# The stage lands in nvda\dist\sapi: it carries the firmware, so it is never committed.  -Dev builds the development
+# engine instead (its own COM class and settings key, the tests' hooks: sapi\test_sapi_dev.ps1) into
+# nvda\dist\sapi-dev; it is never installed.
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-if (!$Stage) { $Stage = Join-Path $repo "nvda\dist\sapi" }
+if (!$Stage) { $Stage = Join-Path $repo $(if ($Dev) { "nvda\dist\sapi-dev" } else { "nvda\dist\sapi" }) }
 $pf86 = ${env:ProgramFiles(x86)}
 $msvc = Get-ChildItem (Join-Path $pf86 "Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC") -Directory | Sort-Object Name | Select-Object -Last 1
 $sdk = Get-ChildItem (Join-Path $pf86 "Windows Kits\10\Include") -Directory | Sort-Object Name | Select-Object -Last 1
 if (!$msvc -or !$sdk) { throw "MSVC Build Tools and the Windows SDK are required" }
+# Fresh every time: a stage that is only ever added to keeps whatever an earlier build left in it (0.7.0's python\
+# and synthDrivers\ above all).
+if (Test-Path $Stage) { Get-ChildItem $Stage -Exclude "out" | Remove-Item -Recurse -Force }
 New-Item -ItemType Directory -Force $Stage,(Join-Path $Stage "x86"),(Join-Path $Stage "x64") | Out-Null
+$defs = @("/DUNICODE", "/D_UNICODE")
+if ($Dev) { $defs += "/DSSI263_SAPI_DEV" }
 foreach ($arch in "x86","x64") {
   $cl = Join-Path $msvc.FullName "bin\Hostx64\$arch\cl.exe"
   $out = Join-Path $Stage $arch
-  & $cl /nologo /EHsc /O2 /MT /LD /DUNICODE /D_UNICODE "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" "/I$($sdk.FullName)\ucrt" (Join-Path $PSScriptRoot "ssi263_sapi.cpp") "/Fe$out\ssi263_sapi.dll" "/Fo$out\" /link "/DEF:$PSScriptRoot\ssi263_sapi.def" "/LIBPATH:$($msvc.FullName)\lib\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\$arch" sapi.lib ole32.lib advapi32.lib shell32.lib
+  # /MT: the static CRT, so the DLL needs no VC++ redistributable (dumpbin below)
+  & $cl /nologo /EHsc /O2 /MT /LD $defs "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" "/I$($sdk.FullName)\ucrt" (Join-Path $PSScriptRoot "ssi263_sapi.cpp") (Join-Path $PSScriptRoot "ssi_native.c") "/Fe$out\ssi263_sapi.dll" "/Fo$out\" /link "/DEF:$PSScriptRoot\ssi263_sapi.def" "/LIBPATH:$($msvc.FullName)\lib\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\$arch" sapi.lib ole32.lib advapi32.lib shell32.lib
   if ($LASTEXITCODE) { throw "$arch SAPI DLL build failed ($LASTEXITCODE)" }
-}
-# The console-free way into the settings dialog: a GUI-subsystem launcher, so no console flashes and steals focus.
-$launcherCl = Join-Path $msvc.FullName "bin\Hostx64\x64\cl.exe"
-& $launcherCl /nologo /O2 /MT /W3 "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\ucrt" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" (Join-Path $PSScriptRoot "settings_launcher.c") "/Fe$Stage\ssi263_settings.exe" "/Fo$Stage\" /link /SUBSYSTEM:WINDOWS "/LIBPATH:$($msvc.FullName)\lib\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\x64" user32.lib kernel32.lib
-if ($LASTEXITCODE) { throw "settings launcher build failed ($LASTEXITCODE)" }
-Set-Content -Encoding ASCII (Join-Path $Stage "settings.cmd") '@echo off
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0settings.ps1"'
-Copy-Item (Join-Path $PSScriptRoot "ssi_serve.py") $Stage
-Copy-Item (Join-Path $PSScriptRoot "register.ps1") $Stage
-Copy-Item (Join-Path $PSScriptRoot "settings.ps1") $Stage
-# The drivers, fresh every time: a stage that is only ever added to keeps whatever an earlier build left in it.
-$drv = Join-Path $Stage "synthDrivers"
-if (Test-Path $drv) { Remove-Item -Recurse -Force $drv }
-New-Item -ItemType Directory -Force $drv | Out-Null
-foreach ($addon in "blazie","speakout","accent") {
-  $built = Join-Path $repo "nvda\dist\$addon-build\synthDrivers"
-  if (!(Test-Path $built)) { throw "$built is missing: run nvda\build_$addon.py first" }
-  Copy-Item -Recurse -Force (Join-Path $built "*") $drv
-}
-Get-ChildItem -Recurse $drv -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
-# Embeddable Python 3.8.10, deliberately: the last CPython for Windows 7, and the drivers are 3.7-compatible (NVDA
-# 2021.1 shipped 3.7).  amd64 for now: 64-bit Windows, and ARM64 through its x64 emulation.
-$py = Join-Path $Stage "python"
-if (!(Test-Path (Join-Path $py "python38.dll"))) {
-  if (Test-Path $py) { Remove-Item -Recurse -Force $py }
-  $pyzip = Join-Path $env:TEMP "python-3.8.10-embed-amd64.zip"
-  if (!(Test-Path $pyzip)) {
-    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip" -OutFile $pyzip
+  if ($Dev) {
+    # the engine driven as SAPI drives it, with no registration (sapi_harness.cpp, for sapi\test_sapi_engine.py)
+    & $cl /nologo /EHsc /O2 /MT $defs "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" "/I$($sdk.FullName)\ucrt" (Join-Path $PSScriptRoot "sapi_harness.cpp") "/Fe$out\sapi_harness.exe" "/Fo$out\" /link "/LIBPATH:$($msvc.FullName)\lib\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\$arch" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\$arch" ole32.lib advapi32.lib
+    if ($LASTEXITCODE) { throw "$arch SAPI harness build failed ($LASTEXITCODE)" }
   }
-  Expand-Archive $pyzip -DestinationPath $py -Force
+  Remove-Item (Join-Path $out "*.obj"),(Join-Path $out "*.exp"),(Join-Path $out "*.lib") -ErrorAction SilentlyContinue
+  $voices = Join-Path $repo "build\win\$arch\ssi263speech.dll"
+  if (!(Test-Path $voices)) { throw "$voices is missing: run python src\csrc\build_ssi263speech.py first" }
+  Copy-Item $voices $out
 }
-Set-Content -Encoding ASCII (Join-Path $py "python38._pth") @'
-python38.zip
-.
-..
-#import site
-'@
-Write-Host "SSI-263 SAPI stage: $Stage"
+# Static CRT for every native DLL: nothing but the system's own libraries (no VCRUNTIME, MSVCP, UCRT forwarders,
+# libstdc++ or libgcc DLLs).
+$dumpbin = Join-Path $msvc.FullName "bin\Hostx64\x64\dumpbin.exe"
+$allowed = @("KERNEL32.dll", "msvcrt.dll", "ADVAPI32.dll", "ole32.dll", "OLEAUT32.dll", "SHELL32.dll", "USER32.dll")
+foreach ($dll in Get-ChildItem -Recurse $Stage -Filter *.dll) {
+  $deps = @(& $dumpbin /nologo /dependents $dll.FullName | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() })
+  $bad = @($deps | Where-Object { $allowed -notcontains $_ })
+  if ($bad.Count) { throw "$($dll.FullName) imports $($bad -join ', '): not a static-CRT build" }
+}
+if (!$Dev) {
+  # The console-free way into the settings dialog: a GUI-subsystem launcher, so no console flashes and steals focus.
+  $launcherCl = Join-Path $msvc.FullName "bin\Hostx64\x64\cl.exe"
+  & $launcherCl /nologo /O2 /MT /W3 "/I$($msvc.FullName)\include" "/I$($sdk.FullName)\ucrt" "/I$($sdk.FullName)\um" "/I$($sdk.FullName)\shared" (Join-Path $PSScriptRoot "settings_launcher.c") "/Fe$Stage\ssi263_settings.exe" "/Fo$Stage\" /link /SUBSYSTEM:WINDOWS "/LIBPATH:$($msvc.FullName)\lib\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\ucrt\x64" "/LIBPATH:$($sdk.Parent.Parent.FullName)\Lib\$($sdk.Name)\um\x64" user32.lib kernel32.lib
+  if ($LASTEXITCODE) { throw "settings launcher build failed ($LASTEXITCODE)" }
+  Remove-Item (Join-Path $Stage "*.obj") -ErrorAction SilentlyContinue
+  Set-Content -Encoding ASCII (Join-Path $Stage "settings.cmd") '@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0settings.ps1"'
+  Copy-Item (Join-Path $PSScriptRoot "register.ps1") $Stage
+  Copy-Item (Join-Path $PSScriptRoot "settings.ps1") $Stage
+}
+# The firmware the voices need, as the library itself lists it (the serve host's --files), in the repository's
+# firmware\ layout under {app}\firmware; and the voices it can make from it (--list), for register.ps1.  Each
+# maker's note travels with its files.
+$serve = Join-Path $repo "build\win\x64\ssi263_serve.exe"
+$fwSrc = Join-Path $repo "firmware"
+$fw = Join-Path $Stage "firmware"
+$files = @(& $serve --files --firmware $fwSrc)
+if ($LASTEXITCODE -or $files.Count -eq 0) { throw "the native voices found no firmware in $fwSrc" }
+foreach ($rel in $files) {
+  $dst = Join-Path $fw $rel
+  New-Item -ItemType Directory -Force (Split-Path -Parent $dst) | Out-Null
+  Copy-Item (Join-Path $fwSrc $rel) $dst
+}
+foreach ($rel in "AICOM.txt", "blazie/README.txt", "gw-micro-speakout/README.txt") {   # beside the files they speak of
+  $src = Join-Path $fwSrc $rel
+  $dst = Join-Path $fw $rel
+  if ((Test-Path $src) -and ($rel -ne "AICOM.txt" -or (Test-Path (Join-Path $fw "aicom-*"))) -and (Test-Path (Split-Path -Parent $dst))) {
+    Copy-Item $src $dst
+  }
+}
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $serve
+$psi.Arguments = "--list --firmware `"$fw`""
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+$proc = [System.Diagnostics.Process]::Start($psi)
+$listing = $proc.StandardOutput.ReadToEnd()
+$proc.WaitForExit()
+if ($proc.ExitCode -or $listing -notmatch "`t") { throw "the native voices listed nothing from the stage's firmware" }
+[System.IO.File]::WriteAllText((Join-Path $Stage "voices.txt"), $listing, (New-Object System.Text.UTF8Encoding($false)))
+# The licences: ours (MIT), Casso's (MIT) and each extracted MAME core's BSD notice with its provenance, as the
+# add-ons carry them (nvda/build_common.py).
+$lic = Join-Path $Stage "licenses"
+New-Item -ItemType Directory -Force $lic | Out-Null
+Copy-Item (Join-Path $repo "LICENSE") (Join-Path $lic "LICENSE-MIT.txt")
+Copy-Item (Join-Path $repo "third_party\casso\LICENSE") (Join-Path $lic "LICENSE-Casso-MIT.txt")
+foreach ($core in "z180","i8085","nec","i86") {
+  $d = Join-Path $repo "src\csrc\cpu\mame_$core"
+  Copy-Item (Join-Path $d "LICENSE-BSD-3-Clause.txt") (Join-Path $lic "LICENSE-$core-BSD-3-Clause.txt")
+  Copy-Item (Join-Path $d "PINNED.txt") (Join-Path $lic "MAME-$core-provenance.txt")
+}
+Write-Host "SSI-263 SAPI stage$(if ($Dev) { ' (development)' }): $Stage"
+Write-Host ("voices: " + (($listing -split "`r?`n" | Where-Object { $_ -match "`t" } | ForEach-Object { $_.Split("`t")[0] }) -join ', '))

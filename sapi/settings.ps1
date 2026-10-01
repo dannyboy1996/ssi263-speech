@@ -1,10 +1,11 @@
 # SSI-263 SAPI settings -- the voices, their registration, and the settings SAPI's own requests cannot carry.
 #
 # A trimmed sibling of outspoken-nvda's sapi/settings.ps1 (itself Panthera's), with the same layout: the voice
-# list comes from the pipe server itself (the one authority on what is installed), registration goes through
+# list comes from voices.txt (what the native voices found in the installed firmware), registration goes through
 # register.ps1 elevated, and the engine settings sit below.  Rate, pitch and volume stay SAPI's own.  The
 # settings are this person's (HKCU "Software\SSI-263 SAPI"); the engine DLL reads them before every utterance and
-# replaces its server when they change, so a change reaches the next thing spoken, in every SAPI program at once.
+# boots its units again when one they were booted with changes, so a change reaches the next thing spoken, in every
+# SAPI program at once.
 #
 # PowerShell 2.0's dialect, like register.ps1: stock Windows 7 has no newer engine.
 # -Check: build the dialog and fill it, print what it shows, and exit without showing it (the tests).
@@ -27,20 +28,12 @@ function Save-Setting([string]$name, [int]$value) {
     New-ItemProperty -Path $prefKey -Name $name -Value $value -PropertyType DWord -Force | Out-Null
 }
 
-# The voices the server lists: "id<TAB>name<TAB>language", UTF-8.
+# The voices this installation carries, as the native library listed them from its firmware (voices.txt, made by
+# sapi\build.ps1): "id<TAB>name<TAB>language", UTF-8.
 function Get-ServerVoices {
     $voices = @()
     try {
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = Join-Path $stage 'python\python.exe'
-        $psi.Arguments = "-I `"$(Join-Path $stage 'ssi_serve.py')`" --list"
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.CreateNoWindow = $true
-        $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-        $p = [System.Diagnostics.Process]::Start($psi)
-        $out = $p.StandardOutput.ReadToEnd()
-        $p.WaitForExit()
+        $out = [System.IO.File]::ReadAllText((Join-Path $stage 'voices.txt'), [System.Text.Encoding]::UTF8)
         foreach ($line in ($out -split "`r?`n")) {
             if ($line -match "`t") { $voices += ,($line.Split("`t")) }
         }
