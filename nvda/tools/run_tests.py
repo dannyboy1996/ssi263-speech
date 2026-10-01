@@ -99,8 +99,9 @@ if os.path.isfile(PC86_FUZZ):
     CHECKS.append(check("complete_fuzz accent on the MAME 8086 core", [PY, "complete_fuzz.py", "150", "3"],
                         env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "accent", "SSI263_ACCENT_CORE": "mame",
                              "SSI263_PC86_DLL": PC86_FUZZ}))
-# the premature completion replayed from a caught live session (complete_fuzz seed 4): the cut line must be spoken
-# whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
+# the premature completion replayed (complete_fuzz seed 4's miscount; on MAME the seed-4 record no longer makes it, so
+# the replay is golden/premature_history_mame.jsonl, the same miscount found on MAME: premature_record.py): the cut
+# line must be spoken whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
 CHECKS.append(check("premature completion replay", [PY, "premature_replay.py"]))
 CHECKS.append(check("premature completion replay CONTROL (0.6.0 busy, must be cut)", [PY, "premature_replay.py"],
                     env={"PREMATURE_REPLAY_OLD": "1"}, expect_fail=True,
@@ -283,7 +284,9 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
              [r"^FAIL case 1 block 1: write values DIFFER at write \d+$",
               r"^FAIL 1\.1 Hello\. +REPLAY DIFFERS FROM CAPTURE", RA_SUM % 2]),
             ("left off, the head", {"RUN_AHEAD_EQUIV_OFF": "1"}, ["--quick"],
-             [r"^FAIL 1\.3 Select synthesizer dialog +head 123\.0 -> 123\.0 ms", RA_SUM % 3]),
+             # left off, "run ahead" is the lockstep: its head the same, over the 100 ms limit (MAME: 120.8 ms; the
+             # z180emu core's was 123.0)
+             [r"^FAIL 1\.3 Select synthesizer dialog +head (1\d\d\.\d) -> \1 ms", RA_SUM % 3]),
             ("busy never false", {"RUN_AHEAD_EQUIV_NEVER": "1", "RUN_AHEAD_EQUIV_SAY_LIMIT": "3"}, ["--cases=1"],
              [r"^FAIL 1\.1 Hello\. +NEVER DONE \(run ahead, 3 s\)$", RA_SUM % 3]),
             ("audio silenced", {"RUN_AHEAD_EQUIV_MUTE": "1"}, ["--cases=1"],
@@ -350,17 +353,30 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                             [PY, "run_ahead_cancel.py"] + lang))
     CHECKS.append(check("run ahead cancel CONTROL (the leak put back, must fail)", [PY, "run_ahead_cancel.py", "--quick"],
                         env={"RUN_AHEAD_CANCEL_BREAK": "settle"}, expect_fail=True,
-                        fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
+                        # on MAME 2 of 25 (the z180emu core's: 4): 0.50 s led by the resumed copier's "A" (10),
+                        # 0.80 s by "And a t", the copy gone on (12 56 37 8 2 54)
+                        fail_marks=[r"^FAIL state history, rate 14: run ahead 2 of 25 led by other phonemes; 0\.50 s: "
+                                    r"\[10, 29, 10, .*; 0\.80 s: \[12, 56, 37, 8, 2, 54\]",
                                     r"^run ahead cancel \(English\): 1 FAILED$"]))
-    # the DEFAULT lockstep's own, rarer cancel race (lockstep_cancel.py; Astra, Reply 112 item 3, Reply 114): its two
-    # retained leaks reproduced exactly by the default (unchanged), and cleared by the opt-in prototype (cancel_settle
-    # 3: settle and A/R hold); its control tests the settle alone, which leaves the 1.040 s leak
-    CHECKS.append(check("lockstep cancel race: retained by the default, cleared by the opt-in prototype",
-                        [PY, "lockstep_cancel.py"]))
+    # the lockstep's own cancel race (lockstep_cancel.py; Astra, Reply 112 item 3, Replies 114 and 124-129): the
+    # shipping default (bl_host.c cancel_settle 3: settle, then A/R held over ^X) must respeak cleanly at all 8 MAME
+    # leak times retained from Astra's sweep; its controls put the race back through the host's override
+    # (SSI263_BLAZIE_CANCEL_SETTLE): 0 must bring back all 8 leaks exactly (phonemes and line buffer), the settle
+    # alone (1) the two copier-resumed ones it cannot clear
+    CHECKS.append(check("lockstep cancel race: the default clean at every retained leak", [PY, "lockstep_cancel.py"]))
+    LC_SUM = r"^lockstep cancel race \(English, cancel_settle %d, SSI263_BLAZIE_CANCEL_SETTLE=%d; .*\): %d of 10 FAILED$"
+    CHECKS.append(check("lockstep cancel race CONTROL (cancel_settle 0, the race put back, must fail)",
+                        [PY, "lockstep_cancel.py"], env={"SSI263_BLAZIE_CANCEL_SETTLE": "0"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.0380 s, cancel_settle 0 .*led by \[10\]; .* the retained leak, exactly$",
+                                    r"^FAIL 1\.0410 s, cancel_settle 0 .*begins \[7, 28, 10, 48\] .* the retained leak, "
+                                    r"exactly$",
+                                    r"^FAIL 1\.0480 s, cancel_settle 0 .*led by \[12, 56, 37, 8, 2\]; .* the retained "
+                                    r"leak, exactly$", LC_SUM % (0, 0, 8)]))
     CHECKS.append(check("lockstep cancel race CONTROL (the settle alone, must fail)", [PY, "lockstep_cancel.py"],
-                        env={"LOCKSTEP_CANCEL_PROTO": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAIL 1\.040 s, cancel_settle 1 \(the prototype clears it\): the respoken text "
-                                    r"led by \[10\]", r"^lockstep cancel race \(English, .*\): 1 FAILED$"]))
+                        env={"SSI263_BLAZIE_CANCEL_SETTLE": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.0380 s, cancel_settle 1 .*led by \[10\]; .* the retained leak, exactly$",
+                                    r"^FAIL 1\.0385 s, cancel_settle 1 .*led by \[56\]; .* the retained leak, exactly$",
+                                    r"^ok +1\.0480 s, cancel_settle 1 ", LC_SUM % (1, 1, 2)]))
     # faults are never silent (run_ahead_fault.py; Astra, Reply 112 item 2): a run-ahead capture failing mid-utterance
     # with a say or a setting waiting, or at its start with a second say at once (her error_priority_probe.c: busy 1
     # with input held), a board event, a transmitted byte and a logged write lost -- each seen first

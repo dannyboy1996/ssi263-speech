@@ -1,9 +1,13 @@
 """The premature completion, replayed deterministically (2026-09-29; investigation: complete_fuzz seed 4 caught with
 SSI263_BLAZIE_RECORD; Astra, Reply 100).
 
-golden/premature_history_seed4.jsonl is that live session up to and including the say() that was cut: after a cancel
-whose owed ^F echoed during its first cut, the host's count started the next utterance one echo short, and 0.6.0's
-busy() ended "One, two, three, four." at its comma (W UH1 N).  Each case replays that history, then acts as a driver
+The bug: after a cancel whose owed ^F echoed during its first cut, the host's count started the next utterance one
+echo short, and 0.6.0's busy() ended "One, two, three, four." at its comma (W UH1 N).  golden/premature_history_seed4
+.jsonl is the live session that showed it, on the z180emu core (0.6); on the MAME Z180 (0.7) its timing no longer
+makes the miscount -- 0.6.0's busy() speaks it whole there, while bl_live_legacy.exe still cuts it -- so it is kept
+as the 0.6 record only.  golden/premature_history_mame.jsonl is the same miscount on MAME (premature_record.py: the
+fuzz's move, "One, two, three, four." cancelled 1.750 s in, as its last echo is due, then said again; found by a
+sweep of cancel times, the window 1.745-1.755 s on both hosts).  Each case replays that history, then acts as a driver
 does -- run blocks, ask busy() after each -- and requires, on both hosts:
   - an explicit "done" (busy() false) before the limit: running out is a failure, not a pass;
   - the EXACT phonemes of the line(s) loaded by then;
@@ -27,7 +31,7 @@ sys.path.insert(0, HERE)
 import bl_replay                                    # noqa: E402
 from write_spy import watch_writes                  # noqa: E402
 
-HISTORY = os.path.join(HERE, "golden", "premature_history_seed4.jsonl")
+HISTORY = os.path.join(HERE, "golden", "premature_history_mame.jsonl")    # the 0.7 core's (see above)
 ENG = os.path.join(os.path.dirname(HERE), "dist", "blazie-build", "synthDrivers", "_ssi263_blazie")
 OLD = os.environ.get("PREMATURE_REPLAY_OLD") == "1"
 NEVER = os.environ.get("PREMATURE_REPLAY_NEVER") == "1"

@@ -1,11 +1,13 @@
-"""The Speak-Out on MAME's V40 core against today's Unicorn host: the same scenario, the same chip model, and every
-SSI-263 write compared (src/hosts/speakout.py: SpeakOut and its opt-in SpeakOutV40; src/csrc/speakout).
+"""The Speak-Out on MAME's V40 core (the 0.7 default) against the old Unicorn host, kept as a development reference:
+the same scenario, the same chip model, and every SSI-263 write compared (src/hosts/speakout.py: SpeakOut with
+SSI263_SPEAKOUT_CORE=unicorn, and SpeakOutV40; src/csrc/speakout).  A legacy check: it needs ucmini.py and
+src/hosts/bin's unicorn.dll, which no release ships.
 
     python speakout_core_compare.py [--clock HZ] [--cores unicorn,mame-steps,mame] [--dump DIR]
 
 The scenario: power on and the greeting spoken to its end, then sentences, each spoken to its end, except one cut by
 ^X after 0.8 s.  Cores:
-  unicorn     today's host (the reference)
+  unicorn     the 0.6 host (the legacy reference; selected explicitly, never the default)
   mame-steps  the MAME core coupled to chip time by steps at cpu_ips, counted as Unicorn counts its instructions
               (so_board.h): every write's value AND time must be identical -- a difference would be the instructions'.
               The migration candidate (Astra, Reply 103)
@@ -81,7 +83,17 @@ def scenario(box):
 
 def make(core, clock):
     if core == "unicorn":
-        return speakout.SpeakOut(HEX)
+        # the reference is selected explicitly: since 0.7 a bare SpeakOut() is the MAME core (mame-steps), and a
+        # migration check must never compare MAME with itself (Astra, Reply 120).  Unicorn is a development
+        # reference only (src/hosts/ucmini.py, src/hosts/bin/<arch>/unicorn.dll; not shipped).
+        os.environ["SSI263_SPEAKOUT_CORE"] = "unicorn"
+        try:
+            box = speakout.SpeakOut(HEX)
+        finally:
+            os.environ.pop("SSI263_SPEAKOUT_CORE", None)
+        if type(box) is not speakout.SpeakOut or not hasattr(box, "uc"):
+            sys.exit("the Unicorn reference was not selected (got %s): no comparison" % type(box).__name__)
+        return box
     return speakout.SpeakOutV40(HEX, core=core, clock_hz=clock)
 
 
