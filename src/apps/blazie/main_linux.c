@@ -715,11 +715,20 @@ static int choose(const char *title, const char *const *items, int n, int curren
 static void menu(void)
 {
     char line[64];
-    int k;
+    int k, list = 1;
     release_keys();
     if (g_use_evdev)
         evdev_grab(&g_ev, 0);                   /* the menu is typed in the terminal */
     for (;;) {
+        if (!list) {                            /* after a choice: one line, not the whole list again */
+            say("Menu: another number, ? to list them, or Enter alone to go back to the unit.");
+            read_line(line, sizeof line);
+            if (!line[0])
+                break;
+            if (line[0] != '?' && line[0] != 'h')
+                goto chosen;
+        }
+        list = 0;
         say("Menu. Type a number and Enter; Enter alone goes back to the unit.");
         for (k = 0; k < N_KINDS; k++)
             say("  %d %s%s", k + 1, KINDS[k].name, k == g_kind ? " (on now)" : "");
@@ -738,6 +747,7 @@ static void menu(void)
         read_line(line, sizeof line);
         if (!line[0])
             break;
+chosen:
         k = atoi(line);
         if (k >= 1 && k <= N_KINDS) {
             start_unit(k - 1, NULL);
