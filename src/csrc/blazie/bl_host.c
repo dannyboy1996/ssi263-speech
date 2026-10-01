@@ -82,7 +82,7 @@ struct bl_host {
                                       counted, read by the caller (native_blazie.py raises) -- records, not state */
     size_t fail_size;              /* tests: run_ahead.c's next allocation of exactly this many bytes fails */
     int fail_tx, fail_log;         /* tests: the n-th transmitted byte / logged write from now cannot be kept */
-    /* EXPERIMENTAL, off (Reply 112 item 3's prototype, not the default): the lockstep's own cancel race -- ^X met the
+    /* Both bits enabled by default: the lockstep's own cancel race -- ^X met the
        firmware mid-copy of its next line, and a character of the cancelled text led the next utterance.  bit 0: the
        unit runs on, A/R not requesting, its chip writes dropped, until its CPU waits for an interrupt (at most
        RA_SETTLE_S of CPU time; ra_settle's rule for run ahead); bit 1: A/R not requesting over the first ^X slice */
@@ -317,6 +317,7 @@ BL_API bl_host *bh_create(const char *firmware, const char *state, ssi263 *chip,
         h->b1 = k / (1.0 + k);
         h->a1 = (k - 1.0) / (k + 1.0);
     }
+    h->cancel_settle = 3;                                  /* finish the interrupted copy, then hold A/R over ^X */
     h->cancel_cut = 0.1;
     h->cancel_quiet = 0.08;
     h->ar = -1;
@@ -604,7 +605,7 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
         ra_abort(&h->ra);
         h->ar = -1;
         h->ar_hold = h->ra.brk != RA_BRK_SETTLE;           /* the control puts both back */
-    } else if (h->cancel_settle) {                         /* the lockstep, EXPERIMENTAL and off (struct bl_host) */
+    } else if (h->cancel_settle) {                         /* lockstep cancellation (struct bl_host) */
         h->cancel_settled = -1;
         h->cancel_dropped = 0;
         if (h->cancel_settle & 1) {
@@ -890,7 +891,7 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
     else if (!strcmp(name, "log_ar")) h->log_ar = v != 0;
     else if (!strcmp(name, "tx_lost")) h->tx_lost = v;         /* the caller has reported them */
     else if (!strcmp(name, "writes_lost")) h->wl_lost = v;
-    else if (!strcmp(name, "cancel_settle")) h->cancel_settle = v & 3;   /* EXPERIMENTAL, off (struct bl_host) */
+    else if (!strcmp(name, "cancel_settle")) h->cancel_settle = v & 3;   /* tests can restore the old race */
     /* tests only (run_ahead_fault.py): one allocation or store made to fail, as memory running out would */
     else if (!strcmp(name, "fail_alloc_size")) h->fail_size = v > 0 ? (size_t)v : 0;
     else if (!strcmp(name, "fail_event")) bl_fail_event(h->unit, v);
