@@ -1,6 +1,7 @@
-// The framework fires ACTION_CHECK_TTS_DATA to ask whether the engine's voice data is usable.  The app carries no
-// firmware, so a voice's data is there once the user has imported its unit's firmware (the settings screen, which
-// also answers INSTALL_TTS_DATA); until then it is reported unavailable.  ISO-3 locales, not voice names.
+// The framework fires ACTION_CHECK_TTS_DATA to ask whether the engine's voice data is usable.  English is always
+// there: the Accent SA is built in.  Spanish is there once the user has imported the Spanish Braille Lite's firmware
+// (the settings screen, which also answers INSTALL_TTS_DATA); until then it is reported unavailable.  ISO-3 locales,
+// not voice names.
 package com.ssi263speech.tts
 
 import android.app.Activity

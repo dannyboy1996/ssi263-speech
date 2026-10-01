@@ -1,69 +1,136 @@
-"""An APK must carry no Braille Lite firmware -- the app is the one place it can NOT ship: no firmware or state by
-name, no ROM image by content (F3 C3 xx xx FF "COPYRIGHT") and no unit state by content (the 786432 bytes every
-state has: it holds what the firmware wrote) in any file, the source archive's members included.
+"""An APK must carry no firmware but Aicom's Accent SA ROMs (Tomi, 2026-09-30: store builds carry only Aicom's content;
+the Blazie firmware and states, and GW Micro's Speak-Out firmware, never).
+
+Allowed, by sha256 and nothing else -- exactly these three files, the built-in voice (firmware/AICOM.txt):
+
+    u2.BIN  8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad   (8085 program ROM, 64 KB)
+    u3.BIN  248dd6fb6d08f6b4316ce38f83fd330e55dde80ead4b26a652ba228e6b46859a   (dictionary, part 1, 32 KB)
+    u4.BIN  7c12a8cf56a573cd83c928d61cd49e90b3afc810279e8ee54852d7b90042d155   (dictionary, part 2, 32 KB)
+
+Refused, in any file, the source archive's members included: a Braille Lite ROM image by content (F3 C3 xx xx FF
+"COPYRIGHT"); a unit's state by content (the 786432 bytes every state has: it holds what the firmware wrote); the
+Speak-Out's SPEAKOUT.HEX by its sha256, and any Intel HEX image by content; firmware, state or ROM files by name
+(.bns .tns .state .hex .bin .dvc .rom) unless the file is one of the three above; and anything in assets/aicom/ that
+is not one of them.
 
     python check_apk_no_firmware.py <apk>...        prints what it looked at; exit 1 on any hit
-    python check_apk_no_firmware.py --control <BL2ENG.BNS> <apk>
-                                                    the control: the firmware added under a bland name; must FAIL
-    python check_apk_no_firmware.py --control <bl2_2003_warm.state> <apk>
-                                                    ... and a state under a bland name; must FAIL
+    python check_apk_no_firmware.py --synthetic     an APK-like zip made here: the three Aicom ROMs where the app has
+                                                    them, and the source archive of build_android.sh's list (no APK
+                                                    build needed); must pass
+  the controls, each must FAIL (on an APK, or --synthetic in place of it):
+    --control <BL2ENG.BNS> <apk>                    the firmware added under a bland name -- beside the Aicom ROMs
+    --control <bl2_2003_warm.state> <apk>           ... a state under a bland name
+    --control <SPEAKOUT.HEX> <apk>                  ... the Speak-Out's firmware under a bland name
+    --control-aicom-flipped <apk>                   assets/aicom/u2.BIN with one byte changed: not an allowed file
 """
+import hashlib
 import io
+import os
 import re
 import sys
 import tarfile
 import zipfile
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 IMAGE = re.compile(rb"\xF3\xC3..\xFFCOPYRIGHT", re.S)
-NAMES = re.compile(r"(?i)\.(bns|tns|state)$")
+NAMES = re.compile(r"(?i)\.(bns|tns|state|hex|bin|dvc|rom)$")
+INTEL_HEX = re.compile(rb"\A(?::[0-9A-Fa-f]{10,}\r?\n){4}")       # four Intel HEX records at the start
 STATE_SIZE = 786432                         # bl_save_state's: battery-backed RAM + file flash
+AICOM_DIR = "assets/aicom/"
+ALLOWED = {
+    "8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad": "u2.BIN",
+    "248dd6fb6d08f6b4316ce38f83fd330e55dde80ead4b26a652ba228e6b46859a": "u3.BIN",
+    "7c12a8cf56a573cd83c928d61cd49e90b3afc810279e8ee54852d7b90042d155": "u4.BIN",
+}
+REFUSED = {"1c6930c8c6aed0550bc267c14032f9195b450ed95de606f2fa9727e2b7eb1eb1": "the Speak-Out's SPEAKOUT.HEX"}
 
 
-def scan(label, data, hits, depth=0):
+def scan(label, data, hits, allowed, depth=0, name=""):
+    digest = hashlib.sha256(data).hexdigest()
+    if depth > 0 and digest in ALLOWED:
+        allowed.append(ALLOWED[digest])
+        return
+    if depth == 1 and name.startswith(AICOM_DIR):
+        hits.append("%s: in %s but not one of the Aicom ROMs (sha256 %s...)" % (label, AICOM_DIR, digest[:12]))
+    if digest in REFUSED:
+        hits.append("%s: %s" % (label, REFUSED[digest]))
+    if name and NAMES.search(name):
+        hits.append("%s: a firmware, state or ROM file by name" % label)
     if IMAGE.search(data):
-        hits.append("%s: a ROM image" % label)
+        hits.append("%s: a Braille Lite ROM image" % label)
+    if INTEL_HEX.match(data):
+        hits.append("%s: an Intel HEX image" % label)
     if depth > 0 and len(data) == STATE_SIZE:
         hits.append("%s: a unit's state, by its size" % label)
     if depth < 2 and data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for n in z.namelist():
-                if NAMES.search(n):
-                    hits.append("%s!%s: a firmware or state file by name" % (label, n))
-                scan("%s!%s" % (label, n), z.read(n), hits, depth + 1)
+                scan("%s!%s" % (label, n), z.read(n), hits, allowed, depth + 1, n)
     elif depth < 2 and data[:2] == b"\x1f\x8b":
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
             for m in t.getmembers():
                 if m.isfile():
-                    if NAMES.search(m.name):
-                        hits.append("%s!%s: a firmware or state file by name" % (label, m.name))
-                    scan("%s!%s" % (label, m.name), t.extractfile(m).read(), hits, depth + 1)
+                    scan("%s!%s" % (label, m.name), t.extractfile(m).read(), hits, allowed, depth + 1, m.name)
 
 
-def with_firmware(data, firmware):
-    """The control: the APK's entries plus the firmware under a name that says nothing, as a bundled build had it."""
+def synthetic():
+    """An APK-like zip: the Aicom ROMs where the app carries them, a licence, and the source archive of the files
+    build_android.sh packs (as far as they are in this tree)."""
+    out = io.BytesIO()
+    src = io.BytesIO()
+    with tarfile.open(fileobj=src, mode="w:gz") as t:
+        for rel in ("build_android.sh", "LICENSE", "src/csrc/ssi263.c", "src/csrc/numwords.c", "src/csrc/accentsa",
+                    "src/csrc/blazie", "src/csrc/cpu/i8085_mame.cpp", "src/platforms/android/app/src/main/cpp"):
+            path = os.path.join(REPO, rel)
+            if os.path.exists(path):
+                t.add(path, arcname=rel)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in ("u2.BIN", "u3.BIN", "u4.BIN"):
+            z.writestr(AICOM_DIR + n, open(os.path.join(REPO, "firmware", "aicom-accent-sa", n), "rb").read())
+        z.writestr("assets/licenses/Aicom-Accent-SA-notice.txt", open(os.path.join(REPO, "firmware", "AICOM.txt"),
+                                                                      "rb").read())
+        z.writestr("assets/source/ssi263-speech-source.tgz", src.getvalue())
+    return out.getvalue()
+
+
+def with_file(data, name, content, replace=False):
+    """The APK's entries plus (or with `name` replaced by) a file."""
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(data)) as src, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
         for n in src.namelist():
-            dst.writestr(n, src.read(n))
-        dst.writestr("assets/data/unit.bin", open(firmware, "rb").read())
+            if not (replace and n == name):
+                dst.writestr(n, src.read(n))
+        dst.writestr(name, content)
     return out.getvalue()
 
 
 def main():
     args = sys.argv[1:]
-    control = None
-    if args[:1] == ["--control"]:            # --control <firmware .BNS or .state> <apk>: this run must FAIL
+    control = flipped = None
+    if args[:1] == ["--control"]:            # --control <a firmware or state file> <apk>: this run must FAIL
         control, args = args[1], args[2:]
+    elif args[:1] == ["--control-aicom-flipped"]:
+        flipped, args = True, args[1:]
     bad = 0
     for apk in args:
-        hits = []
-        data = open(apk, "rb").read()
+        hits, allowed = [], []
+        if apk == "--synthetic":
+            data, label = synthetic(), "synthetic.apk"
+        else:
+            data, label = open(apk, "rb").read(), apk.replace("\\", "/").split("/")[-1]
         if control:
-            data = with_firmware(data, control)
-        scan(apk.replace("\\", "/").split("/")[-1], data, hits)
+            data = with_file(data, "assets/data/unit.dat", open(control, "rb").read())
+        if flipped:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                u2 = bytearray(z.read(AICOM_DIR + "u2.BIN"))
+            u2[0x100] ^= 0x01
+            data = with_file(data, AICOM_DIR + "u2.BIN", bytes(u2), replace=True)
+        scan(label, data, hits, allowed)
         n = len(zipfile.ZipFile(io.BytesIO(data)).namelist())
-        print("%s: %d entries, %s" % (apk.replace("\\", "/").split("/")[-1], n,
-                                     "no firmware" if not hits else "FIRMWARE: " + "; ".join(hits[:5])))
+        print("%s: %d entries, %s; Aicom ROMs allowed: %d%s" % (
+            label, n, "no firmware" if not hits else "FIRMWARE: " + "; ".join(hits[:5]), len(allowed),
+            "" if not allowed else " (%s)" % ", ".join(sorted(allowed))))
         bad += bool(hits)
     return 1 if bad else 0
 

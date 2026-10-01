@@ -1,5 +1,7 @@
 // The one engine in this process, shared by the TTS service and the settings screen's preview: opens the native
-// side on the imported unit files, lists the voices, and owns the engine for one utterance at a time.  A stop from any
+// side on the imported unit files and the APK's Accent SA ROMs, lists the voices -- the Aicom Accent SA always, the
+// default until a Braille Lite is imported (Tomi, 2026-09-30); the Braille Lite voices once their firmware is -- and
+// owns the engine for one utterance at a time.  A stop from any
 // thread reaches the render in progress (nativeStop); the synthesis thread then cancels, so the unit drops what it
 // has not spoken and the next utterance starts clean -- as the speech-dispatcher module does after STOP.
 package com.ssi263speech.tts
@@ -11,21 +13,27 @@ import java.util.Locale
 object SsiEngine {
     data class VoiceInfo(val index: Int, val name: String, val label: String, val locale: Locale)
 
+    // The names are kept for good: TalkBack stores the one it was given.
     private val ALL = listOf(
+        VoiceInfo(SsiNative.ACCENT_SA, "en-US-accentsa", "Aicom Accent SA (English)", Locale("en", "US")),
         VoiceInfo(SsiNative.ENGLISH, "en-US-braillelite", "Braille Lite 2000 (English)", Locale("en", "US")),
         VoiceInfo(SsiNative.SPANISH, "es-ES-braillelite", "Braille Lite 2000 (español)", Locale("es", "ES")))
 
     private val lock = Any()
     @Volatile private var opened = false
 
-    /** Open the native side on the unit's files.  False until the user has imported firmware. */
+    /** Open the native side on the unit's files and the Accent SA's ROMs.  False when no voice can speak. */
     fun open(ctx: Context): Boolean {
         if (opened) return true
         synchronized(lock) {
             if (opened) return true
-            if (!SsiData.any(ctx)) { Log.w("SsiEngine", "no firmware imported"); return false }
-            opened = SsiNative.nativeOpen(SsiData.dir(ctx).absolutePath)
-            return opened
+            if (voices(ctx).isEmpty()) { Log.w("SsiEngine", "no voice: no Accent SA ROMs, no firmware imported"); return false }
+            if (!SsiNative.nativeOpen(SsiData.dir(ctx).absolutePath)) return false
+            val roms = SsiData.accentRoms(ctx)
+            if (roms != null && !SsiNative.nativeAccentRoms(roms[0], roms[1], roms[2]))
+                Log.e("SsiEngine", "the Accent SA's ROMs were refused")
+            opened = true
+            return true
         }
     }
 
@@ -38,17 +46,30 @@ object SsiEngine {
         }
     }
 
-    /** The voices that can speak now: those whose firmware has been imported. */
+    /** The voices that can speak now: the Accent SA, and the Braille Lite voices whose firmware has been imported. */
     fun voices(ctx: Context): List<VoiceInfo> = ALL.filter { SsiData.has(ctx, it.index) }
 
     fun voiceByName(ctx: Context, name: String?): VoiceInfo? = voices(ctx).firstOrNull { it.name == name }
 
+    /** That voice when it can speak; otherwise the first that can (the Accent SA). */
     fun voiceFor(ctx: Context, index: Int): VoiceInfo =
         voices(ctx).let { v -> v.firstOrNull { it.index == index } ?: v.firstOrNull() } ?: ALL[0]
 
-    fun english(ctx: Context): Boolean = SsiData.has(ctx, SsiNative.ENGLISH)
+    /** The voice when the user has chosen none: the Braille Lite once its English firmware is imported, else the
+     * Accent SA (Tomi: the Accent SA is the default while no Braille Lite firmware is here). */
+    fun defaultVoice(ctx: Context): Int =
+        if (SsiData.has(ctx, SsiNative.ENGLISH)) SsiNative.ENGLISH else SsiNative.ACCENT_SA
+
+    /** An English voice can speak: the Accent SA (always, in a whole APK) or the imported Braille Lite. */
+    fun english(ctx: Context): Boolean =
+        SsiData.has(ctx, SsiNative.ACCENT_SA) || SsiData.has(ctx, SsiNative.ENGLISH)
 
     fun spanish(ctx: Context): Boolean = SsiData.has(ctx, SsiNative.SPANISH)
+
+    /** For a request in English: the chosen voice when it is an English one, else the first English voice. */
+    fun englishVoiceFor(ctx: Context, index: Int): VoiceInfo =
+        voiceFor(ctx, index).takeIf { it.index != SsiNative.SPANISH }
+            ?: voices(ctx).firstOrNull { it.index != SsiNative.SPANISH } ?: ALL[0]
 
     /** Own the engine for one utterance: every native call but a stop happens inside. */
     fun <T> withEngine(block: () -> T): T = synchronized(lock) { block() }

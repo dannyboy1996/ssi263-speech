@@ -6,9 +6,10 @@ plugins {
 }
 
 // Everything the APK carries besides code is staged by build_android.sh at the repository root into
-// build/android/assets: the licences and z180emu's GPL source.  No firmware: the app's users import their own
-// (FirmwareImport.kt); only a developer build asked for with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it.  The native library, from the same sources
-// as the Linux and Windows builds, is dropped under jniLibs.  Gradle only checks both are there.
+// build/android/assets: the Accent SA's ROMs (Aicom's, the built-in voice), the licences and z180emu's GPL source.
+// No Braille Lite firmware: the app's users import their own (FirmwareImport.kt); only a developer build asked for
+// with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it.  The native library, from the same sources as the Linux and
+// Windows builds, is dropped under jniLibs.  Gradle only checks both are there.
 val repoRoot = rootProject.file("../../..")
 val stagedAssets = File(repoRoot, "build/android/assets")
 val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -19,6 +20,8 @@ val verifyNativeBuild = tasks.register("verifyNativeBuild") {
             check(library.isFile) { "Build the $abi library with `sh build_android.sh` first" }
         }
         for (name in listOf("licenses/DISTRIBUTION.txt", "licenses/z180emu-GPL-2.0.txt",
+                            "licenses/Aicom-Accent-SA-notice.txt", "licenses/MAME-8085-core-BSD-3-Clause.txt",
+                            "aicom/u2.BIN", "aicom/u3.BIN", "aicom/u4.BIN",
                             "source/ssi263-speech-source.tgz")) {
             check(File(stagedAssets, name).isFile) { "build/android/assets/$name is missing: run `sh build_android.sh`" }
         }
@@ -57,9 +60,9 @@ android {
     sourceSets["test"].java.srcDirs("src/test/kotlin")
     sourceSets["main"].assets.srcDir(stagedAssets)
 
-    // The firmware and state are read as they are: no compression, so they copy out of the APK quickly.
+    // The firmware, states and ROMs are read as they are: no compression, so they copy out of the APK quickly.
     androidResources {
-        noCompress += listOf("BNS", "state", "tgz")
+        noCompress += listOf("BNS", "state", "tgz", "BIN")
     }
 
     // Release signing, as outspoken's and TGSpeechBox's builds: a `signing.properties` beside settings.gradle.kts,

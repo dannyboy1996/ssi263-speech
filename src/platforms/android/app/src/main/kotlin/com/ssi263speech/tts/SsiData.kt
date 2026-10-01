@@ -1,7 +1,8 @@
-// The unit's files: the firmware each user imports (SsiImport) and the state made from it, in device-protected
-// storage, where the native side opens them by path -- and where they can be read before the phone is first
-// unlocked, so the voice works on the lock screen after a restart.  A release APK carries no firmware; a developer
-// build made with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it as assets, copied in once per installed version.
+// The units' files.  The Braille Lite's: the firmware each user imports (SsiImport) and the state made from it, in
+// device-protected storage, where the native side opens them by path -- and where they can be read before the phone is
+// first unlocked, so the voice works on the lock screen after a restart.  A release APK carries no Braille Lite
+// firmware; a developer build made with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it as assets, copied in once per
+// installed version.  The Accent SA's: Aicom's ROMs, in every APK (assets/aicom), handed to the native side in memory.
 package com.ssi263speech.tts
 
 import android.content.Context
@@ -24,13 +25,40 @@ object SsiData {
     /** Where an import is judged and made ready, beside the real folder; gone when the import is. */
     fun staging(ctx: Context): File = File(protectedContext(ctx).filesDir, "unit.importing")
 
-    /** Both of the voice's files are here. */
+    /** The voice can speak: the Accent SA's ROMs are in the APK; both of a Braille Lite voice's files are here. */
     fun has(ctx: Context, voice: Int): Boolean {
+        if (voice == SsiNative.ACCENT_SA) return accentRoms(ctx) != null
         stageBundled(ctx)
         return FILES[voice].all { File(dir(ctx), it).isFile }
     }
 
+    /** A Braille Lite voice has been imported. */
     fun any(ctx: Context): Boolean = has(ctx, SsiNative.ENGLISH) || has(ctx, SsiNative.SPANISH)
+
+    // ---- the Accent SA's ROMs: Aicom's, the one firmware the APK carries (firmware/AICOM.txt; Tomi, 2026-09-30) ----
+
+    private const val AICOM = "aicom"
+    private val AICOM_ROMS = listOf("u2.BIN" to 0x10000, "u3.BIN" to 0x8000, "u4.BIN" to 0x8000)
+    @Volatile private var roms: List<ByteArray>? = null
+    @Volatile private var romsChecked = false
+
+    /** u2, u3 and u4 from the APK's assets, read once; null when one is missing or the wrong size (a broken build). */
+    fun accentRoms(ctx: Context): List<ByteArray>? {
+        if (romsChecked) return roms
+        synchronized(this) {
+            if (!romsChecked) {
+                roms = try {
+                    AICOM_ROMS.map { (name, size) ->
+                        ctx.assets.open("$AICOM/$name").use { it.readBytes() }.also {
+                            check(it.size == size) { "$name is ${it.size} bytes, not $size" }
+                        }
+                    }
+                } catch (e: Exception) { Log.e("SsiData", "the Accent SA's ROMs are not in this APK", e); null }
+                romsChecked = true
+            }
+            return roms
+        }
+    }
 
     /** What was imported for the voice, in words; null when nothing was. */
     fun label(ctx: Context, voice: Int): String? {

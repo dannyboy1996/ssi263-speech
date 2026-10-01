@@ -15,7 +15,7 @@ class GetSampleTextActivity : Activity() {
         val data = Intent().putExtra(
             TextToSpeech.Engine.EXTRA_SAMPLE_TEXT,
             if (spanish) "Hola. Este es un Braille Lite, hablando en tu teléfono."
-            else "Hello there. This is a Braille Lite, speaking on your phone.")
+            else "Hello there. This is SSI-263 Speech, speaking on your phone.")
         setResult(TextToSpeech.LANG_AVAILABLE, data)
         finish()
     }

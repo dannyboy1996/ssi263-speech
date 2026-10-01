@@ -26,7 +26,8 @@ class SsiTtsService : TextToSpeechService() {
     private fun isSpanish(lang: String?) = lang == "spa" || lang == "es"
     private fun isEnglish(lang: String?) = lang == "eng" || lang == "en"
 
-    // The app carries no firmware: until the user imports a unit's, its language is supported but its data missing.
+    // English: the Accent SA is built in.  Spanish: the Braille Lite's firmware is imported by the user; until it is,
+    // the language is supported but its data missing.
     private fun availability(lang: String?, country: String?): Int = when {
         isEnglish(lang) -> if (!SsiEngine.english(this)) TextToSpeech.LANG_MISSING_DATA
                            else if (country == "USA" || country == "US") TextToSpeech.LANG_COUNTRY_AVAILABLE
@@ -57,7 +58,7 @@ class SsiTtsService : TextToSpeechService() {
     override fun onGetDefaultVoiceNameFor(lang: String?, country: String?, variant: String?): String? {
         if (lang != null && availability(lang, country) < 0) return null
         if (isSpanish(lang)) return SsiEngine.voiceFor(this, SsiNative.SPANISH).name
-        return SsiEngine.voiceFor(this, SsiSettings.snapshot(this).voice).name
+        return SsiEngine.englishVoiceFor(this, SsiSettings.snapshot(this).voice).name
     }
 
     override fun onStop() {
@@ -69,7 +70,7 @@ class SsiTtsService : TextToSpeechService() {
     override fun onSynthesizeText(request: SynthesisRequest, callback: SynthesisCallback) {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
         val text = request.charSequenceText?.toString() ?: ""
-        // No firmware imported yet: the voice data is not installed, which the settings screen's Import fixes.
+        // No voice at all (an APK without the Accent SA's ROMs, no firmware imported): the voice data is not installed.
         if (!SsiEngine.open(this)) { callback.error(TextToSpeech.ERROR_NOT_INSTALLED_YET); return }
         val s = SsiSettings.snapshot(this)
 

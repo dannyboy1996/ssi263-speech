@@ -1,9 +1,10 @@
 /* ssa_jni.c -- the JNI bridge from Kotlin (SsiNative.kt) to the front end (ssa_engine.h).
  *
- * Thin: it marshals strings and the PCM buffer across the boundary and calls ssa_*, which calls bl_voice -- the same
- * C the speech-dispatcher module and the NVDA add-on's library are built from, linked into this one .so.  No IPC.
+ * Thin: it marshals strings, the Accent SA's ROMs and the PCM buffer across the boundary and calls ssa_*, which calls
+ * bl_voice and as_voice -- the same C the speech-dispatcher module and the NVDA add-ons' libraries are built from,
+ * linked into this one .so.  No IPC.
  *
- * C, not C++: everything below is C, and a C++ bridge would bring libc++ into the APK for nothing.
+ * C, not C++: only the Accent SA's 8085 core (MAME's) is C++, linked with a static libc++ inside the .so.
  *
  * One engine per process.  Every call is serialised on the Kotlin side (SsiEngine's lock) except nativeStop, which
  * only sets a flag.
@@ -31,6 +32,29 @@ JNIEXPORT jboolean JNICALL FN(nativeOpen)(JNIEnv *env, jclass cls, jstring jdir)
     g_engine = ssa_new(dir);
     (*env)->ReleaseStringUTFChars(env, jdir, dir);
     return g_engine ? JNI_TRUE : JNI_FALSE;
+}
+
+/* The Accent SA's ROMs (the APK's assets/aicom), copied into the engine. */
+JNIEXPORT jboolean JNICALL FN(nativeAccentRoms)(JNIEnv *env, jclass cls, jbyteArray ju2, jbyteArray ju3,
+                                                jbyteArray ju4)
+{
+    jbyteArray arr[3] = {ju2, ju3, ju4};
+    jbyte *p[3] = {NULL, NULL, NULL};
+    jsize n[3] = {0, 0, 0};
+    int i, ok = 0;
+    (void)cls;
+    if (!g_engine || !ju2 || !ju3 || !ju4) return JNI_FALSE;
+    for (i = 0; i < 3; i++) {
+        n[i] = (*env)->GetArrayLength(env, arr[i]);
+        p[i] = (*env)->GetByteArrayElements(env, arr[i], NULL);
+        if (!p[i]) break;
+    }
+    if (i == 3)
+        ok = ssa_set_accent_roms(g_engine, (const unsigned char *)p[0], (size_t)n[0], (const unsigned char *)p[1],
+                                 (size_t)n[1], (const unsigned char *)p[2], (size_t)n[2]);
+    for (i = 0; i < 3; i++)
+        if (p[i]) (*env)->ReleaseByteArrayElements(env, arr[i], p[i], JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL FN(nativeHasVoice)(JNIEnv *env, jclass cls, jint voice)

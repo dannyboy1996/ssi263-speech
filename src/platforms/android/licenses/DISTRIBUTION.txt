@@ -6,9 +6,11 @@ This app is distributed under the GNU General Public License, version 2 or
 (at your option) any later version, because its native library carries
 z180emu -- Michal Tomek's Z180 system emulator, built on Juergen
 Buchmueller's Z180 core from MAME -- which is GPL-2.0-or-later. The
-project's own code -- the SSI-263 chip model, the Braille Lite board, host
-and voice, and this app -- is MIT, and stays MIT where it is used on its
-own; combined with z180emu in this app, the whole is under the GPL.
+project's own code -- the SSI-263 chip model, the Braille Lite and Accent SA
+boards, hosts and voices, and this app -- is MIT, and stays MIT where it is
+used on its own; combined with z180emu in this app, the whole is under the
+GPL. The Accent SA runs on MAME's Intel 8085 core (BSD-3-Clause: Juergen
+Buchmueller, Roberto Fresca, Grull Osgo).
 
 The complete corresponding source of the native library, and how to build
 it, is inside this app (source/ssi263-speech-source.tgz and
@@ -16,6 +18,12 @@ source/BUILD.txt in the APK), and at:
 https://github.com/tgeczy/ssi263-speech
 
 The app also carries the Kotlin runtime (Apache License 2.0).
+
+The built-in voice is the Aicom Accent SA: the app carries its 8085
+firmware and dictionary ROMs (u2, u3 and u4), Aicom Corporation's work,
+with the notice under Full licenses (Aicom Accent SA notice). They are not
+ours and are not covered by the licenses above; they are the only
+firmware this app carries.
 
 This app carries no Blazie Braille Lite 2000 firmware. You import your
 own copy, which stays in the app's storage on this device; the unit's
