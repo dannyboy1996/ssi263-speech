@@ -10,7 +10,9 @@ the NVDA driver boots it:
                     RunAheadError; the held input never delivered over it (a held say used to start the next capture,
                     and that reset the error); new input refused (-1, raising); then cancel() -- the explicit
                     recovery -- clears it, drops the held input, and the next say speaks to its done.
-  board event       a chip write or serial byte the board could not store (bl_board.c event()): a fault, busy() -1
+                    And Astra's probe itself: the capture failing at its start, a second say at once (before any run):
+                    refused, bh_busy -1 -- it was held, and bh_busy 1.
+  board event      a chip write or serial byte the board could not store (bl_board.c event()): a fault, busy() -1
                     and raising BlazieHostError, until cancel(); the lockstep (run ahead off).
   transmit record   a byte the unit sent that the host's record (bh_tx) could not keep: reading tx raises, the ^F
                     echo is still counted (the say reaches its done).
@@ -150,6 +152,37 @@ def run_ahead_case(waiting):
     return "run-ahead script, a %s waiting" % waiting, problems, notes
 
 
+def start_case():
+    """Astra's error_priority_probe.c on the real host: the capture fails at its start (the 256-entry acknowledgement
+    array), nothing run yet, and a second say comes.  Refused (C bh_say -1, raising), bh_busy -1 with nothing held; it
+    was held, and bh_busy 1"""
+    from hosts.native_blazie import RunAheadError
+    log, problems = [], []
+    u = unit(1, log)
+    seti(u, "fail_alloc_size", 256 * 8)
+    u.say(["First say."])
+    data = b"Second say.\r\x06\r\x06"
+    code = u._lib.bh_say(u._h, data, len(data))
+    busy_c, held = c_busy(u), u.geti("held")
+    notes = ["C bh_say %d, bh_busy %d, %d held" % (code, busy_c, held)]
+    if code != -1 or busy_c != -1 or held:
+        problems.append("RA_ERROR with the second say: C bh_say %d, bh_busy %d with %d input held (-1, -1, 0 wanted)"
+                        % (code, busy_c, held))
+    try:
+        u.busy()
+        problems.append("busy() did not raise RunAheadError")
+    except RunAheadError:
+        pass
+    u.cancel()
+    n0 = len(log)
+    u.say(["After the cancel."])
+    done, e = until_done(u)
+    if not done or not spoken(log[n0:]):
+        problems.append("the next say after cancel(): done %s, %s" % (done, e))
+    u.close()
+    return "run-ahead script failed at its start, a second say", problems, notes
+
+
 def board_case():
     from hosts.native_blazie import BlazieHostError
     log, problems = [], []
@@ -215,13 +248,16 @@ def log_case():
     return "write log", problems, []
 
 
+CASES = [lambda: run_ahead_case("say"), lambda: run_ahead_case("send"), start_case, board_case, tx_case, log_case]
+
+
 def one(k):
-    return [lambda: run_ahead_case("say"), lambda: run_ahead_case("send"), board_case, tx_case, log_case][k]()
+    return CASES[k]()
 
 
 if __name__ == "__main__":
-    with Pool(5) as p:
-        results = p.map(one, range(5))
+    with Pool(len(CASES)) as p:
+        results = p.map(one, range(len(CASES)))
     failures = 0
     for name, problems, notes in results:
         failures += bool(problems)

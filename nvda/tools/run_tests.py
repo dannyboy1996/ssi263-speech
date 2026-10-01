@@ -353,7 +353,8 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                         fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
                                     r"^run ahead cancel \(English\): 1 FAILED$"]))
     # faults are never silent (run_ahead_fault.py; Astra, Reply 112 item 2): a run-ahead capture failing mid-utterance
-    # with a say or a setting waiting, a board event, a transmitted byte and a logged write lost -- each seen first
+    # with a say or a setting waiting, or at its start with a second say at once (her error_priority_probe.c: busy 1
+    # with input held), a board event, a transmitted byte and a logged write lost -- each seen first
     # (bh_busy -1, raising), no input delivered or taken over it, cancel() the recovery.  Its controls put the error
     # behind held input (sticky) and the losses back to silent (drop)
     CHECKS.append(check("run ahead faults: seen first, sticky until cancel, never silent", [PY, "run_ahead_fault.py"]))
@@ -361,7 +362,9 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
     for what, brk, marks in (
             ("the error behind held input, delivered over", "sticky",
              [r"^FAIL run-ahead script, a say waiting: .*the held say was DELIVERED over the error",
-              r"^FAIL run-ahead script, a send waiting: .*the held send was DELIVERED over the error", FAULT_SUM % 2]),
+              r"^FAIL run-ahead script, a send waiting: .*the held send was DELIVERED over the error",
+              r"^FAIL run-ahead script failed at its start, a second say: RA_ERROR with the second say: C bh_say 1, "
+              r"bh_busy 1 with 1 input held", FAULT_SUM % 3]),
             ("losses silent", "drop",
              [r"^FAIL board event lost \(lockstep\): a lost board event passed SILENTLY",
               r"^FAIL transmit record: a transmitted byte lost SILENTLY", r"^FAIL write log: a logged write lost SILENTLY",

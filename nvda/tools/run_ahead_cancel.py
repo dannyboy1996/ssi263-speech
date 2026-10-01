@@ -8,7 +8,7 @@ which wakes it -- so ^X met the firmware mid-routine, copying the next line's te
 survived the ^X (awake at 97% of the capture's stops, 15% of the lockstep's time).  And the chip's request, given to the
 unit at once after the cancel, had it load a phoneme of the dropped script and resume that text work before handling
 its ^X.  The fix (run_ahead.h ra_settle, bl_host.c bh_cancel): before ^X the unit runs on, nothing more acknowledged,
-until its CPU waits for an interrupt (at most 0.5 s of CPU), and its A/R stays not requesting over the first ^X slice.
+until its CPU waits for an interrupt (at most 0.1 s of CPU), and its A/R stays not requesting over the first ^X slice.
 
 Each sweep: cancel times over a say, in run ahead (--lockstep: the same in the lockstep too, for reference -- it has
 its own, rarer race at line boundaries, 1 of 25 on the first sweep: reported, not gated).  The respoken utterance's
