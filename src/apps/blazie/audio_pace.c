@@ -100,6 +100,44 @@ int ap_save_now(const audio_pace *p, int in_flight, int save_pending)
     return save_pending && ap_want(p, in_flight, 1) == 0;
 }
 
+int ap_blocks_queued(long queued_frames, int block_frames)
+{
+    if (queued_frames <= 0 || block_frames <= 0)
+        return 0;
+    return (int)((queued_frames + block_frames - 1) / block_frames);
+}
+
+double ap_played_ms(unsigned long long written_frames, long delay_frames, int rate)
+{
+    unsigned long long d = delay_frames > 0 ? (unsigned long long)delay_frames : 0;
+    if (d > written_frames)          /* a sound server's latency guessed before it has played anything */
+        d = written_frames;
+    return rate > 0 ? (double)(written_frames - d) * 1000.0 / rate : 0.0;
+}
+
+double ap_wait_ms(const audio_pace *p, long queued_frames, int block_frames, int rate, int save_pending)
+{
+    int goal = ap_want(p, 0, save_pending);             /* the blocks the queue keeps (capped) */
+    long over = queued_frames - (long)(goal - 1) * block_frames;
+    double ms, most = (double)p->block_ms;
+    if (goal <= 0 || rate <= 0 || ap_want(p, ap_blocks_queued(queued_frames, block_frames), save_pending) > 0)
+        return 0.0;
+    ms = (double)over * 1000.0 / rate;
+    return ms < AP_WAIT_MIN_MS ? AP_WAIT_MIN_MS : ms > most ? most : ms;
+}
+
+long ap_ring_frames(int block_frames, int block_ms)
+{
+    return (long)ap_capacity(block_ms) * block_frames;
+}
+
+long ap_start_frames(int block_frames, int block_ms)
+{
+    if (block_ms < AP_MIN_BLOCK_MS)
+        block_ms = AP_MIN_BLOCK_MS;
+    return (long)blocks(AP_SHORT_MS, block_ms) * block_frames;
+}
+
 const char *ap_mode_name(int mode)
 {
     return mode >= 0 && mode < AP_N_MODES ? NAMES[mode] : NAMES[AP_AUTO];

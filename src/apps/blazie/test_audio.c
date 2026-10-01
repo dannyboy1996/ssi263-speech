@@ -25,6 +25,13 @@
  *   4 / 8 / 12 blocks, 5% held up to 60 ms              1610-2007 / 370 / 30-50    1821 / 350 / 10 ms of 15 s
  * So four blocks of 10 ms (the 0.7.0 draft's) leave ~10 ms to spare on a card this fast: a thread held up longer is
  * heard as a gap, every time.
+ *
+ * The Linux shells' sound thread (audio_linux.c) is run the same way ("linux:"): no block is handed back -- it asks
+ * the card how much is still queued (in frames: ap_blocks_queued) and how far it has played (ap_played_ms), renders
+ * one block at a time while ap_want says so, and otherwise sleeps ap_wait_ms; the minute's save is a flag it sees on
+ * its next turn; under --old, the 0.7.0 draft's Linux queue (four blocks in ALSA's buffer, written as soon as there
+ * is room) must fail the same way.  And those functions alone ("card:"), with the ring the shells open
+ * (ap_ring_frames, ap_start_frames): they do not depend on the queue's sizes, so --old passes them.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,8 +43,10 @@
 #define SETTLE_MS 10000.0            /* the automatic queue has grown by then */
 #define WARM_MS 1000.0               /* the start: the first blocks, a hold-up there is heard whatever the queue */
 #define RING 4096
+#define RATE 44100                   /* the Linux card's frames */
+#define BLOCK_FRAMES (RATE * BLOCK_MS / 1000)
 
-static int failures, old_queue;
+static int failures, old_queue, linux_card;
 
 static void check(const char *name, int ok, const char *detail)
 {
@@ -72,6 +81,13 @@ typedef struct {
     int target_end, saves, detected; /* the queue at the end (blocks); saves; gaps ap_observe found */
     double save_wait_max;            /* a save's wait from due to start */
 } result;
+
+/* the Linux card's queue: what was written and is not yet played, in frames (ALSA's delay) */
+static long queued_frames(int written, double played)
+{
+    double ms = (double)written * BLOCK_MS - played;
+    return ms > 0 ? (long)(ms * RATE / 1000.0 + 0.5) : 0;
+}
 
 static result simulate(const scenario *s, int mode)
 {
@@ -140,6 +156,14 @@ static result simulate(const scenario *s, int mode)
         /* the sound thread */
         switch (state) {
         case WAIT:
+            if (linux_card) {        /* asleep for ap_wait_ms: nothing wakes it sooner */
+                signalled = 0;
+                if (t >= until) {
+                    state = WAKE;
+                    until = t + 0.02 + rnd() * 0.28;
+                }
+                break;
+            }
             if (signalled || t - until >= 100.0) {
                 signalled = 0;
                 state = WAKE;
@@ -148,9 +172,13 @@ static result simulate(const scenario *s, int mode)
             break;
         case WAKE:
             if (t >= until) {
-                if (ap_observe(&p, t, played) > 0)
+                if (ap_observe(&p, t, linux_card ? ap_played_ms((unsigned long long)written * BLOCK_FRAMES,
+                                                                 queued_frames(written, played), RATE)
+                                                  : played) > 0)
                     r.detected++;
-                to_render = ap_want(&p, written - returned, save_pending);
+                to_render = linux_card ? (ap_want(&p, ap_blocks_queued(queued_frames(written, played), BLOCK_FRAMES),
+                                                  save_pending) > 0)
+                                       : ap_want(&p, written - returned, save_pending);
                 state = RENDER;
             }
             break;
@@ -160,6 +188,11 @@ static result simulate(const scenario *s, int mode)
                 written++;
                 rendering = 0;
                 to_render--;
+                if (linux_card) {    /* the Linux thread asks the card again before each block */
+                    state = WAKE;
+                    until = t;
+                    break;
+                }
             }
             if (rendering || t < gui_until)   /* (the window's save holds the unit: the render waits) */
                 break;
@@ -168,11 +201,15 @@ static result simulate(const scenario *s, int mode)
                 until = t + (rnd() < s->p_slow ? s->slow_ms : 0.3 + rnd() * 0.4)
                         + (rnd() < s->p_stall ? rnd() * s->stall_max : 0.0)
                         + (s->stall_each && written % s->stall_each == s->stall_each / 2 ? s->stall_max : 0.0);
-            } else if (ap_save_now(&p, written - returned, save_pending)) {
+            } else if (ap_save_now(&p, linux_card ? ap_blocks_queued(queued_frames(written, played), BLOCK_FRAMES)
+                                                  : written - returned, save_pending)) {
                 if (t - waited_from > r.save_wait_max)
                     r.save_wait_max = t - waited_from;
                 state = SAVE;
                 until = t + s->save_ms;
+            } else if (linux_card) {          /* asleep until a block will be wanted */
+                state = WAIT;
+                until = t + ap_wait_ms(&p, queued_frames(written, played), BLOCK_FRAMES, RATE, save_pending);
             } else if (signalled) {           /* an event set meanwhile: the wait returns at once */
                 signalled = 0;
                 state = WAKE;
@@ -198,7 +235,7 @@ static result simulate(const scenario *s, int mode)
 
 static void grows(const char *name, const scenario *s)
 {
-    char label[80], d[300];
+    char label[96], d[300];
     result r = simulate(s, AP_AUTO);
     snprintf(d, sizeof d, "%d gaps after 10 s (%.0f ms), %d in all (%.0f ms, the last at %.1f s), %d found; queue %d "
              "ms at the end", r.gaps_after, r.gap_after, r.gaps, r.gap_ms, r.last_gap / 1000.0, r.detected,
@@ -235,21 +272,78 @@ static void scenario_checks(void)
     char d[300];
     result r;
 
+    const char *who = linux_card ? "linux: " : "";
+    char label[96];
+
     r = simulate(&steady, AP_AUTO);
     snprintf(d, sizeof d, "%d gaps after the first second, %d in all (%.0f ms); queue %d ms at the end", r.gaps_warm,
              r.gaps, r.gap_ms, r.target_end * BLOCK_MS);
-    check("steady card: no gap after the first second", r.gaps_warm == 0, d);
+    snprintf(label, sizeof label, "%ssteady card: no gap after the first second", who);
+    check(label, r.gaps_warm == 0, d);
+    snprintf(label, sizeof label, "%ssteady card: the automatic queue stays at 60 ms", who);
     if (!old_queue)
-        check("steady card: the automatic queue stays at 60 ms", r.target_end * BLOCK_MS == AP_AUTO_START_MS, d);
+        check(label, r.target_end * BLOCK_MS == AP_AUTO_START_MS, d);
 
-    grows("busy machine", &busy);
-    grows("remote card", &remote);
+    snprintf(label, sizeof label, "%sbusy machine", who);
+    grows(label, &busy);
+    snprintf(label, sizeof label, "%sremote card", who);
+    grows(label, &remote);
 
     r = simulate(&saving, AP_AUTO);
+    /* the Linux thread sees the save's flag on its next turn, up to a block later */
     snprintf(d, sizeof d, "%d saves of 50 ms: %d gaps after the first second (%.0f ms in all); a save waited at most "
              "%.1f ms", r.saves, r.gaps_warm, r.gap_ms, r.save_wait_max);
-    check("autosave: no gap", r.gaps_warm == 0 && r.saves >= 5, d);
-    check("autosave: a save waits at most 20 ms", r.save_wait_max <= 20.0, d);
+    snprintf(label, sizeof label, "%sautosave: no gap", who);
+    check(label, r.gaps_warm == 0 && r.saves >= 5, d);
+    snprintf(label, sizeof label, "%sautosave: a save waits at most %d ms", who, linux_card ? 30 : 20);
+    check(label, r.save_wait_max <= (linux_card ? 30.0 : 20.0), d);
+}
+
+/* ---- the Linux card's functions alone (audio_linux.c's arithmetic) ------------------------------------------- */
+static void card_checks(void)
+{
+    audio_pace p;
+    char d[300];
+    double w0, w1, w2, w3;
+    int ok, ms;
+    ok = ap_blocks_queued(0, 441) == 0 && ap_blocks_queued(-5, 441) == 0 && ap_blocks_queued(1, 441) == 1
+         && ap_blocks_queued(441, 441) == 1 && ap_blocks_queued(442, 441) == 2 && ap_blocks_queued(2646, 441) == 6;
+    snprintf(d, sizeof d, "0, -5, 1, 441, 442, 2646 frames: %d %d %d %d %d %d blocks", ap_blocks_queued(0, 441),
+             ap_blocks_queued(-5, 441), ap_blocks_queued(1, 441), ap_blocks_queued(441, 441),
+             ap_blocks_queued(442, 441), ap_blocks_queued(2646, 441));
+    check("card: frames queued, in blocks (a part counts)", ok, d);
+    w0 = ap_played_ms(44100, 4410, 44100);
+    w1 = ap_played_ms(44100, -20, 44100);
+    w2 = ap_played_ms(4410, 9000, 44100);
+    w3 = ap_played_ms(0, 0, 44100);
+    snprintf(d, sizeof d, "1 s written, 100 ms to play: %.1f ms; a negative delay: %.1f; a delay longer than what was "
+             "written: %.1f; nothing: %.1f", w0, w1, w2, w3);
+    check("card: the played position from the delay", w0 > 899.9 && w0 < 900.1 && w1 > 999.9 && w1 < 1000.1
+          && w2 == 0.0 && w3 == 0.0, d);
+    ap_init(&p, AP_AUTO, 10);        /* 6 blocks of 441 */
+    w0 = ap_wait_ms(&p, 5 * 441, 441, 44100, 0);
+    w1 = ap_wait_ms(&p, 5 * 441 + 1, 441, 44100, 0);
+    w2 = ap_wait_ms(&p, 5 * 441 + 220, 441, 44100, 0);
+    w3 = ap_wait_ms(&p, 30 * 441, 441, 44100, 0);
+    snprintf(d, sizeof d, "60 ms queue; 50 ms queued: %.2f ms, a frame more: %.2f, 55 ms: %.2f, 300 ms: %.2f", w0, w1,
+             w2, w3);
+    check("card: the sleep until a block is wanted", w0 == 0.0 && w1 == AP_WAIT_MIN_MS && w2 > 4.9 && w2 < 5.1
+          && w3 == 10.0, d);
+    w0 = ap_wait_ms(&p, 6 * 441, 441, 44100, 1);
+    w1 = ap_wait_ms(&p, 10 * 441 + 220, 441, 44100, 1);
+    snprintf(d, sizeof d, "60 ms queued with a save pending: %.2f ms (renders ahead); 105 ms: %.2f", w0, w1);
+    check("card: a save pending renders ahead first", w0 == 0.0 && w1 > 4.9 && w1 < 5.1, d);
+    ok = 1;
+    for (ms = 5; ms <= 20; ms += 5) {  /* every block length [sound] block_ms allows, in whole blocks */
+        int bf = RATE * ms / 1000;
+        long ring = ap_ring_frames(bf, ms), start = ap_start_frames(bf, ms);
+        ok = ok && ring % bf == 0 && start % bf == 0 && ring / bf * ms >= AP_MAX_MS + AP_SAVE_AHEAD_MS
+             && start / bf * ms >= AP_SHORT_MS && start / bf * ms < AP_SHORT_MS + ms;
+    }
+    snprintf(d, sizeof d, "blocks of 10 ms: a ring of %ld frames (%ld ms), playing from %ld (%ld ms)",
+             ap_ring_frames(441, 10), ap_ring_frames(441, 10) * 1000 / RATE, ap_start_frames(441, 10),
+             ap_start_frames(441, 10) * 1000 / RATE);
+    check("card: the ring holds the longest queue, starts at the shortest", ok, d);
 }
 
 /* ---- the gap detector alone ----------------------------------------------------------------------------------- */
@@ -332,6 +426,10 @@ int main(int argc, char **argv)
         printf("the 0.7.0 draft's queue: four blocks of 10 ms, the save on the window's thread\n");
     scenario_checks();
     detector_checks();
+    card_checks();
+    linux_card = 1;                  /* the Linux thread, the same scenarios; --old: the 0.7.0 draft's four blocks */
+    scenario_checks();               /* in ALSA's buffer, the save on the program's main thread */
+    linux_card = 0;
     if (failures)
         printf("audio: %d FAILED\n", failures);
     else

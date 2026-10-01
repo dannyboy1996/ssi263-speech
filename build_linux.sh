@@ -68,7 +68,7 @@ APP="$ROOT/src/apps/blazie"
 APPF="-O2 -std=gnu99 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -I$APP -I$SRC -fmacro-prefix-map=$ROOT=."
 rm -rf "$OUT/obj_emu" "$OUT/blazie_emu"; mkdir -p "$OUT/obj_emu"
 $CC $BOARD -c -o "$OUT/obj_emu/tns_board.o" "$SRC/blazie/tns_board.c"
-for f in emu_unit chords keys term_keys bl_keys tns_term ini tns_setup tns_rescue; do
+for f in emu_unit chords keys term_keys bl_keys tns_term ini tns_setup tns_rescue audio_pace; do
     $CC $APPF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
 done
 # the units' files (src/csrc/blazie/bl_files*.c, fat_img.c: portable C99, no unit runs)
@@ -91,6 +91,9 @@ $CC $APPF -c -o "$OUT/obj_emu/test_clock.o" "$APP/test_clock.c"
 $CXX $SHARED_CXX -o "$OUT/test_clock" "$OUT/obj_emu/test_clock.o" $EMU_OBJS -lm
 $CC $APPF -c -o "$OUT/obj_emu/test_rescue.o" "$APP/test_rescue.c"
 $CXX $SHARED_CXX -o "$OUT/test_rescue" "$OUT/obj_emu/test_rescue.o" $RESCUE_OBJS $EMU_OBJS -lm
+# the sound buffer (audio_pace.c, portable) against a simulated sound card, and the Linux shells' reading of the
+# device's queue and played position; --old: its must-fail control (the 0.7.0 draft's queue), as on Windows
+$CC $APPF -o "$OUT/test_audio" "$APP/test_audio.c" "$OUT/obj_emu/audio_pace.o"
 AUDIO_DEF=""; AUDIO_LIBS=""; SOUND=""
 if [ "${BLAZIE_AUDIO:-alsa}" != pulse ] && pkg-config --exists alsa 2>/dev/null; then
     AUDIO_LIBS="$(pkg-config --libs alsa)"; SOUND=ALSA
@@ -102,7 +105,7 @@ if [ -n "$AUDIO_LIBS" ]; then
         $CC $APPF $AUDIO_DEF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
     done
     $CXX $SHARED_CXX -o "$OUT/blazie_emu" "$OUT/obj_emu/main_linux.o" "$OUT/obj_emu/audio_linux.o" \
-        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS $EMU_OBJS $AUDIO_LIBS \
+        "$OUT/obj_emu/audio_pace.o" "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS $EMU_OBJS $AUDIO_LIBS \
         -lpthread -lm
     echo "built $OUT/blazie_emu (sound: $SOUND)"
 else
@@ -117,7 +120,7 @@ if [ -n "$AUDIO_LIBS" ] && pkg-config --exists gtk+-3.0 2>/dev/null; then
     $CC $APPF $AUDIO_DEF $(pkg-config --cflags gtk+-3.0) -Wno-cast-function-type -c -o "$OUT/obj_emu/main_gtk.o" \
         "$APP/main_gtk.c"
     $CXX $SHARED_CXX -Wl,--as-needed -o "$OUT/blazie_emu_gtk" "$OUT/obj_emu/main_gtk.o" "$OUT/obj_emu/audio_linux.o" \
-        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS \
+        "$OUT/obj_emu/audio_pace.o" "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS \
         "$OUT/obj_emu/bl_files_xfer.o" "$OUT/obj_emu/fat_img.o" $EMU_OBJS $AUDIO_LIBS $(pkg-config --libs gtk+-3.0) \
         -lpthread -lm
     echo "built $OUT/blazie_emu_gtk (GTK $(pkg-config --modversion gtk+-3.0), sound: $SOUND)"

@@ -64,6 +64,7 @@ Enter; Enter alone goes back to the unit:
 | 13 | The Braille Lite's keyboard: keys or letters (below) |
 | 14 | The keys, in short |
 | 15, 16 | The Braille 'n Speak 2000, English and Slovak (listed when its firmware is there: README.md, "Firmware"); the Braille Lite's keys |
+| 17 | The sound buffer: automatic, short, medium or long (below, "Sound") |
 | 0 | Exit: the unit's memory is saved |
 
 After a choice the menu says one line; `?` lists it again.
@@ -89,7 +90,7 @@ Run one at a time (each saves its unit when it closes).
   in code page 852 -- Export
   files to disk image (.img), Import files from disk image (.img), Back to the factory state, Exit), Settings (Alt+E:
   the idle channel, keep the channel open, the pop and the click, the 10 Hz tick, quick key response, Sample rate,
-  Serial port: none, the serial devices present, or a pseudo-terminal), Help (Alt+H: Keys, About). Ctrl+Q exits
+  Sound buffer (below, "Sound"), Serial port: none, the serial devices present, or a pseudo-terminal), Help (Alt+H: Keys, About). Ctrl+Q exits
   (with the Braille Lite; on the Type 'n Speak Ctrl+Q is the unit's).
 - **The keyboard area**, the one thing in the window that takes the focus. When it does Orca says its name, "Braille
   Lite 2000 (English): keyboard. F11 or Alt+Shift+F opens the menu", and "panel".
@@ -232,21 +233,62 @@ devices each key goes down and up as you move it. F11 or Alt+Shift+F opens the m
 ## Sound
 
 ALSA's `default` device (`[sound] device` in the settings for another: `hw:0`, `plughw:1`, ...), 16-bit mono at the
-unit's rate (44100 by default), in blocks of 10 ms, four deep (`[sound] block_ms`, 5-20) -- as the Windows app, a
-key's speech plays behind 30-40 ms of queued sound. A thread renders each block as the card takes it, so the card's
-clock paces the unit; it asks for real-time priority and runs without it. On a desktop, ALSA's default device
-reaches PulseAudio or PipeWire through their ALSA plugin. With no sound card (or `--no-sound`) the unit runs on,
-silent, paced by the system clock.
+unit's rate (44100 by default), in blocks of 10 ms (`[sound] block_ms`, 5-20). A thread renders each block as the
+card drains one, so the card's clock paces the unit; it asks for real-time priority and runs without it. On a
+desktop, ALSA's default device reaches PulseAudio or PipeWire through their ALSA plugin. With no sound card (or
+`--no-sound`) the unit runs on, silent, paced by the system clock.
+
+**The sound buffer** (menu 17; Settings > Sound buffer in the desktop app; `[sound] buffer=` in `blazie_emu.ini`,
+the same key and values as the Windows app's, `audio_pace.h`): how much sound is kept queued at the card. A key's
+speech plays behind it; too little, and the speech breaks up whenever the program is held up (Tomi: the emulator's
+speech stutters, the add-on's doesn't).
+
+| Choice | Queue | |
+| --- | --- | --- |
+| `auto` (the default) | 60 ms, growing (100, 150, 220, 250 ms) each time the card runs dry, for the session | |
+| `short` | 40 ms | the 0.7.0 draft's four blocks: the quickest answer, and it breaks up the moment the program is held up |
+| `medium` | 100 ms | |
+| `long` | 250 ms | **recommended when the unit shares the sound device with a screen reader** (the BTSpeak's own voice, Speakup, Orca, through PulseAudio or PipeWire), and over a remote session |
+
+The device's buffer is opened for the longest queue (300 ms) and the thread keeps only the chosen queue in it, so a
+new choice, or the automatic queue growing, takes effect at the next block, without reopening the device. On each
+block the thread asks ALSA how much is still queued (`snd_pcm_avail`: what is in ALSA's buffer; a sound server's own
+latency comes on top) and how far the card has played (what was written less `snd_pcm_delay`); the card running
+dry is told, as on Windows, by the played position falling behind the wall clock (`audio_pace.c`, `ap_observe`). The
+PulseAudio build (`BLAZIE_AUDIO=pulse`) has only the stream's whole latency (`pa_simple_get_latency`), so there the
+queue counts the sound server's latency too: choose `long` with it on a Bluetooth or remote sink.
+
+Measured on a Raspberry Pi 5 (arm64, Debian 13) playing to ALSA's dummy card (`snd-dummy`, `plughw:Dummy`; it
+plays in real time from the system clock, no speaker), 30 s each, the Braille Lite running from its boot. The sound
+thread held up before 5% of its writes by up to the time given (`BLAZIE_EMU_AUDIO_STALL`, as on Windows: the same
+hold-ups in every run, its random numbers never seeded, so each queue met the same ones); the sound
+lost by the card's played position against the wall clock, its underruns as ALSA counted them; "ahead": how long
+until a block just written is heard, which a key's speech waits for (plus up to a block until the unit takes the
+key):
+
+| Sound buffer | not held up | held up to 30 ms | held up to 60 ms | ahead |
+| --- | --- | --- | --- | --- |
+| short (40 ms) | 0 | 188 ms lost in 13 gaps (14 underruns) | 1.8 s lost in 51 gaps (59 underruns) | 36-38 ms |
+| auto (60 ms) | 0, stays at 60 ms | 21 ms in 1 gap, grew to 100 ms | 25 ms in 2 gaps, grew to 150 ms (75 s: 34 ms, 2 gaps) | 57-58 ms; 119-133 averaged over the runs that grew to 150 ms |
+| medium (100 ms) | 0 | 0 | 85 ms in 4 gaps | 93-98 ms |
+| long (250 ms) | 0 | 0 | 0 | 242-247 ms |
+
+With all four cores busy (`stress-ng --cpu 4`) and the thread not held up, no gap at any setting. The minute's save
+(1.3 ms here) ran on the sound thread with the queue rendered 50 ms ahead, without a gap. `BLAZIE_EMU_AUDIO_LOG=file`
+logs the gaps found, the saves and, when the program ends, the gaps, the sound lost, the underruns and how far ahead
+the sound was; `test_audio` (built here too, and run by `tools/linux_tests.sh`) runs this thread's queue against a
+simulated card, with the 0.7.0 draft's four blocks as its must-fail control.
 
 On a Raspberry Pi 5 the running unit takes about a fifth of one core at 44100 Hz (measured with ALSA, PulseAudio
-and silent). A BTSpeak's Compute Module 4 is two to three times slower: if the sound breaks up there, choose 22050
-Hz (menu 6), or `[sound] block_ms = 20`.
+and silent). A BTSpeak's Compute Module 4 is two to three times slower: if the sound breaks up there, choose the
+long sound buffer (menu 17), 22050 Hz (menu 6), or `[sound] block_ms = 20`.
 
-Saving the unit's memory holds the unit while the file is written (the Type 'n Speak's is 5 MB).  The minute's save
-runs on the sound thread just after a write has filled the card's buffer, so the card plays that buffer meanwhile
-(Tomi: the emulator's speech stutters, the add-on's doesn't); a save slower than the buffer (four blocks, 40 ms, on
-slow storage) can still be heard as a short gap.  Saves on switching units and on exit are written from the window's
-thread, as before, under the same lock: the two never write the same file at once.
+Saving the unit's memory holds the unit while the file is written (the Type 'n Speak's is 5 MB). The minute's save
+runs on the sound thread once it has rendered 50 ms beyond its queue, so the card plays that while the file is
+written (Tomi: the emulator's speech stutters, the add-on's doesn't); a save slower than the queue in hand (on slow
+storage) can still be heard as a short gap, and the automatic queue then grows. Saves on switching units and on exit
+are written from the program's main thread, as before, under the same lock: the two never write the same file at
+once.
 
 ## The serial port
 
@@ -283,8 +325,14 @@ is given):
   and time set through the unit's
   commands, saved to the memory folder and started from again; i-chord held through a restart by an input device's
   keys; and the program run as a person runs it, in a pseudo-terminal, its serial port on another: s-chord's XON ENQ
-  at 19200 bit/s, ACK answered with 'C', NAK (the control) not. Its control (`BLAZIE_KEYS_BREAK=1`) must fail the
-  two clock checks.
+  at 19200 bit/s, ACK answered with 'C', NAK (the control) not; and menu 17, the sound buffer chosen long, written to
+  the settings and shown so the next time. Its control (`BLAZIE_KEYS_BREAK=1`) must fail the two clock checks.
+- `test_audio` -- the sound buffer (`audio_pace.c`, as on Windows) against a simulated sound card: for the Windows
+  shell's thread and this one's (the card asked how much is queued and how far it has played, the thread asleep
+  until a block is wanted): a steady card, a busy machine, a remote card, a slow save; and the arithmetic alone (the
+  frames queued in blocks, the played position from ALSA's delay, the sleep, the buffer opened). Its control
+  (`--old`: the 0.7.0 draft's four blocks, the save on the main thread) must fail the busy, remote and save checks of
+  both threads, and only those.
 - `test_emu_gtk.py` -- the desktop app in a virtual X display (`xvfb-run`) with its own session and accessibility
   buses (`dbus-run-session`, at-spi2-core), its keys typed through the X server (xdotool: GDK's own key events, down
   and up), its window read through AT-SPI as Orca reads it (python3-gi, gir1.2-atspi-2.0); `--no-sound`, and
@@ -316,7 +364,8 @@ None of this has run on a BTSpeak yet. To find out there:
 - whether its braille keyboard is an input device the program may read (`--show-keys` lists the devices and their
   keys): if BRLTTY holds it, only letters mode works; if it can be read, the six keys and dots 7 and 8 work as keys
   with keys held, which is the best way in;
-- its sound: ALSA's default device there, and whether the unit's voice and the screen reader's share the speaker;
+- its sound: ALSA's default device there, and whether the unit's voice and the screen reader's share the speaker
+  (then the long sound buffer, menu 17, is the safe choice; whether the automatic one settles there is untried);
 - the Type 'n Speak needs a QWERTY keyboard (a USB one on the BTSpeak's USB-C port).
 
 Not tried on any machine: WinDisk or PCDISK on the far end of the serial port (the tests answer the unit's storage

@@ -6,7 +6,8 @@
  *
  * The window (README-linux.md, "The desktop app"):
  *   the menu bar -- Firmware (the units, files in and out as a disk image, the factory state, Exit), Settings (the
- *   idle channel, keep open, pop and click, tick, quick key response, sample rate, serial port), Help (Keys, About) --
+ *   idle channel, keep open, pop and click, tick, quick key response, sample rate, sound buffer, serial port), Help
+ *   (Keys, About) --
  *   with mnemonics; F11 and Alt+Shift+F open it whichever unit runs, as on Windows;
  *   the keyboard area, the one place that takes the focus: its accessible name says the unit and how to reach the
  *   menu, so Orca says it on focus.  GDK reports each key going down AND coming up, so the keys are an input
@@ -19,7 +20,8 @@
  * Lock) are Orca's before the window sees them.
  *
  * Sound, settings and memory are the terminal shell's (main_linux.c): audio_linux.c on a thread that renders each
- * block from the unit, the card's clock pacing it (with no card, the system clock); the same settings file and
+ * block from the unit as the card drains one, the card's clock pacing it (with no card, the system clock), with the
+ * Windows app's Settings > Sound buffer (audio_pace.h, [sound] buffer=); the same settings file and
  * memory folder, ~/.config/ssi263-speech/blazie-emu/ (blazie_emu.ini, <unit>.state), so both shells share them.  The
  * memory is saved every minute, when the window closes, on switching units, when the session ends (GtkApplication's
  * query-end) and on SIGTERM or SIGHUP.
@@ -46,6 +48,7 @@
 #include <gtk/gtk.h>
 #include <glib-unix.h>
 #include "audio_linux.h"
+#include "audio_pace.h"
 #include "bl_keys.h"
 #include "emu_unit.h"
 #include "evdev_linux.h"
@@ -61,7 +64,6 @@
 #include "../../csrc/blazie/fat_img.h"
 
 #define BLOCK_MS_DEFAULT 10
-#define NBLOCKS 4
 #define RATE_MAX 48000
 #define AUTOSAVE_S 60
 #define MAX_RAM_HAS 8
@@ -111,6 +113,12 @@ static const char *const OPEN_MENU[] = {"Keep the channel open: _off (silent as 
                                         "Keep the channel open: until the unit _clicks off",
                                         "Keep the channel open: _always"};
 static const char *const OPEN_TEXT[] = {"off", "until the unit clicks off", "always"};
+/* Settings > Sound buffer (audio_pace.h AP_AUTO .. AP_LONG), as the Windows app's */
+static const char *const BUFFER_MENU[AP_N_MODES] = {"_Automatic (60 ms, longer when the sound breaks up)",
+                                                    "_Short (40 ms, the quickest answer)", "_Medium (100 ms)",
+                                                    "_Long (250 ms: a remote session, or a sound device shared with "
+                                                    "a screen reader)"};
+static const char *const BUFFER_TEXT[AP_N_MODES] = {"automatic", "short (40 ms)", "medium (100 ms)", "long (250 ms)"};
 static const char *const SERIAL_PATTERNS[] = {"/dev/ttyUSB%d", "/dev/ttyACM%d", "/dev/ttyS%d", "/dev/ttyAMA%d"};
 #define MAX_PORTS 32
 
@@ -136,6 +144,7 @@ static pthread_t g_audio_thread;
 static int g_audio_running;
 static volatile int g_audio_stop;
 static int g_save_due;                         /* the minute's save, waiting for the sound thread (__atomic) */
+static int g_buffer_mode = AP_AUTO;            /* Settings > Sound buffer (audio_pace.h; __atomic) */
 
 /* the tests' trace */
 static FILE *g_trace;
@@ -147,6 +156,7 @@ static int g_n_ram_has, g_ram_found[MAX_RAM_HAS];
 static GtkApplication *g_app;
 static GtkWidget *g_win, *g_area, *g_status, *g_bar, *g_firmware_item;
 static GtkWidget *g_kind_items[N_KINDS], *g_idle_items[4], *g_open_items[3], *g_rate_items[N_RATES];
+static GtkWidget *g_buffer_items[AP_N_MODES];
 static GtkWidget *g_popclick_item, *g_tick_item, *g_quick_item, *g_serial_menu;
 static char g_ports[MAX_PORTS][32];
 static int g_n_ports;
@@ -460,6 +470,8 @@ static void load_settings(void)
         if (RATES[k] == r)
             g_rate = r;
     g_quick = ini_get_int(g_ini, "unit", "quick_keys", 0) != 0;
+    if ((k = ap_mode_of(ini_get(g_ini, "sound", "buffer", "auto"))) >= 0)
+        g_buffer_mode = k;
 }
 
 /* the settings this shell changes, written back with every other line kept ([keys] is the person's) */
@@ -474,6 +486,7 @@ static void save_settings(void)
     ini_set(g_ini, "sound", "tick", g_tick ? "1" : "0");
     snprintf(v, sizeof v, "%d", g_rate);
     ini_set(g_ini, "sound", "rate", v);
+    ini_set(g_ini, "sound", "buffer", ap_mode_name(g_buffer_mode));
     ini_set(g_ini, "serial", "port", g_serial_want[0] ? g_serial_want : "none");
     if (!ini_save(g_ini, g_ini_path))
         set_status(1, "Could not write the settings to %s.", g_ini_path);
@@ -692,6 +705,22 @@ static void *audio_main(void *arg)
     (void)arg;
     clock_gettime(CLOCK_MONOTONIC, &next);
     while (!g_audio_stop) {
+        if (g_audio) {                          /* the sound buffer (audio_linux.h): a block when the card wants one */
+            int turn = audio_turn(g_audio, __atomic_load_n(&g_buffer_mode, __ATOMIC_ACQUIRE),
+                                  __atomic_load_n(&g_save_due, __ATOMIC_ACQUIRE));
+            if (turn == AUDIO_WAIT)
+                continue;
+            if (turn == AUDIO_SAVE) {           /* the minute's save, the queue rendered ahead: the card plays it
+                                                   while the memory is written (Tomi: the emulator's speech
+                                                   stutters, the add-on's doesn't) */
+                double t0 = mono();
+                __atomic_store_n(&g_save_due, 0, __ATOMIC_RELEASE);
+                if (!write_unit(g_save_failed, (int)sizeof g_save_failed))
+                    g_idle_add(on_save_failed, NULL);    /* the window says so */
+                audio_saved(g_audio, (mono() - t0) * 1000.0);
+                continue;
+            }
+        }
         pthread_mutex_lock(&g_lock);
         if (g_unit)
             emu_render(g_unit, buf, block);
@@ -735,13 +764,11 @@ static void *audio_main(void *arg)
                 next.tv_sec++;
             }
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+            /* the minute's save here, between two blocks */
+            if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL)
+                    && !write_unit(g_save_failed, (int)sizeof g_save_failed))
+                g_idle_add(on_save_failed, NULL);    /* the window says so */
         }
-        /* the minute's save here, just after a write filled the card's buffer: the card plays it while the memory is
-           written, instead of a render waiting on the lock with the buffer low (Tomi: the emulator's speech
-           stutters, the add-on's doesn't) */
-        if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL)
-                && !write_unit(g_save_failed, (int)sizeof g_save_failed))
-            g_idle_add(on_save_failed, NULL);    /* the window says so */
     }
     return NULL;
 }
@@ -750,7 +777,7 @@ static void audio_start(void)
 {
     char err[300], device[128];
     snprintf(device, sizeof device, "%s", ini_get(g_ini, "sound", "device", "default"));
-    g_audio = g_no_sound ? NULL : audio_open(device, g_rate, g_rate * g_block_ms / 1000, NBLOCKS, err, sizeof err);
+    g_audio = g_no_sound ? NULL : audio_open(device, g_rate, g_block_ms, g_buffer_mode, err, sizeof err);
     if (!g_audio && !g_no_sound)
         set_status(1, "No sound: %s. The unit runs on, silent ([sound] device in %s chooses another device).", err,
                    g_ini_path);
@@ -1196,6 +1223,7 @@ static void sync_menu(void)
     for (k = 0; k < N_RATES; k++)
         if (RATES[k] == g_rate)
             gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_rate_items[k]), TRUE);
+    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_buffer_items[g_buffer_mode]), TRUE);
     g_updating = 0;
 }
 
@@ -1379,6 +1407,16 @@ static void on_rate_item(GtkWidget *item, gpointer k)
         defer(do_rate, RATES[GPOINTER_TO_INT(k)]);
 }
 
+/* the sound thread takes it at its next block: no reopening, no gap (audio_linux.h) */
+static void on_buffer_item(GtkWidget *item, gpointer k)
+{
+    if (!chosen(item))
+        return;
+    __atomic_store_n(&g_buffer_mode, GPOINTER_TO_INT(k), __ATOMIC_RELEASE);
+    save_settings();
+    set_status(1, "Sound buffer: %s.", BUFFER_TEXT[GPOINTER_TO_INT(k)]);
+}
+
 static void on_serial_item(GtkWidget *item, gpointer k)
 {
     if (chosen(item))
@@ -1472,7 +1510,7 @@ static GtkWidget *add_submenu(GtkWidget *bar, const char *label, GtkWidget **ite
 
 static GtkWidget *make_menu(GtkAccelGroup *accel)
 {
-    GtkWidget *bar = gtk_menu_bar_new(), *fw, *settings, *help, *rates, *item, *serial_item;
+    GtkWidget *bar = gtk_menu_bar_new(), *fw, *settings, *help, *rates, *buffer, *item, *serial_item;
     GSList *group = NULL;
     int k;
     fw = add_submenu(bar, "_Firmware", &g_firmware_item);
@@ -1537,6 +1575,15 @@ static GtkWidget *make_menu(GtkAccelGroup *accel)
         group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(g_rate_items[k]));
         g_signal_connect(g_rate_items[k], "activate", G_CALLBACK(on_rate_item), GINT_TO_POINTER(k));
         gtk_menu_shell_append(GTK_MENU_SHELL(rates), g_rate_items[k]);
+    }
+    /* the queue at the sound card (audio_pace.h): a key's answer is heard that much later; too short, it chops */
+    buffer = add_submenu(settings, "Sound _buffer", NULL);
+    group = NULL;
+    for (k = 0; k < AP_N_MODES; k++) {
+        g_buffer_items[k] = gtk_radio_menu_item_new_with_mnemonic(group, BUFFER_MENU[k]);
+        group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(g_buffer_items[k]));
+        g_signal_connect(g_buffer_items[k], "activate", G_CALLBACK(on_buffer_item), GINT_TO_POINTER(k));
+        gtk_menu_shell_append(GTK_MENU_SHELL(buffer), g_buffer_items[k]);
     }
     g_serial_menu = add_submenu(settings, "Serial _port", &serial_item);
 

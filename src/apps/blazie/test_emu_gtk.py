@@ -9,7 +9,7 @@ unit); --trace tells the test the unit's level, its keys and its status lines.
 FIRMWARE_DIR as test_emu_linux.py's (BL2ENG.BNS + bl2_2003_warm.state; BL2SPA.BNS; tns/TNSENG.TNS).  The checks:
   settings   the settings file the GTK shell writes the first time is the terminal shell's, word for word
   tree       the menu bar's items by name (Firmware, Settings, Help; the units, Export, Import, Exit, Sample rate,
-             Serial port, Keys, About), the keyboard area focused with its name and role, the status bar
+             Sound buffer, Serial port, Keys, About), the keyboard area focused with its name and role, the status bar
   chord      the Braille Lite boots and speaks; F (dot 1) typed is sent as dot 1 and the unit answers
   export     Firmware > Export: GTK's file chooser, a path typed, the image written; the result announced
   menu       F11 and Alt+Shift+F open the Firmware menu; Escape gives the keyboard back
@@ -346,7 +346,8 @@ def run_main(exe, fw, tmp, want):
             need = ["Braille Lite 2000, English", "Braille Lite 2000, Spanish", "Type 'n Speak, English",
                     "Type 'n Speak, Spanish", "Export files to disk image (.img)...",
                     "Import files from disk image (.img)...",
-                    "Back to the factory state (erases this unit's files)...", "Exit", "Sample rate", "Serial port",
+                    "Back to the factory state (erases this unit's files)...", "Exit", "Sample rate", "Sound buffer",
+                    "Serial port",
                     "Quick key response (faster than the real unit)", "Keys", "About"]
             # the Braille 'n Speak 2000: listed when its firmware and factory states are there, absent when not
             bns = bns_present(fw)

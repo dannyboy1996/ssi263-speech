@@ -17,6 +17,9 @@ The checks:
                  pseudo-terminal: s-chord's XON ENQ arrive at 19200 bit/s, ACK is answered with 'C' -- and NAK
                  (the control) is not
   held           an input device's keys: p-chord, l, i-chord held through the restart -- the cold reset's question
+  buffer         the program in a pseudo-terminal: menu 17, the sound buffer (Tomi: the emulator's speech stutters),
+                 chosen long, written to the settings as the Windows app writes it ([sound] buffer = long), and
+                 shown so when the program starts again
 The control: BLAZIE_KEYS_BREAK=1 swaps dots 1 and 4 in every chord; clock-keys and clock-letters must then FAIL
 (tools/linux_tests.sh judges it by its marks).
 """
@@ -120,6 +123,47 @@ def serial_handshake(exe, fw, cfg, reply):
     return bytes(first), bytes(after), speed
 
 
+def menu_session(exe, fw, cfg, typed):
+    """The program in a pseudo-terminal (--no-sound), F11 opening its menu, then each of `typed` (a line) in turn;
+    what it said."""
+    import pty
+    import select
+    import time
+    if not os.path.isdir(cfg):
+        os.makedirs(cfg)
+        with open(os.path.join(cfg, "blazie_emu.ini"), "w") as f:
+            f.write("[input]\nevdev = off\n")
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execv(exe, [exe, "--firmware", fw, "--config", cfg, "--unit", "bl-en", "--no-sound"])
+    said = bytearray()
+
+    def pump(sec):
+        end = time.time() + sec
+        while time.time() < end:
+            r, _, _ = select.select([fd], [], [], 0.02)
+            if fd in r:
+                try:
+                    said.extend(os.read(fd, 4096))
+                except OSError:                 # EIO: the program has exited
+                    return
+    try:
+        pump(3.0)
+        os.write(fd, b"\x1b[23~")              # F11
+        pump(1.0)
+        for line in typed:
+            os.write(fd, line.encode() + b"\n")
+            pump(1.0)
+        pump(2.0)
+    finally:
+        try:
+            os.kill(pid, 15)
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+    return said.decode("utf-8", "replace").replace("\r", "")
+
+
 def main():
     exe, fw = sys.argv[1], sys.argv[2]
     only = sys.argv[sys.argv.index("--only") + 1].split(",") if "--only" in sys.argv else None
@@ -218,6 +262,22 @@ def main():
             ok = 'ram has "initialize file system": yes' in out
             check("i-chord held through the restart", ok, "the unit asked \"initialize file system\": %s"
                   % ("yes" if ok else "no"))
+
+        if want("buffer"):
+            cfg = os.path.join(tmp, "buffer")
+            first = menu_session(exe, fw, cfg, ["17", "4", "0"])     # the sound buffer: long; then exit
+            ini = open(os.path.join(cfg, "blazie_emu.ini")).read() if os.path.isfile(
+                os.path.join(cfg, "blazie_emu.ini")) else ""
+            again = menu_session(exe, fw, cfg, ["0"])
+            listed = re.search(r"^ +17 Sound buffer: (.*)$", first, re.M)
+            relisted = re.search(r"^ +17 Sound buffer: (.*)$", again, re.M)
+            check("menu 17: the sound buffer", listed is not None and listed.group(1) == "automatic"
+                  and "Sound buffer: long (250 ms" in first and re.search(r"^buffer = long$", ini, re.M) is not None
+                  and relisted is not None and relisted.group(1) == "long (250 ms)",
+                  "listed %r; chosen long: %s; [sound] buffer = long in the settings: %s; listed again %r" % (
+                      listed.group(1) if listed else None, "said" if "Sound buffer: long (250 ms" in first
+                      else "NOT said", "yes" if re.search(r"^buffer = long$", ini, re.M) else "no",
+                      relisted.group(1) if relisted else None))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if failures:

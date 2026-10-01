@@ -10,9 +10,11 @@
  *   Type 'n Speak: the whole keyboard (tns_term.c, tns_keys.h).
  *   F11 opens this program's menu (and Ctrl+O for the Braille Lite, Alt+Shift+F as on Windows); its lines are plain
  *   text, read by the console's screen reader (Speakup, Orca, the BTSpeak's own).
- * Sound: ALSA (audio_linux.c), blocks of 10 ms ([sound] block_ms), four deep, written by a thread that renders
- * each block from the unit -- the card's clock paces the unit.  Without a sound card the unit runs on, silent, paced
- * by the system clock.
+ * Sound: ALSA (audio_linux.c), blocks of 10 ms ([sound] block_ms), written by a thread that renders each block from
+ * the unit as the card drains one -- the card's clock paces the unit.  How much is kept queued is menu 17, the sound
+ * buffer (audio_pace.h, [sound] buffer=, as the Windows app's): automatic (60 ms, growing to at most 250 ms each time
+ * the card is found to have run dry), short (40 ms), medium (100 ms) or long (250 ms: a remote session, a sound
+ * device shared with a screen reader).  Without a sound card the unit runs on, silent, paced by the system clock.
  * The serial port (serial_linux.c): a /dev/tty* or a pseudo-terminal.
  * Settings and the units' memory: ~/.config/ssi263-speech/blazie-emu/ (blazie_emu.ini, <unit>.state), saved on exit
  * and every minute.
@@ -37,6 +39,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "audio_linux.h"
+#include "audio_pace.h"
 #include "bl_keys.h"
 #include "emu_unit.h"
 #include "evdev_linux.h"
@@ -49,7 +52,6 @@
 #include "tns_term.h"
 
 #define BLOCK_MS_DEFAULT 10
-#define NBLOCKS 4
 #define RATE_MAX 48000
 #define AUTOSAVE_S 60.0
 
@@ -72,7 +74,8 @@ static const unit_kind KINDS[] = {
     {"Type 'n Speak (Spanish)", "tns-es", EMU_TYPE_N_SPEAK, {"tns/TNSSPA.TNS", "TNSSPA.TNS"}, {NULL, NULL},
      "tns_spanish.state", "tns_spanish"},
     /* the Braille 'n Speak 2000 on the Braille Lite's board (emu_unit.h emu_model), in the menu when its firmware is
-       there (menu numbers 15 and 16: 5-14 are the settings); its factory states made by make_state (make_state.c) */
+       there (menu numbers 15 and 16: 5-14 are the settings, 17 the sound buffer); its factory states made by
+       make_state (make_state.c) */
     {"Braille 'n Speak 2000 (English)", "bns-en", EMU_BRAILLE_LITE, {"bns2000/BS03ENG.BNS", "BS03ENG.BNS"},
      {"bns2000/bs03eng_fresh.state", "bs03eng_fresh.state"}, "bns_english.state", "bns_english"},
     {"Braille 'n Speak 2000 (Slovak)", "bns-sk", EMU_BRAILLE_LITE, {"bns2000/BS2SLL.BNS", "BS2SLL.BNS"},
@@ -81,6 +84,9 @@ static const unit_kind KINDS[] = {
 #define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 #define N_FIRST_KINDS 4             /* the menu's 1-4; the kinds after them are 15 on */
 #define MENU_LATER_KINDS 15
+#define MENU_BUFFER 17              /* the sound buffer: after the settings 5-14 and the kinds 15 on */
+/* a later kind must not take the sound buffer's number */
+typedef char later_kinds_before_menu_buffer[MENU_LATER_KINDS + N_KINDS - N_FIRST_KINDS <= MENU_BUFFER ? 1 : -1];
 static const int RATES[] = {11025, 16000, 22050, 32000, 44100, 48000};
 #define N_RATES ((int)(sizeof RATES / sizeof RATES[0]))
 static const char *const IDLE_NAMES[] = {"off", "hiss", "whine", "unit"};
@@ -117,6 +123,8 @@ static pthread_t g_audio_thread;
 static int g_audio_running;
 static volatile int g_audio_stop;
 static int g_save_due;                         /* the minute's save, waiting for the sound thread (__atomic) */
+static int g_buffer_mode = AP_AUTO;            /* menu 17, the sound buffer (audio_pace.h; __atomic) */
+static int g_buffer_ms;                        /* the queue now, as the sound thread last saw it (__atomic) */
 
 static double mono(void)
 {
@@ -373,6 +381,8 @@ static void load_settings(void)
         if (RATES[k] == r)
             g_rate = r;
     g_quick = ini_get_int(g_ini, "unit", "quick_keys", 0) != 0;
+    if ((k = ap_mode_of(ini_get(g_ini, "sound", "buffer", "auto"))) >= 0)
+        g_buffer_mode = k;
 }
 
 static void save_settings(void)
@@ -388,6 +398,7 @@ static void save_settings(void)
     ini_set(g_ini, "sound", "tick", g_tick ? "1" : "0");
     snprintf(v, sizeof v, "%d", g_rate);
     ini_set(g_ini, "sound", "rate", v);
+    ini_set(g_ini, "sound", "buffer", ap_mode_name(g_buffer_mode));
     ini_set(g_ini, "serial", "port", g_serial_want[0] ? g_serial_want : "none");
     ini_set(g_ini, "keys", "mode", g_blk.mode == BLK_LETTERS ? "letters" : "keys");
     if (!ini_save(g_ini, g_ini_path))
@@ -558,6 +569,22 @@ static void *audio_main(void *arg)
     (void)arg;
     clock_gettime(CLOCK_MONOTONIC, &next);
     while (!g_audio_stop) {
+        if (g_audio) {                          /* the sound buffer (audio_linux.h): a block when the card wants one */
+            int turn = audio_turn(g_audio, __atomic_load_n(&g_buffer_mode, __ATOMIC_ACQUIRE),
+                                  __atomic_load_n(&g_save_due, __ATOMIC_ACQUIRE));
+            __atomic_store_n(&g_buffer_ms, audio_buffer_ms(g_audio), __ATOMIC_RELEASE);
+            if (turn == AUDIO_WAIT)
+                continue;
+            if (turn == AUDIO_SAVE) {           /* the minute's save, the queue rendered ahead: the card plays it
+                                                   while the memory is written (Tomi: the emulator's speech
+                                                   stutters, the add-on's doesn't) */
+                double t0 = mono();
+                __atomic_store_n(&g_save_due, 0, __ATOMIC_RELEASE);
+                save_unit();
+                audio_saved(g_audio, (mono() - t0) * 1000.0);
+                continue;
+            }
+        }
         pthread_mutex_lock(&g_lock);
         if (g_unit)
             emu_render(g_unit, buf, block);
@@ -578,12 +605,10 @@ static void *audio_main(void *arg)
                 next.tv_sec++;
             }
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+            /* the minute's save here, between two blocks */
+            if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL))
+                save_unit();
         }
-        /* the minute's save here, just after a write filled the card's buffer: the card plays it while the memory is
-           written, instead of a render waiting on the lock with the buffer low (Tomi: the emulator's speech
-           stutters, the add-on's doesn't) */
-        if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL))
-            save_unit();
     }
     return NULL;
 }
@@ -594,7 +619,7 @@ static void audio_start(void)
     const char *dev = ini_get(g_ini, "sound", "device", "default");
     char device[128];
     snprintf(device, sizeof device, "%s", dev);
-    g_audio = g_no_sound ? NULL : audio_open(device, g_rate, g_rate * g_block_ms / 1000, NBLOCKS, err, sizeof err);
+    g_audio = g_no_sound ? NULL : audio_open(device, g_rate, g_block_ms, g_buffer_mode, err, sizeof err);
     if (!g_audio && !g_no_sound)
         say("No sound: %s.  The unit runs on, silent ([sound] device in the settings chooses another device).", err);
     g_audio_stop = 0;
@@ -820,6 +845,21 @@ static void menu_serial(void)
     }
 }
 
+/* the sound buffer's choices (audio_pace.h), as the Windows app's Settings > Sound buffer */
+static const char *const BUFFER_TEXT[AP_N_MODES] = {
+    "automatic (60 ms, longer when the sound breaks up)", "short (40 ms, the quickest answer)", "medium (100 ms)",
+    "long (250 ms: a remote session, or a sound device shared with a screen reader)"};
+
+static void buffer_line(char *out, int cap)
+{
+    static const char *const SHORT[AP_N_MODES] = {"automatic", "short (40 ms)", "medium (100 ms)", "long (250 ms)"};
+    int ms = __atomic_load_n(&g_buffer_ms, __ATOMIC_ACQUIRE);
+    if (g_buffer_mode == AP_AUTO && g_audio_running && ms > 0)
+        snprintf(out, (size_t)cap, "automatic, %d ms now", ms);
+    else
+        snprintf(out, (size_t)cap, "%s", SHORT[g_buffer_mode]);
+}
+
 static int choose(const char *title, const char *const *items, int n, int current)
 {
     char line[32];
@@ -867,6 +907,11 @@ static void menu(void)
         for (k = N_FIRST_KINDS; k < N_KINDS; k++)
             if (kind_offered(k))
                 say("  %d %s%s", kind_menu_number(k), KINDS[k].name, k == g_kind ? " (on now)" : "");
+        {
+            char b[80];
+            buffer_line(b, sizeof b);
+            say("  %d Sound buffer: %s", MENU_BUFFER, b);
+        }
         say("  0 Exit (the unit's memory is saved)");
         read_line(line, sizeof line);
         if (!line[0])
@@ -941,6 +986,15 @@ chosen:
             save_settings();
             continue;
         case 14: keys_help(); continue;
+        case MENU_BUFFER: {
+            /* the sound thread takes it at its next block: no reopening, no gap (audio_linux.h) */
+            int m = choose("Sound buffer (a key's answer is heard that much later; too short, the sound breaks up)",
+                           BUFFER_TEXT, AP_N_MODES, g_buffer_mode);
+            __atomic_store_n(&g_buffer_mode, m, __ATOMIC_RELEASE);
+            say("Sound buffer: %s.", BUFFER_TEXT[m]);
+            save_settings();
+            continue;
+        }
         case 0:
             if (line[0] == '0') {
                 g_quit = 1;

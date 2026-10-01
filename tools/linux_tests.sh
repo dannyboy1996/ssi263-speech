@@ -101,6 +101,16 @@ control "emulator: held keys CONTROL (never reported held, must fail)" "^FAIL i-
     "$DATA/bl2_2003_warm.state" restart
 # the Type 'n Speak's real cold reset (Timothy, Jayson): a unit the previews saved without its file system or folders,
 # told apart and set up anew with its files (test_rescue); its control leaves the old cold start on through the rescue
+# the sound buffer (audio_pace.c; Tomi: the emulator's speech stutters): the queue against a simulated card, for the
+# Windows shell's thread and for this one's (audio_linux.c: the card asked how much is queued and how far it has
+# played), and that reading alone; its control puts the 0.7.0 draft's four blocks back and must fail on exactly those
+check "emulator: the sound buffer (simulated card)" ./build/linux/test_audio
+control "emulator: sound buffer CONTROL (the 0.7.0 draft's four blocks, must fail)" \
+    "^FAIL busy machine: no gap after 10 s +[0-9]{2,} gaps after 10 s" \
+    "^FAIL linux: busy machine: no gap after 10 s +[0-9]{2,} gaps after 10 s" \
+    "^FAIL linux: autosave: no gap +[0-9]+ saves of 50 ms: [1-9][0-9]* gaps" \
+    "^ok +linux: steady card: no gap after the first second" "^ok +card: the played position from the delay" \
+    "^audio: 14 FAILED$" -- ./build/linux/test_audio --old
 check "emulator: a Type 'n Speak never set up, rescued" ./build/linux/test_rescue "$TNS"
 control "emulator: rescue CONTROL (the old cold start left on, must fail)" \
     "^FAIL rescued: set up anew, its files carried +the unit's own setup did not complete" "^FAILED$" \

@@ -1,6 +1,7 @@
 /* audio_pace.h -- how far ahead the shell's sound thread renders the unit, and when it saves the unit's memory
  * (Tomi: the emulator's speech stutters, the add-on's doesn't).  Portable C99, no platform calls: main_win.c's
- * waveOut thread runs it, test_audio.c runs it against a simulated sound card.
+ * waveOut thread runs it, the Linux shells' sound thread (audio_linux.c, ALSA or PulseAudio) too, and test_audio.c
+ * runs both against a simulated sound card.
  *
  * The thread keeps ap_target blocks queued at the sound card, rendering one each time the card hands one back.  The
  * 0.7.0 draft kept four blocks of 10 ms: 30-40 ms of sound in hand.  On this desktop's own card that never ran dry,
@@ -70,5 +71,21 @@ int ap_save_now(const audio_pace *p, int in_flight, int save_pending);
 /* "auto", "short", "medium", "long"; and back (-1: none of them) */
 const char *ap_mode_name(int mode);
 int ap_mode_of(const char *name);
+
+/* A card that is written into a ring and says how much of it is still to play (audio_linux.c: ALSA's
+ * snd_pcm_avail_delay, PulseAudio's latency) rather than handing blocks back as waveOut does.  The Linux shells'
+ * sound thread asks it on each turn: the blocks in flight (ap_blocks_queued: frames still in the ring, rounded up
+ * to whole blocks, so a block partly played still counts), the played position (ap_played_ms: what was written less
+ * what is still to be heard, the device's and sound server's own latency included), and, when ap_want says
+ * nothing, how long to sleep before a block is wanted (ap_wait_ms: until the ring has drained to one block under
+ * the queue, at most one block, at least AP_WAIT_MIN_MS). */
+#define AP_WAIT_MIN_MS 1.0
+int ap_blocks_queued(long queued_frames, int block_frames);
+double ap_played_ms(unsigned long long written_frames, long delay_frames, int rate);
+double ap_wait_ms(const audio_pace *p, long queued_frames, int block_frames, int rate, int save_pending);
+/* the ring the Linux shells open: the longest queue and a save's render-ahead (ap_capacity), in frames; it starts
+   playing once the shortest queue (AP_SHORT_MS) is in, so no choice can leave it waiting to start */
+long ap_ring_frames(int block_frames, int block_ms);
+long ap_start_frames(int block_frames, int block_ms);
 
 #endif

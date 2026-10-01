@@ -186,7 +186,8 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
     # its sound queue (src/apps/blazie/audio_pace.c; Tomi: the emulator's speech stutters, the add-on's doesn't)
     # against a simulated sound card calibrated on this desktop's waveOut: a busy machine and a remote card heard
     # without gaps once the automatic queue has grown, a slow save without gaps; the control puts the 0.7.0 draft's
-    # queue back (four blocks of 10 ms, the save on the window's thread) and must fail on exactly those
+    # queue back (four blocks of 10 ms, the save on the window's thread) and must fail on exactly those -- for the
+    # Windows shell's sound thread and for the Linux shells' (audio_linux.c, asking the card how much is queued)
     if os.path.isfile(os.path.join(EMU, "test_audio.exe")):
         CHECKS.append(check("Blazie emulator: the sound queue", [os.path.join(EMU, "test_audio.exe")]))
         CHECKS.append(check("Blazie emulator: the sound queue CONTROL (the 0.7.0 draft's, must fail)",
@@ -195,7 +196,11 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
                                         r"^FAIL remote card: no gap after 10 s +\d{2,} gaps after 10 s",
                                         r"^FAIL autosave: no gap +\d+ saves of 50 ms: [1-9]\d* gaps",
                                         r"^ok +steady card: no gap after the first second",
-                                        r"^audio: 7 FAILED$"]))
+                                        r"^FAIL linux: busy machine: no gap after 10 s +\d{2,} gaps after 10 s",
+                                        r"^FAIL linux: autosave: no gap +\d+ saves of 50 ms: [1-9]\d* gaps",
+                                        r"^ok +linux: steady card: no gap after the first second",
+                                        r"^ok +card: the played position from the delay",
+                                        r"^audio: 14 FAILED$"]))
     CHECKS.append(check("Blazie emulator: the unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
     CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
