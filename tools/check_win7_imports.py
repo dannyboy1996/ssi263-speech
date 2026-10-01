@@ -332,7 +332,7 @@ def check_binary(info, missing, allowed):
         for dll, funcs in table:
             d = dll.lower()
             why = dll_problem(d)
-            if why and not any((d, f) in allowed or (d, "*") in allowed for f in funcs):
+            if why and (d, "*") not in allowed:     # a whole DLL is allowed only as DLL!*, never by one function
                 bad.append("%s of %s: %s" % (kind, dll, why))
             for f in funcs:
                 if (d, f) in allowed or (d, "*") in allowed:
