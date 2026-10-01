@@ -377,10 +377,10 @@ if WHICH == "blazie":
     rate_ok = rate_ok and es_ok
 
 if SA:
-    # the Accent SA's host: the Python 8085 by default; SSI263_ACCENT_SA_CORE=c (opt-in) the C host on MAME's 8085
-    # (src/csrc/accentsa) -- a silent fallback would be a failure
+    # The shipping default is MAME's C host; the Python core is a development reference.
+    # A silent fallback would be a failure.
     host = type(d._box).__name__
-    want = "AccentSAC" if os.environ.get("SSI263_ACCENT_SA_CORE", "").strip().lower() == "c" else "AccentSA"
+    want = "AccentSAC" if (os.environ.get("SSI263_ACCENT_SA_CORE", "").strip().lower() or "c") == "c" else "AccentSA"
     print("accent sa host: %s (want %s): %s" % (host, want, "ok" if host == want else "FAILED"))
     rate_ok = rate_ok and host == want
 

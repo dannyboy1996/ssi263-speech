@@ -27,14 +27,12 @@ one host liberty is `turbo`, see _cpu):
 The bank map and the TRAP gate are read from the code and confirmed by it speaking ("Accent
 ready." at power-up, then text); the 8085's clock is a GUESS (3.072 MHz, a 6.144 MHz crystal).
 
-SSI263_ACCENT_SA_CORE=c (opt-in, not yet accepted) makes AccentSA() return the same host in C
-(accent_sa_c.py: src/csrc/accentsa, the board on MAME's 8085); the default stays this one.
+AccentSA() returns the C host by default (accent_sa_c.py: src/csrc/accentsa, MAME's 8085).
+SSI263_ACCENT_SA_CORE=python selects the unshipped development reference below.
 """
 import collections
 import os
 import re
-
-from .i8085 import I8085
 
 try:
     from .ssi263 import SSI263           # inside an add-on: the engine is a sibling package
@@ -48,8 +46,8 @@ _ESC = re.compile("\x1b(?:[=+\\-O][A-Za-z]|[A-Z][0-9A-Z]|\\|~[^~]*~)")   # as ho
 
 
 def _core():
-    """SSI263_ACCENT_SA_CORE: python (the default) or c."""
-    core = os.environ.get("SSI263_ACCENT_SA_CORE", "").strip().lower() or "python"
+    """MAME C board by default; python is an explicit development reference."""
+    core = os.environ.get("SSI263_ACCENT_SA_CORE", "").strip().lower() or "c"
     if core not in ("python", "c"):
         raise ValueError("SSI263_ACCENT_SA_CORE=%s: python or c" % core)
     return core
@@ -68,6 +66,7 @@ class AccentSA:
 
     def __init__(self, rom_dir, chip=None, out_rate=44100, cpu_hz=CPU_HZ, tick_hz=0.0, switches=0x00,
                  turbo=8.0, core=None):
+        from .i8085 import I8085            # development reference only; release constructs AccentSAC
         if chip is None:
             chip = SSI263(out_rate=out_rate)
         self.chip = chip

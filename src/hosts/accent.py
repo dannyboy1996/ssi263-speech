@@ -7,7 +7,7 @@ little else: the text-to-speech ran on the PC, in Aicom's DOS device driver SPKE
 Messenger-IC's SPKMIC.TSR carries 61,669 of the same bytes, i.e. the same pronunciation
 engine, re-targeted at a DSP.
 
-This host runs that driver under Unicorn the way DOS would load it from CONFIG.SYS
+This host runs that driver on MAME's 8086 the way DOS would load it from CONFIG.SYS
 (DEVICE=EMM.SYS, DEVICE=SPKEMS.DVC): an INIT request to its strategy and interrupt
 routines, an expanded-memory manager (INT 67h), and the card as the manual sets it up by
 default -- data port 3EEh, control port 3EFh, the chip's A/R on IRQ2/IRQ9 (vector 0Ah).
@@ -22,14 +22,14 @@ import sys
 import zlib
 
 try:
-    from .ucmini import (Uc, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN,
+    from .x86_api import (UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN,
                          UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
                          UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_CS, UC_X86_REG_IP,
                          UC_X86_REG_SS, UC_X86_REG_SP, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_EFLAGS)
     from .ssi263 import SSI263
 except ImportError:                       # the research tree: src/ on sys.path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from hosts.ucmini import (Uc, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_INTR,  # noqa: E402
+    from hosts.x86_api import (UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_INTR,  # noqa: E402
                               UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX,
                               UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI,
                               UC_X86_REG_BP, UC_X86_REG_CS, UC_X86_REG_IP, UC_X86_REG_SS,
@@ -70,9 +70,8 @@ class Accent:
         # core counts beside them move nothing (src/csrc/cpu/README.md, Astra's Reply 104)
         self.cpu_ips = cpu_ips
         self.log = log if log is not None else []
-        # the CPU: Unicorn (the default), or -- opt-in, SSI263_ACCENT_CORE=mame -- MAME's 8086 (pc86.py), which
-        # takes the same calls; everything below (DOS, EMS, the card, the PIC) is the host's either way
-        self.core = core or os.environ.get("SSI263_ACCENT_CORE", "unicorn")
+        # MAME's 8086 is the release CPU. Unicorn remains an explicit development reference, outside the add-on.
+        self.core = core or os.environ.get("SSI263_ACCENT_CORE", "mame")
         if self.core == "mame":
             try:
                 from .pc86 import Pc86
@@ -80,6 +79,7 @@ class Accent:
                 from hosts.pc86 import Pc86
             self.uc = uc = Pc86()
         elif self.core == "unicorn":
+            from .ucmini import Uc         # development reference only; not packaged
             self.uc = uc = Uc(UC_ARCH_X86, UC_MODE_16)
         else:
             raise ValueError("SSI263_ACCENT_CORE: unicorn or mame, not %r" % self.core)

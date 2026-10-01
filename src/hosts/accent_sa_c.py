@@ -2,7 +2,7 @@
 src/csrc/accentsa (accent_sa.dll), and the same constructor, methods and attributes the add-on uses.  The chip stays
 the SSI263C the caller made (accent_sa.dll imports ssi263.dll, so both use the one copy loaded).
 
-Opt-in: AccentSA() returns one when SSI263_ACCENT_SA_CORE=c (accent_sa.py); the default stays the Python 8085.
+The default backend returned by AccentSA() in accent_sa.py, packaged with its native libraries.
 SSI263_ACCENT_SA_SLICES=chip turns off the Python host's counting (as_board.h: an acceptance that ends a slice, a TRAP
 in EI's shadow) and runs the core's own semantics -- experimental, for comparison only.
 

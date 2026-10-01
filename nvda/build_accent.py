@@ -1,49 +1,37 @@
-"""Assemble the Accent SA and Mini (SSI-263) NVDA add-on.
-
-The result carries Aicom's driver and firmware (firmware/, with firmware/AICOM.txt).
-Output: nvda/dist/accent-ssi263-<version>.nvda-addon
-
-The Mini's driver runs in Unicorn through src/hosts/ucmini.py and the same static
-x86-core-only Unicorn 2.1.4 build as the Speak-Out add-on (see UNICORN-BUILD.txt there).
-The SA's firmware (firmware/aicom-accent-sa, in the repository with its notice) runs on
-src/hosts/i8085.py, plain Python.
-"""
+﻿"""Build Accent Mini/SA with MAME's 8086/8085 (MIT + BSD; Aicom's firmware notice retained)."""
 import os
 import shutil
 import sys
-
-from build_common import IGN, read_manifest, check_native, copy_engine, copy_unicorn_license, rm, zip_build
-from build_speakout import UNICORN_BUILD
+from build_common import read_manifest, check_native, copy_engine, copy_mame_notices, build_board, rm, zip_build
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MANIFEST, VERSION = read_manifest(os.path.join(HERE, "accent"))   # nvda/accent/manifest.ini
+MANIFEST, VERSION = read_manifest(os.path.join(HERE, "accent"))
 REPO = os.path.dirname(HERE)
 ENGINE = os.path.join(REPO, "src")
 DRIVER = os.path.join(REPO, "firmware", "aicom-accent-mini", "SPKEMS.DVC")
 SA_ROMS = os.path.join(REPO, "firmware", "aicom-accent-sa")
-
 BUILD = os.path.join(HERE, "dist", "accent-build")
 OUT = os.path.join(HERE, "dist", "accent-ssi263-%s.nvda-addon" % VERSION)
 
 
 def write_state(path):
-    """The emulated machine after the driver's INIT (0.58 s at every launch otherwise), for
-    Accent.boot(state=...).  Stamped with the driver's sha256: the add-on ignores a state
-    made from another file and runs INIT instead."""
+    """Generate INIT state with the shipping CPU, tagged by the DOS driver's hash."""
     import hashlib
     import pickle
     sys.path.insert(0, ENGINE)
     from hosts.accent import Accent
     from ssi263.native import SSI263C
-    state = Accent(DRIVER, chip=SSI263C()).init_state()
+    state = Accent(DRIVER, chip=SSI263C(), core="mame").init_state()
     state["dvc_sha256"] = hashlib.sha256(open(DRIVER, "rb").read()).hexdigest()
     with open(path, "wb") as f:
-        pickle.dump(state, f, protocol=4)          # protocol 4: Python 3.7 (NVDA 2021) reads it
+        pickle.dump(state, f, protocol=4)
 
 
 def main():
     if not os.path.isfile(DRIVER):
         sys.exit("driver not found: %s" % DRIVER)
+    build_board("blazie")  # also builds pc86.dll
+    build_board("accentsa")
     if os.path.isdir(BUILD):
         rm(BUILD)
     sd = os.path.join(BUILD, "synthDrivers")
@@ -51,33 +39,25 @@ def main():
     os.makedirs(eng)
     shutil.copy2(os.path.join(HERE, "accent", "synthDrivers", "accentmini.py"), sd)
     copy_engine(ENGINE, eng)
-    shutil.copy2(os.path.join(ENGINE, "hosts", "accent.py"), os.path.join(eng, "accent_host.py"))
-    shutil.copy2(os.path.join(ENGINE, "hosts", "ucmini.py"), eng)
-    # MAME's 8086 in Unicorn's place: opt-in only (SSI263_ACCENT_CORE=mame, with SSI263_PC86_DLL naming pc86.dll,
-    # which the add-on does not carry); the module alone, so the tests can run the built add-on on it
-    shutil.copy2(os.path.join(ENGINE, "hosts", "pc86.py"), eng)
-    shutil.copy2(os.path.join(ENGINE, "hosts", "accent_sa.py"), os.path.join(eng, "accent_sa_host.py"))
-    shutil.copy2(os.path.join(ENGINE, "hosts", "i8085.py"), eng)
-    # the same host in C on MAME's 8085: opt-in only (SSI263_ACCENT_SA_CORE=c; accent_sa.dll, which the add-on does
-    # not carry, from SSI263_ACCENT_SA_DLL or the research tree); the module alone, so the tests can run the built
-    # add-on on it
-    shutil.copy2(os.path.join(ENGINE, "hosts", "accent_sa_c.py"), eng)
+    for src, dst in (("accent.py", "accent_host.py"), ("accent_sa.py", "accent_sa_host.py"),
+                     ("accent_sa_c.py", "accent_sa_c.py"), ("pc86.py", "pc86.py"), ("x86_api.py", "x86_api.py")):
+        shutil.copy2(os.path.join(ENGINE, "hosts", src), os.path.join(eng, dst))
+    for arch in ("x64", "x86"):
+        dest = os.path.join(eng, "bin", arch)
+        os.makedirs(dest)
+        for folder, name, imports in (("blazie-lib", "pc86.dll", ()), ("accentsa-lib", "accent_sa.dll", ("ssi263.dll",))):
+            dll = os.path.join(HERE, "dist", folder, arch, name)
+            check_native(dll, arch, imports=imports)
+            shutil.copy2(dll, dest)
     os.makedirs(os.path.join(eng, "accent-sa"))
     for name in ("u2.BIN", "u3.BIN", "u4.BIN"):
         shutil.copy2(os.path.join(SA_ROMS, name), os.path.join(eng, "accent-sa", name))
     shutil.copy2(os.path.join(REPO, "firmware", "AICOM.txt"), eng)
-    shutil.copy2(os.path.join(HERE, "shared", "ssi263_numwords.py"), eng)
-    shutil.copy2(os.path.join(HERE, "shared", "ssi263_rates.py"), eng)
-    shutil.copytree(os.path.join(ENGINE, "hosts", "bin"), os.path.join(eng, "bin"), ignore=IGN)
-    for arch in ("x64", "x86"):
-        check_native(os.path.join(eng, "bin", arch, "unicorn.dll"), arch)
-    shutil.copy2(DRIVER, os.path.join(eng, "SPKEMS.DVC"))
+    for name in ("ssi263_numwords.py", "ssi263_rates.py"):
+        shutil.copy2(os.path.join(HERE, "shared", name), eng)
+    shutil.copy2(DRIVER, eng)
     write_state(os.path.join(eng, "SPKEMS.state"))
-    copy_unicorn_license(eng)
-    for name in ("unicorn-2.1.4-no-crt-unwind.patch", "build_unicorn_candidate.py"):
-        shutil.copy2(os.path.join(ENGINE, "csrc", name), eng)
-    with open(os.path.join(eng, "UNICORN-BUILD.txt"), "w", encoding="utf-8") as f:
-        f.write(UNICORN_BUILD)
+    copy_mame_notices(eng, "i86", "i8085")
     with open(os.path.join(BUILD, "manifest.ini"), "w", encoding="utf-8") as f:
         f.write(MANIFEST)
     zip_build(BUILD, OUT)

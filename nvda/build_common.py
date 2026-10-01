@@ -43,14 +43,38 @@ def rm(path):
     shutil.rmtree(path, onexc=onexc)
 
 
-def check_native(path, arch):
+def check_native(path, arch, imports=()):
     objdump = repo_paths.program("W64DEVKIT", "objdump")
     dump = subprocess.run([objdump, "-p", path], capture_output=True, text=True, check=True).stdout
     if FORMATS[arch] not in dump:
         sys.exit("%s is not %s" % (path, FORMATS[arch]))
     dlls = {ln.split(":", 1)[1].strip() for ln in dump.splitlines() if "DLL Name:" in ln}
-    if not dlls <= ALLOWED_IMPORTS:
-        sys.exit("%s imports %s (VC runtime / UCRT not allowed)" % (path, sorted(dlls - ALLOWED_IMPORTS)))
+    allowed = ALLOWED_IMPORTS | set(imports)
+    if not dlls <= allowed:
+        sys.exit("%s imports %s (VC runtime / UCRT not allowed)" % (path, sorted(dlls - allowed)))
+
+
+def copy_mame_notices(eng, *cores):
+    """Own code is MIT; each extracted MAME component retains its BSD notice and provenance."""
+    dest = os.path.join(eng, "licenses")
+    os.makedirs(dest, exist_ok=True)
+    shutil.copy2(os.path.join(REPO, "LICENSE"), os.path.join(dest, "LICENSE-MIT.txt"))
+    shutil.copy2(os.path.join(REPO, "third_party", "casso", "LICENSE"), os.path.join(dest, "LICENSE-Casso-MIT.txt"))
+    for core in cores:
+        source = os.path.join(REPO, "src", "csrc", "cpu", "mame_" + core)
+        for src, name in (("LICENSE-BSD-3-Clause.txt", "LICENSE-" + core + "-BSD-3-Clause.txt"),
+                          ("PINNED.txt", "MAME-" + core + "-provenance.txt")):
+            shutil.copy2(os.path.join(source, src), os.path.join(dest, name))
+
+
+_built_boards = set()
+
+
+def build_board(script):
+    """Separate processes avoid the three board builders' identical Python module names."""
+    if script not in _built_boards:
+        subprocess.run([sys.executable, os.path.join(REPO, "src", "csrc", script, "build_board.py")], check=True)
+        _built_boards.add(script)
 
 
 # The C chip must match chip.py before anything ships: tools/check_native_core.py on
@@ -80,7 +104,12 @@ def check_core(engine):
 def copy_engine(engine, eng):
     """The chip package with its C core (ssi263.dll) for both architectures."""
     check_core(engine)
-    shutil.copytree(os.path.join(engine, "ssi263"), os.path.join(eng, "ssi263"), ignore=IGN)
+    def windows_engine_only(path, names):
+        ignored = set(IGN(path, names))
+        if os.path.basename(path) == "_bin":
+            ignored.update(n for n in names if n not in ("x86", "x64"))
+        return ignored
+    shutil.copytree(os.path.join(engine, "ssi263"), os.path.join(eng, "ssi263"), ignore=windows_engine_only)
     # a package of its own (synthDrivers._ssi263_<name>): the driver imports the engine
     # relatively, so two add-ons, or two versions, never share one `ssi263` module
     with open(os.path.join(eng, "__init__.py"), "w", encoding="utf-8") as f:

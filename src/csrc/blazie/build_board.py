@@ -1,21 +1,13 @@
-"""Build the Braille Lite library board's test programs (0.7), into nvda/dist/blazie-lib/:
+"""Build the MAME release libraries and contract tests into nvda/dist/blazie-lib/.
 
-  bl_live.exe        bns_live.exe's pipe protocol on bl_board.c -- today's Python host drives it, so
-                     nvda/tools/bns_equiv.py --against the golden vectors gates the board
-  test_bl_board.exe  two units in one process, alone and interleaved: identical event streams
-
-w64devkit gcc, i686 (as bns_live.exe), one translation unit (bl_unity.c) with the Z180 core from the z180emu tree
-(paths.local Z180EMU).  python src/csrc/blazie/build_board.py
-
-The same two programs on MAME's Z180 core (../cpu/z180_mame.cpp, the corrected path; not yet accepted, see
-../cpu/README.md), for comparing the cores:
-  bl_live_mame.exe, test_bl_board_mame.exe
-and the CPU contract's own tests on that core, test_z180_contract.exe; and those of MAME's 8085 core (the Accent
-SA's, ../cpu/i8085_mame.cpp), test_i8085_contract.exe, and of MAME's 8086 (the Accent-mini's PC,
-../cpu/i86_mame.cpp), test_i86_contract.exe, with x64/ and x86/pc86.dll (../pc86) for the Accent-mini host's opt-in
-CPU (src/hosts/pc86.py, SSI263_ACCENT_CORE=mame).
+bl_live.exe and bl_live_mame.exe use MAME's Z180, as do x86/bl.dll and x64/bl.dll.
+pc86.dll contains MAME's 8086 for the Accent-mini. Builds need w64devkit for both
+architectures, but no z180emu checkout. --legacy-tests additionally builds the
+explicitly named development references bl_live_legacy.exe/test_bl_board_legacy.exe
+and test_z180_legacy.exe; none is copied into a release package.
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -82,7 +74,7 @@ def build_mame(gcc, env):
 
 def build_pc86(arch, bindir, env, extra):
     """pc86.dll (../pc86: MAME's 8086 with 1 MB of flat memory) for src/hosts/pc86.py -- the Accent-mini host's
-    opt-in CPU (SSI263_ACCENT_CORE=mame).  Static: KERNEL32 and msvcrt only, as the other DLLs."""
+    release CPU for Accent-mini.  Static: KERNEL32 and msvcrt only, as the other DLLs."""
     cpu = os.path.join(os.path.dirname(HERE), "cpu")
     pc86 = os.path.join(os.path.dirname(HERE), "pc86")
     obj = os.path.join(OUT, "obj_pc86_" + arch)
@@ -97,26 +89,56 @@ def build_pc86(arch, bindir, env, extra):
                    + ["-o", os.path.join(OUT, arch, "pc86.dll"), shim_o, core_o], env=env, check=True)
 
 
-def main():
+def build_legacy_reference(gcc, env):
+    """Development comparisons only. Never copied into release packages."""
     z180 = repo_paths.Z180_CORE
-    gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
-    env = dict(os.environ, PATH=os.path.dirname(gcc) + os.pathsep + os.environ["PATH"])
-    os.makedirs(OUT, exist_ok=True)
     # z180.c keeps __FILE__ (its CPUINFO source-file string): map the checkout's path to "." so no machine path is
     # built into the binaries (tools/check_binary_paths.py checks them)
     inc = ["-I" + HERE, "-I" + z180, "-I" + os.path.join(z180, "z180"), "-fmacro-prefix-map=%s=." % z180]
-    for exe, main_c in (("bl_live.exe", "bl_live.c"), ("test_bl_board.exe", "test_bl_board.c")):
+    for exe, main_c in (("bl_live_legacy.exe", "bl_live.c"), ("test_bl_board_legacy.exe", "test_bl_board.c")):
         subprocess.run([gcc] + FLAGS + inc + ["-o", os.path.join(OUT, exe), os.path.join(HERE, "bl_unity.c"),
                                                os.path.join(HERE, main_c)], env=env, check=True)
-    # run_ahead.h's contract on a synthetic board and chip (no firmware): test_run_ahead.c includes run_ahead.c
-    subprocess.run([gcc] + FLAGS + ["-Wall", "-I" + HERE, "-o", os.path.join(OUT, "test_run_ahead.exe"),
-                                    os.path.join(HERE, "test_run_ahead.c")], env=env, check=True)
     # the legacy path's exceptions (CONTRACT.md 3) on z180emu: ../cpu/test_z180_legacy.c
     cpu = os.path.join(os.path.dirname(HERE), "cpu")
     subprocess.run([gcc] + FLAGS + inc + ["-I" + cpu, "-w", "-o", os.path.join(OUT, "test_z180_legacy.exe"),
                                            os.path.join(cpu, "test_z180_legacy.c"), os.path.join(cpu, "z180_legacy.c")],
                    env=env, check=True)
+
+
+def build_mame_dll(arch, bindir, env, extra, chip_dll):
+    """Release board/host on MAME only; no unity file containing z180emu."""
+    cpu = os.path.join(os.path.dirname(HERE), "cpu")
+    obj = os.path.join(OUT, "obj_release_" + arch)
+    os.makedirs(obj, exist_ok=True)
+    inc = ["-I" + HERE, "-I" + cpu, "-I" + os.path.dirname(HERE)]
+    objects = []
+    for name in ("z180_mame", "z180_asci", "bl_board", "flash29", "bl_serial", "bl_idle",
+                 "bl_host", "bl_voice", "bl_firmware", "bl_state"):
+        cpp = name.startswith("z180_")
+        src = os.path.join(cpu if cpp else HERE, name + (".cpp" if cpp else ".c"))
+        tool = "g++.exe" if cpp else "gcc.exe"
+        flags = (["-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti"] if cpp else
+                 ["-O3", "-std=gnu89", "-DBL_Z180_MAME"])
+        out = os.path.join(obj, name + ".o")
+        subprocess.run([os.path.join(bindir, tool)] + flags + extra + ["-ffp-contract=off"] + inc
+                       + ["-c", src, "-o", out], env=env, check=True)
+        objects.append(out)
+    subprocess.run([os.path.join(bindir, "g++.exe"), "-shared"] + MAME_LINK
+                   + ["-o", os.path.join(OUT, arch, "bl.dll")] + objects + [chip_dll], env=env, check=True)
+
+
+def main():
+    gcc = os.path.join(repo_paths.bin_dir("W64DEVKIT_X86", path_fallback=False), "gcc.exe")
+    env = dict(os.environ, PATH=os.path.dirname(gcc) + os.pathsep + os.environ["PATH"])
+    os.makedirs(OUT, exist_ok=True)
+    if "--legacy-tests" in sys.argv:
+        build_legacy_reference(gcc, env)
+    subprocess.run([gcc] + FLAGS + ["-Wall", "-I" + HERE, "-o", os.path.join(OUT, "test_run_ahead.exe"),
+                                    os.path.join(HERE, "test_run_ahead.c")], env=env, check=True)
     build_mame(gcc, env)
+    # Public names are the release backend. Explicitly named old-core artifacts stay development-only.
+    shutil.copy2(os.path.join(OUT, "bl_live_mame.exe"), os.path.join(OUT, "bl_live.exe"))
+    shutil.copy2(os.path.join(OUT, "test_bl_board_mame.exe"), os.path.join(OUT, "test_bl_board.exe"))
     engine = os.path.dirname(os.path.dirname(HERE))
     for arch, (key, extra) in ARCHES.items():
         bindir = repo_paths.bin_dir(key, path_fallback=(arch == "x64"))
@@ -124,10 +146,7 @@ def main():
         out_dir = os.path.join(OUT, arch)
         os.makedirs(out_dir, exist_ok=True)
         chip_dll = os.path.join(engine, "ssi263", "_bin", arch, "ssi263.dll")
-        subprocess.run([os.path.join(bindir, "gcc.exe")] + DLL_FLAGS + extra + inc
-                       + ["-o", os.path.join(out_dir, "bl.dll"), os.path.join(HERE, "bl_unity.c"),
-                          os.path.join(HERE, "bl_host.c"), os.path.join(HERE, "bl_voice.c"),
-                          os.path.join(HERE, "bl_firmware.c"), os.path.join(HERE, "bl_state.c"), chip_dll], env=env, check=True)
+        build_mame_dll(arch, bindir, env, extra, chip_dll)
         build_pc86(arch, bindir, env, extra)
     print("built %s" % OUT)
 

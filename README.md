@@ -11,10 +11,10 @@ talking devices, running unchanged and driving the emulated chip:
 
 | Voice | Its own software | Runs in |
 |---|---|---|
-| **Speak-Out** talking box (GW Micro, 1995) | its NEC V40 firmware | Unicorn, inside NVDA |
-| **Blazie Braille Lite 2000** in speech-box mode | the June 2003 firmware | z180emu |
-| **Aicom Accent-mini** | Aicom's DOS device driver `SPKEMS.DVC` (Accent-EMS V4.5) | Unicorn, with emulated expanded memory |
-| **Aicom Accent SA** | the box's own 8085 firmware and dictionary ROMs (1986–1989) | an emulated 8085 |
+| **Speak-Out** talking box (GW Micro, 1995) | its NEC V40 firmware | MAME's V40, inside NVDA |
+| **Blazie Braille Lite 2000** in speech-box mode | the June 2003 firmware | MAME's Z180 |
+| **Aicom Accent-mini** | Aicom's DOS device driver `SPKEMS.DVC` (Accent-EMS V4.5) | MAME's 8086, with emulated expanded memory |
+| **Aicom Accent SA** | the box's own 8085 firmware and dictionary ROMs (1986–1989) | MAME's 8085 |
 
 The pronunciation rules, the number reading, the intonation and the timing are all the
 devices' own. The chip model makes every sample: nothing is recorded or concatenated.
@@ -85,8 +85,8 @@ The README in each folder says which files, with their checksums.
 | Path | What it is |
 |---|---|
 | `src/ssi263/` | The chip. `chip.py` is the reference, `params.py` holds every uncertain constant tagged by its source, `native.py` is the same chip in C behind the same interface |
-| `src/csrc/` | The chip in C99, `build_native.py`, and the pinned Unicorn 2.1.4 source with its patches (see `UNICORN-ARM-FIX.md`) |
-| `src/hosts/` | The firmware hosts: `speakout.py`, `blazie.py`, `accent.py`, `accent_sa.py` with `i8085.py`, and `ucmini.py` (Unicorn); `pc86.py` runs the Accent-mini on MAME's 8086 instead (opt-in, `SSI263_ACCENT_CORE=mame`; `src/csrc/pc86/`) |
+| `src/csrc/` | The chip in C99, the device boards, and the extracted MAME CPU cores with their BSD notices |
+| `src/hosts/` | The firmware hosts and native-board bindings. MAME is the default for all four devices; old cores are development references only |
 | `src/data/rom_bits.csv` | The phoneme ROM |
 | `src/HOLDOUT.md` | The hold-out rules, and a log of every change to the chip and every look at the hold-out |
 | `docs/` | The documentation (see above) |
@@ -108,15 +108,15 @@ Nothing in the repository assumes where those live. Copy `paths.local.example` t
 ```
 python src/csrc/build_native.py      # ssi263.dll, 64- and 32-bit, static
 python nvda/build_speakout.py        # every build checks the C chip against chip.py first
-python nvda/build_blazie.py          # also builds bns_live.exe from z180emu
+python nvda/build_blazie.py          # native board and pipe host both use MAME's Z180
 python nvda/build_accent.py
 ```
 
-The add-ons land in `nvda/dist/`. Unicorn's DLLs aren't rebuilt by those scripts: the
-recipe is `UNICORN_BUILD` in `nvda/build_speakout.py`, and the x64 one carries the
-Windows-on-ARM fix (`python src/csrc/build_unicorn_candidate.py`). The Braille Lite build
-needs z180emu with this project's `bns.c` front end; its complete source ships inside the
-Blazie add-on as `z180emu-source.zip`.
+The add-ons land in `nvda/dist/`. `python nvda/build_release.py` builds all three together,
+sharing native builds and chip checks. Every shipping CPU uses the extracted MAME core:
+Z180, V40, 8086 and 8085. Packages include both Windows architectures and their MIT/BSD
+notices. Unicorn, z180emu and the Python 8085 remain development comparison references;
+they are not runtime payloads and no environment switch is needed for MAME.
 
 ## Testing
 
@@ -138,8 +138,10 @@ Blazie add-on as `z180emu-source.zip`.
 - **The die:** Astra read the SSI-263's phoneme ROM from those shots, reviews the engine,
   and found the Windows-on-ARM fix.
 - **Casso:** Rob Elmer, MIT (`third_party/casso/LICENSE`).
-- **Unicorn 2.1.4:** GPLv2. Its source is pinned in `src/csrc/`.
-- **z180emu:** GPLv2. The Braille Lite add-on ships its complete source.
+- **MAME's CPU cores:** BSD-3-Clause, with each core's authors and pinned source recorded
+  under `src/csrc/cpu/mame_*`. Their license notices accompany the add-ons.
+- **Unicorn 2.1.4 and z180emu:** GPL development references for migration comparisons,
+  outside the 0.7 release payloads.
 - **The Accent SA ROMs** were shared by spacepup.
 - **The firmware belongs to its makers:** the Speak-Out to GW Micro (hardware by Daniel
   Weirich, software by Douglas Geoffray), the Accent to Aicom Corporation. The Braille
@@ -152,4 +154,5 @@ Blazie add-on as `z180emu-source.zip`.
 ## License
 
 The code in this repository is MIT: see [LICENSE](LICENSE). That covers our code only.
-The firmware, Unicorn, z180emu and Casso keep their own terms, listed above.
+The shipping CPU cores retain MAME's BSD-3-Clause terms; Casso retains its MIT notice.
+Firmware and the unshipped Unicorn/z180emu development references keep their own terms.

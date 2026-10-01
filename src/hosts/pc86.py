@@ -5,7 +5,7 @@ doing what DOS, the BIOS, the EMS manager and the PIC did, in Python, exactly as
 the bus's I/O callbacks and its interrupt hook the core's INT seam (cpu_bus.intercept: every INT n, INT 3, INTO and
 divide error is offered to the host, which services it -- as a Unicorn interrupt hook swallows the interrupt).
 
-Opt-in: accent.py uses it when SSI263_ACCENT_CORE=mame.  The library is looked for in SSI263_PC86_DLL (a file), bin/<arch>/
+The default CPU of accent.py. The library is looked for in SSI263_PC86_DLL (a file), bin/<arch>/
 beside this file, then the repository's nvda/dist/blazie-lib/<arch>/ (where src/csrc/blazie/build_board.py puts it).
 
 Time: accent.py runs the CPU a number of STEPS per slice (cpu_ips instructions per chip second, as with Unicorn) --
@@ -26,12 +26,12 @@ import struct
 from ctypes import POINTER, byref, c_int, c_uint8, c_uint32, c_uint64, c_void_p
 
 try:
-    from .ucmini import (UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX,
+    from .x86_api import (UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_AX, UC_X86_REG_BX,
                          UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP,
                          UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_IP,
                          UC_X86_REG_EFLAGS)
 except ImportError:
-    from ucmini import (UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_AX,  # noqa: F401
+    from x86_api import (UC_HOOK_INSN, UC_HOOK_INTR, UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_AX,  # noqa: F401
                         UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX, UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP,
                         UC_X86_REG_SP, UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS, UC_X86_REG_IP,
                         UC_X86_REG_EFLAGS)

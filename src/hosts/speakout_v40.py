@@ -1,7 +1,6 @@
 """The Speak-Out board on MAME's V40 core, in-process: src/csrc/speakout (speakout_v40.dll) through ctypes.
 
-What hosts/speakout.py's SpeakOut uses in place of Unicorn when SSI263_SPEAKOUT_CORE selects the MAME core (opt-in;
-the default stays Unicorn).  The board holds the CPU, the memory, the reduced ICU and SCU; the chip stays the
+The default backend of hosts/speakout.py's SpeakOut. The board holds the CPU, the memory, the reduced ICU and SCU; the chip stays the
 caller's, which applies the board's writes (so_board.h).
 
 The DLL is looked for in: bin/<arch>/ beside this file; SSI263_SPEAKOUT_V40_DLL (the file); then the research tree's

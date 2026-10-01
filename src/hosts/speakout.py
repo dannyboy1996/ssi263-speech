@@ -14,9 +14,9 @@ out of the firmware (see the Speak-Out memory note for offsets):
 
 CPU time is coupled to chip time at `cpu_ips` instructions per chip second.
 
-The CPU is Unicorn's.  SSI263_SPEAKOUT_CORE (opt-in, for comparison; not yet accepted) selects MAME's V40 core
-instead, on the same board in C (src/csrc/speakout, through speakout_v40.py): "mame-steps" couples its steps at
-`cpu_ips`, as Unicorn's instructions are -- the candidate for replacing Unicorn under this host; "mame" couples CPU
+The release CPU is MAME's V40 on the board in C (src/csrc/speakout, through speakout_v40.py).
+The default "mame-steps" couples its steps at `cpu_ips`, preserving the established host timing. For development
+comparisons only, "unicorn" selects the unshipped reference and "mame" couples CPU
 clocks to chip time at SSI263_SPEAKOUT_V40_HZ (default V40_HZ) -- experimental (nvda/tools/speakout_core_compare.py).
 """
 import os
@@ -26,13 +26,13 @@ import sys
 # never from sys.path: both add-ons ship an `ssi263`, and NVDA keeps one module per name for
 # the whole process (0.3.0: Braille Lite imported the older Speak-Out's copy and failed).
 try:
-    from .ucmini import (Uc, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_WRITE,
+    from .x86_api import (UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN, UC_HOOK_MEM_WRITE,
                          UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_CS, UC_X86_REG_IP,
                          UC_X86_REG_SS, UC_X86_REG_SP, UC_X86_REG_EFLAGS)
     from .ssi263 import SSI263
 except ImportError:                       # the research tree: src/ on sys.path
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from hosts.ucmini import (Uc, UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN,  # noqa: E402
+    from hosts.x86_api import (UC_ARCH_X86, UC_MODE_16, UC_HOOK_INSN,  # noqa: E402
                               UC_HOOK_MEM_WRITE, UC_X86_INS_IN, UC_X86_INS_OUT, UC_X86_REG_CS,
                               UC_X86_REG_IP, UC_X86_REG_SS, UC_X86_REG_SP, UC_X86_REG_EFLAGS)
     from ssi263 import SSI263  # noqa: E402
@@ -45,8 +45,8 @@ V40_HZ = 8_000_000          # "mame" (experimental): the uPD70208-8's speed grad
 
 
 def _core():
-    """SSI263_SPEAKOUT_CORE: unicorn (the default), mame or mame-steps."""
-    core = os.environ.get("SSI263_SPEAKOUT_CORE", "").strip().lower() or "unicorn"
+    """MAME instruction-count compatibility by default; other modes are development references."""
+    core = os.environ.get("SSI263_SPEAKOUT_CORE", "").strip().lower() or "mame-steps"
     if core not in ("unicorn", "mame", "mame-steps"):
         raise ValueError("SSI263_SPEAKOUT_CORE=%s: unicorn, mame or mame-steps" % core)
     return core
@@ -80,6 +80,7 @@ class SpeakOut:
         return object.__new__(cls)
 
     def __init__(self, hex_path, chip=None, out_rate=44100, cpu_ips=1_500_000):
+        from .ucmini import Uc             # development reference only; release uses SpeakOutV40
         self.chip = chip or SSI263(out_rate=out_rate)
         self.cpu_ips = cpu_ips
         self.uc = uc = Uc(UC_ARCH_X86, UC_MODE_16)
@@ -292,7 +293,7 @@ class SpeakOut:
 
 
 class SpeakOutV40(SpeakOut):
-    """The same host on MAME's V40 core (opt-in: SSI263_SPEAKOUT_CORE=mame or mame-steps; SpeakOut() returns one).
+    """The release host on MAME's V40 core (SpeakOut() selects mame-steps by default).
 
     Only the CPU changes: the board in C (src/csrc/speakout) has the same memory, the same chip window and the ICU and
     SCU reduced as above; this class keeps the chip-time loop, the chip and its bookkeeping.  "mame-steps" couples its

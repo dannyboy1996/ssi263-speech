@@ -2,7 +2,7 @@
 """NVDA synthesizer driver: a Blazie Braille Lite 2000 (June 2003 firmware) in speech-box
 mode, talking through an emulated SSI-263.
 
-The unit's own firmware runs in z180emu (bns_live.exe, GPLv2) as a child process; its
+The unit's own firmware runs on MAME's Z180 in the native board library; its
 register writes drive a register-level SSI-263 model here, and the model's A/R request
 drives the firmware back, so its rules, number reading and inflection are the
 originals, live.  Nothing is recorded or concatenated.
@@ -78,7 +78,7 @@ def _click(rate):
 _now = time.perf_counter           # the idle tail's clock (a test may speed it up)
 EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 # 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
-# no child process and no pipe, the same writes bit for bit (nvda/tools/golden).  The pipe host stays the fallback,
+# no child process and no pipe. The pipe compatibility host also uses MAME's Z180,
 # and SSI263_BLAZIE_PIPE=1 forces it (A/B).
 DLL = os.path.join(_ENGINE_DIR, "bin", "x64" if sys.maxsize > 2 ** 32 else "x86", "bl.dll")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
