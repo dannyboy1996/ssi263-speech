@@ -204,7 +204,9 @@ def check_progress(label, language, secs, reports):
     rising = all(b > a for a, b in zip(dones, dones[1:])) and dones and abs(dones[-1] - 1.0) < 1e-9
     times = [0.0] + [s for s, _ in reports]
     gaps = [b - a for a, b in zip(times, times[1:])]
-    steady = gaps and max(gaps) <= max(3 * secs / want, 0.25)
+    # the count and order are exact above; time only has to catch a bar that jumps at the end (one gap ~ all of
+    # secs).  8x the mean, not 3x: under a full run_tests load a 1.4 s scheduler pause beat 3x (0.99 s) twice.
+    steady = gaps and max(gaps) <= max(8 * secs / want, 0.5)
     ok = len(reports) == want and rising and steady
     result(ok, "%s: progress reported %d times, rising to 1, steadily" % (label, want),
            "longest gap %.2f s of %.1f s" % (max(gaps), secs) if ok else
