@@ -22,6 +22,8 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
 | `tns_keys.h` | The Type 'n Speak's key codes by key name: the one table `tns_keymap_win.c` and `tns_term.c` both read. Portable. |
+| `blazie_files.c` | The command line for a saved unit's files (Windows, Linux, the BTSpeak): list, export to a disk image, import from one, extract to a folder, pack and unpack an image. The portable half is `../../csrc/blazie/bl_files*.c` and `fat_img.c`. |
+| `test_files.c` | Files in and out against the units' own commands, on all four units: the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; `--break=1..5` put one bug back each for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
 
 The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
 
@@ -189,6 +191,59 @@ with Casso's MIT notice (`licenses/Casso-MIT.txt`: the chip model draws on it). 
 `build_app.py` puts all three beside the program. Since 0.7 no z180emu (GPL) is in the program or its tests:
 `python tools/check_no_gpl.py nvda/dist/blazie-emu` (run_tests runs it). The firmware keeps its own terms and is not
 part of the program.
+
+## Files in and out: disk images
+
+Firmware > **Export files to disk image (.img)** writes every file the unit holds into a FAT disk image; Firmware >
+**Import files from disk image (.img)** makes the unit's files what an image holds. No cable, no WinDisk. The image
+opens in 7-Zip (and mounts on Linux: `mount -o loop`). How the units keep their files was measured on the running
+firmware: `../../csrc/blazie/bl_files.h`.
+
+**The image.** One folder for each of the unit's folders, named as the unit names them: `ram startup` and `flash
+startup` (Spanish units: `RAM inicial`, `FLASH inicial`), and any you made in folder mode. Each file is under its unit
+name, with its exact bytes, its time and date, and read-only if you protected it. Text keeps the unit's line ends (a
+lone carriage return); a grade 2 file (on the Braille Lite: no extension, or `.brl`; on the Type 'n Speak `.brl`,
+`.brf`) holds its braille as ASCII braille, like a `.brf` file, not translated to print. The help file is not exported
+(its text is the firmware's). The file the unit has open is exported as it is now, with what you typed since you
+opened it.
+
+**Import** makes the unit's files what the image holds, and says what it did:
+- a file whose name, folder and bytes match is left alone (so export, import, export gives the same image);
+- new bytes for a file the unit has: rewritten where it is (RAM or flash), its type and protection kept;
+- a new file goes into the folder it is in in the image (a flash folder: into flash; a RAM folder: into RAM); a file
+  at the top of the image goes to the flash startup folder; an image folder the unit lacks becomes a new folder
+  (a flash folder); folders inside folders are skipped; an empty file goes to RAM (the unit keeps none in flash);
+- a file the image lacks is deleted -- except the clipboard, the datebook and the file the unit has open;
+- line ends from a PC editor (CR LF or LF) become the unit's CR in text files;
+- names become names the unit takes: lower case, one dot, an extension of up to 3 letters, 20 characters (the
+  unit's names are one list across its folders: two files of the same name are not both imported).
+
+The unit must not be writing its flash (the import says so and waits for you); it is switched off, its files
+changed, and switched on again, so the firmware finds them as if it had written them itself. When the image lacks
+files the unit has, the emulator names them and asks before deleting them (No imports nothing). The unit as it was
+before an import is kept beside its saved state (`english.state.before-import`, ...): to undo, close the emulator and
+copy it over the `.state` file. The file the unit has open is rewritten too if the image changes it, its cursor put
+at its top (that case is not yet tried against the firmware; the tests rewrite and delete files around the open one).
+
+**Editing an image.** 7-Zip opens images but cannot change them, and Windows does not open them by itself. Either
+use a tool that mounts disk images (OSFMount, ImDisk), or take the image apart into a folder and put it back:
+
+    blazie_files unpack "Braille Lite 2000 (English) files.img" myfiles
+    (edit, add or delete files in myfiles\ram startup, myfiles\flash startup, ...)
+    blazie_files pack myfiles changed.img
+
+then Firmware > Import files from disk image. The same tool works on a saved unit directly (close the emulator
+first: it saves its unit when it closes), for example on Linux or the BTSpeak:
+
+    blazie_files list english.state
+    blazie_files export english.state english.img
+    blazie_files import english.state changed.img      (--dry-run: say what would happen; it keeps the old
+                                                        state as english.state.before-import)
+    blazie_files extract english.state myfiles --crlf  (each file as a PC text file, CR LF)
+
+**The Type 'n Speak's first start.** The emulator starts a new Type 'n Speak with its warm reset, which sets up the
+flash but not the file system or the folders (a real unit's cold reset -- Ctrl+Alt+Del held at power-on -- asks for
+all three). On such a unit the import refuses ("the unit's folders were never set up"); export works.
 
 ## Not yet
 

@@ -16,6 +16,7 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <commdlg.h>
 #include <mmsystem.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,13 +24,18 @@
 #include "emu_unit.h"
 #include "serial_win.h"
 #include "tns_keymap_win.h"
+#include "../../csrc/blazie/bl_files.h"
+#include "../../csrc/blazie/bl_files_state.h"
+#include "../../csrc/blazie/bl_files_xfer.h"
+#include "../../csrc/blazie/fat_img.h"
 
 #define RATE_MAX 48000
 #define BLOCK_MAX (RATE_MAX / 50)
 #define NBLOCKS 4
 #define BLOCK_MS_DEFAULT 10
 
-enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
+enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_EXPORT, ID_IMPORT,
+       ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
        ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK, ID_QUICK = 218,
        ID_RATE = 220,
        ID_KEYS = 300, ID_ABOUT,
@@ -187,6 +193,217 @@ static int start_unit(int kind)
     CheckMenuRadioItem(GetMenu(g_wnd), ID_EN, ID_EN + N_KINDS - 1, ID_EN + kind, MF_BYCOMMAND);
     WritePrivateProfileStringA("unit", "kind", KINDS[kind].ini, g_ini);
     return 1;
+}
+
+/* ---- files in and out: the unit's files as a FAT disk image (../../csrc/blazie/bl_files_xfer.h) --------------- */
+static void tns_release_all(void);
+
+static int image_dialog(int save, char *path, int cap)
+{
+    OPENFILENAMEA o;
+    memset(&o, 0, sizeof o);
+    o.lStructSize = sizeof o;
+    o.hwndOwner = g_wnd;
+    o.lpstrFilter = "Disk images (*.img)\0*.img\0All files (*.*)\0*.*\0";
+    o.lpstrFile = path;
+    o.nMaxFile = (DWORD)cap;
+    o.lpstrDefExt = "img";
+    o.lpstrTitle = save ? "Export the unit's files to a disk image" : "Import files from a disk image";
+    o.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+    return save ? GetSaveFileNameA(&o) : GetOpenFileNameA(&o);
+}
+
+/* the report's first lines, after a summary, for a message box a screen reader reads out */
+static void report_text(char *out, size_t cap, const char *summary, const blx_report *r)
+{
+    const char *p = r->log ? r->log : "";
+    int lines = 0;
+    size_t n;
+    snprintf(out, cap, "%s", summary);
+    n = strlen(out);
+    while (*p && lines < 25 && n + 4 < cap) {
+        const char *e = strchr(p, '\n');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (n + len + 3 >= cap) break;
+        out[n++] = '\n';
+        memcpy(out + n, p, len);
+        n += len;
+        out[n] = 0;
+        lines++;
+        p = e ? e + 1 : p + len;
+    }
+    if (*p && n + 8 < cap)
+        snprintf(out + n, cap - n, "\n...");
+}
+
+/* the state as saved, opened for bl_files; 0 with a message box */
+static int open_saved(const char *st, bls_unit *u, blf_fs **fs)
+{
+    char err[300], msg[700];
+    if (!bls_load(st, u, err, sizeof err)) {
+        snprintf(msg, sizeof msg, "Could not read the unit's memory (%s): %s", st, err);
+        MessageBoxA(g_wnd, msg, "Blazie emulator", MB_OK | MB_ICONERROR);
+        return 0;
+    }
+    *fs = blf_open(u->model, u->ram, u->flash, u->flash_size, err, sizeof err);
+    if (!*fs) {
+        bls_free(u);
+        snprintf(msg, sizeof msg, "Could not read the unit's files: %s", err);
+        MessageBoxA(g_wnd, msg, "Blazie emulator", MB_OK | MB_ICONERROR);
+        return 0;
+    }
+    return 1;
+}
+
+static int write_bytes(const char *path, const unsigned char *d, unsigned long n)
+{
+    FILE *f = fopen(path, "wb");
+    int ok;
+    if (!f) return 0;
+    ok = fwrite(d, 1, n, f) == n;
+    return fclose(f) == 0 && ok;
+}
+
+static unsigned char *read_bytes(const char *path, unsigned long *n)
+{
+    FILE *f = fopen(path, "rb");
+    long size;
+    unsigned char *d;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    d = size > 0 ? (unsigned char *)malloc((size_t)size) : NULL;
+    if (d && fread(d, 1, (size_t)size, f) != (size_t)size) { free(d); d = NULL; }
+    fclose(f);
+    *n = (unsigned long)size;
+    return d;
+}
+
+/* every file the unit holds, as it holds them now (the unit runs on) */
+static void export_files(void)
+{
+    char path[MAX_PATH], st[MAX_PATH], err[300], summary[600], msg[4000];
+    bls_unit u;
+    blf_fs *fs;
+    blx_report r;
+    unsigned char *img;
+    unsigned long size;
+    if (!g_unit) return;
+    tns_release_all();
+    snprintf(path, sizeof path, "%s files.img", KINDS[g_kind].name);
+    if (!image_dialog(1, path, sizeof path)) return;
+    save_unit();                            /* its memory as it is this moment */
+    saved_path(g_kind, st, sizeof st);
+    if (!open_saved(st, &u, &fs)) return;
+    blx_report_init(&r);
+    img = blx_export(fs, u.model, &size, &r, err, sizeof err);
+    if (!img || !write_bytes(path, img, size)) {
+        snprintf(msg, sizeof msg, "Could not export the files: %s", img ? "the image could not be written" : err);
+        MessageBoxA(g_wnd, msg, "Export files", MB_OK | MB_ICONERROR);
+    } else {
+        snprintf(summary, sizeof summary, "Exported %d files to %s.\n\nEach of the unit's folders is a folder in "
+                 "the image; 7-Zip opens it. Text files keep the unit's line ends (a lone carriage return).",
+                 r.exported, path);
+        report_text(msg, sizeof msg, summary, &r);
+        MessageBoxA(g_wnd, msg, "Export files", MB_OK | MB_ICONINFORMATION);
+    }
+    free(img);
+    blx_report_free(&r);
+    blf_close(fs);
+    bls_free(&u);
+}
+
+/* the image's files into the unit: only while it is not writing its flash; it is switched off, its files changed,
+   and switched on again -- the firmware then finds them as if it had written them */
+static void import_files(void)
+{
+    char path[MAX_PATH] = "", st[MAX_PATH], err[300], summary[1200], msg[4000];
+    unsigned char *img;
+    unsigned long size;
+    fat_volume *v;
+    emu_unit *old;
+    bls_unit u;
+    blf_fs *fs;
+    blx_report r;
+    int busy, ok, cancelled = 0;
+    if (!g_unit) return;
+    tns_release_all();
+    if (!image_dialog(0, path, sizeof path)) return;
+    img = read_bytes(path, &size);
+    v = img ? fat_read(img, size, err, sizeof err) : NULL;
+    if (!v) {
+        snprintf(msg, sizeof msg, "%s is not a disk image the emulator can read: %s", path, img ? err : "unreadable");
+        MessageBoxA(g_wnd, msg, "Import files", MB_OK | MB_ICONERROR);
+        free(img);
+        return;
+    }
+    fat_close(v);
+    CreateDirectoryA(g_save_dir, NULL);
+    saved_path(g_kind, st, sizeof st);
+    EnterCriticalSection(&g_lock);
+    busy = emu_flash(g_unit, NULL);
+    ok = !busy && emu_save(g_unit, st);
+    old = ok ? g_unit : NULL;
+    if (ok)
+        g_unit = NULL;                      /* switched off: nothing runs while its memory changes */
+    LeaveCriticalSection(&g_lock);
+    if (!ok) {
+        MessageBoxA(g_wnd, busy ? "The unit is writing its flash memory. Import the files when it has finished "
+                    "(when it is quiet)." : "Could not save the unit's memory; nothing was imported.",
+                    "Import files", MB_OK | MB_ICONWARNING);
+        free(img);
+        return;
+    }
+    emu_destroy(old);
+    blx_report_init(&r);
+    ok = open_saved(st, &u, &fs);
+    if (ok) {
+        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err);
+        if (ok && r.deleted) {              /* an image holding only new files would empty the unit: ask */
+            char ask[3000];
+            const char *line = r.log ? r.log : "";
+            size_t n = (size_t)snprintf(ask, sizeof ask, "The image does not have %d of the unit's files. Importing "
+                                        "it deletes them from the unit:\n", r.deleted);
+            while (*line && n + 80 < sizeof ask) {   /* the report's "deleted NAME" lines */
+                const char *e = strchr(line, '\n');
+                size_t len = e ? (size_t)(e - line) : strlen(line);
+                if (len > 8 && !strncmp(line, "deleted ", 8))
+                    n += (size_t)snprintf(ask + n, sizeof ask - n, "\n%.*s", (int)(len - 8), line + 8);
+                line = e ? e + 1 : line + len;
+            }
+            snprintf(ask + n, sizeof ask - n, "\n\nDelete them and import? No imports nothing.");
+            if (MessageBoxA(g_wnd, ask, "Import files", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+                ok = 0, cancelled = 1;
+        }
+        if (ok) {                           /* the unit as it was, kept beside it: undone by one file copy */
+            char before[MAX_PATH + 20];
+            snprintf(before, sizeof before, "%s.before-import", st);
+            CopyFileA(st, before, FALSE);
+            ok = bls_save(st, &u, err, sizeof err);
+        }
+        blf_close(fs);
+        bls_free(&u);
+    }
+    free(img);
+    start_unit(g_kind);                     /* switched on again */
+    if (cancelled)
+        MessageBoxA(g_wnd, "Nothing was imported. The unit's files are as they were.", "Import files",
+                    MB_OK | MB_ICONINFORMATION);
+    else if (!ok) {
+        snprintf(summary, sizeof summary, "Nothing was imported: %s\n\nThe unit was restarted with its files as "
+                 "they were.", err);
+        report_text(msg, sizeof msg, summary, &r);
+        MessageBoxA(g_wnd, msg, "Import files", MB_OK | MB_ICONERROR);
+    } else {
+        snprintf(summary, sizeof summary, "Imported from %s: %d added, %d rewritten, %d moved, %d deleted, %d "
+                 "unchanged, %d kept, %d skipped%s. The unit was restarted. (The unit as it was before is kept in "
+                 "%s.before-import.)", path, r.added, r.replaced, r.moved, r.deleted, r.unchanged, r.kept, r.skipped,
+                 r.folders_added ? ", new folders made" : "", st);
+        report_text(msg, sizeof msg, summary, &r);
+        MessageBoxA(g_wnd, msg, "Import files", MB_OK | (r.skipped || r.kept ? MB_ICONWARNING : MB_ICONINFORMATION));
+    }
+    blx_report_free(&r);
 }
 
 /* ---- the sound card: the unit renders each block as the card hands it back ---------------------------------- */
@@ -393,6 +610,9 @@ static HMENU make_menu(void)
     AppendMenuA(unit, MF_STRING, ID_TNS_EN, "&Type 'n Speak, English");
     AppendMenuA(unit, MF_STRING, ID_TNS_ES, "Type 'n Speak, S&panish");
     AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(unit, MF_STRING, ID_EXPORT, "Exp&ort files to disk image (.img)...");
+    AppendMenuA(unit, MF_STRING, ID_IMPORT, "&Import files from disk image (.img)...");
+    AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
     AppendMenuA(unit, MF_STRING, ID_FACTORY, "Back to the &factory state (erases this unit's files)...");
     AppendMenuA(unit, MF_STRING, ID_EXIT, "E&xit");
     AppendMenuA(sound, MF_STRING, ID_UNITSOUND, "Idle channel: as the &unit (hiss at even volumes, whine at odd)");
@@ -521,6 +741,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             start_unit(LOWORD(wp) - ID_EN);
             return 0;
         case ID_EXIT: DestroyWindow(w); return 0;
+        case ID_EXPORT: export_files(); return 0;
+        case ID_IMPORT: import_files(); return 0;
         case ID_FACTORY: {
             char path[MAX_PATH];
             emu_unit *old;
