@@ -51,9 +51,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-22.04        # glibc 2.35: Ubuntu 22.04, Debian 12 and later can run it
             arch: x86_64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             arch: arm64
     env:
       PLATFORM: linux-${{ matrix.arch }}
