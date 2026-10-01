@@ -31,6 +31,8 @@ struct bl_voice {
     int sent_rate, sent_pitch, sent_tone;         /* unit.sent_settings */
     double gain;
     int lead, active;
+    int fault;                    /* the host refused or failed an utterance (bh_say/bh_busy < 0: run ahead's sticky
+                                     faults, Astra's Reply 112); the next blv_speak recovers with bh_cancel first */
     short *pcm;
     int pcm_cap;
 };
@@ -466,10 +468,18 @@ BL_API int blv_speak(bl_voice *v, const char *utf8)
     v->gain = MAKEUP * v->volume / 100.0;
     v->lead = 1;
     v->active = 0;
+    if (v->fault) {                                  /* the explicit recovery: a cancel clears the host's fault */
+        bh_cancel(v->host, 3.0, -1.0, -1.0);
+        v->fault = 0;
+    }
     nl = say_bytes(utf8, v->encoding, v->pack, &data, &len);
     if (nl) {
         bh_set_int(v->host, "turbo_between_lines", v->pack);
-        bh_say(v->host, data, len);
+        if (bh_say(v->host, data, len) < 0 && !blv_break_fault) {   /* refused: say so, never silently */
+            v->fault = 1;
+            free(data);
+            return -1;
+        }
         v->active = 1;
     }
     free(data);
@@ -500,9 +510,16 @@ BL_API int blv_render(bl_voice *v, const short **pcm, int *done)
         ssi_pcm16(y + start, n - start, v->gain, v->pcm);
     *pcm = v->pcm;
     *done = 0;
-    if (!bh_busy(v->host, 0.1, 3.0)) {
-        v->active = 0;
-        *done = 1;
+    {
+        int busy = bh_busy(v->host, 0.1, 3.0);
+        if (busy < 0 && blv_break_fault)
+            busy = 1;                                /* the control: the fault taken as busy, as before */
+        if (busy < 0)                                /* a fault ends the utterance here, not silence until a cancel */
+            v->fault = 1;
+        if (busy <= 0) {
+            v->active = 0;
+            *done = 1;
+        }
     }
     return n - start;
 }
@@ -511,4 +528,12 @@ BL_API void blv_cancel(bl_voice *v)
 {
     bh_cancel(v->host, 3.0, -1.0, -1.0);
     v->active = 0;
+    v->fault = 0;
+}
+
+BL_API int blv_break_fault = 0;
+
+BL_API int blv_fault(const bl_voice *v)
+{
+    return v->fault;
 }

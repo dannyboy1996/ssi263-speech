@@ -32,14 +32,21 @@ BL_API void blv_destroy(bl_voice *v);
    tone 0-26 (7 = factory); pack = the driver's "short pauses" (sentences packed onto one line from the second on). */
 BL_API void blv_set(bl_voice *v, int rate, int pitch, int tone, int volume, int pack);
 
-/* Starts one utterance (UTF-8).  Returns the number of lines sent to the unit (0: nothing to say). */
+/* Starts one utterance (UTF-8).  Returns the number of lines sent to the unit (0: nothing to say), or -1 when the
+   host refused it (a run-ahead fault); the next blv_speak recovers with a cancel first. */
 BL_API int blv_speak(bl_voice *v, const char *utf8);
 /* The next block of the utterance: 16-bit mono PCM at out_rate in an internal buffer valid until the next call
-   (possibly 0 samples while the unit is still silent).  *done = 1 once the unit has finished. */
+   (possibly 0 samples while the unit is still silent).  *done = 1 once the unit has finished, or on a host fault
+   (blv_fault says which). */
 BL_API int blv_render(bl_voice *v, const short **pcm, int *done);
 /* Stops the utterance: the unit drops what it has not spoken (its audio is discarded); the next blv_speak starts
    clean. */
 BL_API void blv_cancel(bl_voice *v);
+/* Nonzero after a host fault ended or refused the last utterance (cleared by the next blv_speak's recovery). */
+BL_API int blv_fault(const bl_voice *v);
+/* A test's control (blv_fault_test.py sets it; nothing else does): nonzero puts back the 0.7 draft's handling --
+   a refused say taken as said, a fault taken as busy -- which must fail that test. */
+BL_API extern int blv_break_fault;
 
 /* The bytes blv_speak would send the unit for this text (currencies, clean-up, lines, encoding), for tests: returns
    the length, and copies them into out when they fit in cap. */

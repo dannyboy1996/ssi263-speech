@@ -630,6 +630,12 @@ CHECKS.append(check("keep the channel open CONTROL (mute, every audio check fail
 # the chip's defaults for front ends without Python (ssi263_defaults.h): still params.py's and the ROM's, as compiled
 # bl_voice (the driver's front end in C, for speech-dispatcher and Android): the real driver's PCM, byte for byte;
 # and its control (the C side with packing flipped) must fail
+# bl_voice on a host fault (Astra, Reply 112 item 2): the utterance ends and says so, the next one recovers
+CHECKS.append(check("bl_voice: a host fault ends the utterance, the next recovers", [PY, "blv_fault_test.py"]))
+CHECKS.append(check("bl_voice CONTROL (fault taken as busy, must fail)", [PY, "blv_fault_test.py"],
+                    env={"BLV_FAULT_TEST_BREAK": "1"}, expect_fail=True,
+                    fail_marks=[r"^FAIL the faulted utterance ends and says so: .*NOT DONE",
+                                r"^blv fault: 2 FAILED$"]))
 CHECKS.append(check("bl_voice = the NVDA driver, byte for byte", [PY, "voice_equiv.py"]))
 CHECKS.append(check("bl_voice CONTROL (packing flipped, must fail)", [PY, "voice_equiv.py"],
                     env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True,

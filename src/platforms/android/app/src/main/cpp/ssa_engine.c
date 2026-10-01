@@ -237,8 +237,13 @@ int ssa_start(ssa_engine *e, int voice, const char *utf8, const ssa_settings *s,
     blv_set(e->voices[voice], ssa_rate(s->rate, request_rate), ssa_pitch(s->pitch, request_pitch), s->tone,
             s->volume, s->pack);
     e->blocks = 0;
-    if (!blv_speak(e->voices[voice], utf8))
-        return 1;
+    {
+        int lines = blv_speak(e->voices[voice], utf8);
+        if (lines < 0)                               /* the host refused it: a synthesis error, not silence */
+            return -1;
+        if (!lines)
+            return 1;
+    }
     e->cur = voice;
     e->done = 0;
     return 0;
