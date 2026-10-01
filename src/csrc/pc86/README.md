@@ -3,7 +3,8 @@
 MAME's 8086 (`../cpu/i86_mame.cpp`, through `cpu.h`) with 1 MB of flat memory. The host does what DOS, the BIOS,
 the EMS manager and the PIC did; the CPU hands it every I/O access and every software interrupt. It exists so the
 Accent-mini host (`src/hosts/accent.py`) can run Aicom's SPKEMS.DVC on a BSD-licensed CPU in place of Unicorn
-(GPLv2). Opt-in: `SSI263_ACCENT_CORE=mame`; Unicorn stays the default until Tomi has listened and Astra has reviewed.
+(GPLv2). MAME is the 0.7 release default; no environment switch is needed. Unicorn
+is retained only as a development comparison and is not packaged.
 
 | File | What it is for |
 |---|---|

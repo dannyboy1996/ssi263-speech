@@ -46,17 +46,18 @@ Built by `../blazie/build_board.py` (the Braille Lite board on the MAME core: `b
 `test_bl_board_mame.exe`, beside the legacy ones) and `../../../build_linux.sh` (`test_bl_board_mame`). Gated in
 `nvda/tools/run_tests.py`: the spoken values of both goldens (`bns_equiv.py --values-only`; times are not
 compared, they legitimately differ), a must-fail control with one value flipped, and two units in one process.
-The shipped libraries still use the legacy core.
+The 0.7 shipping libraries use MAME. Legacy outputs are development references only.
 
 MAME's 8085 (the Accent SA's CPU, to replace `src/hosts/i8085.py`) is built the same way: `test_i8085_contract.exe`
-by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated; no board runs it yet.
+by `build_board.py`, `test_i8085_contract` by `build_linux.sh`, both gated. The Accent SA
+board in `../accentsa/` uses it by default.
 
 MAME's 8086 (the Accent-mini's PC, to replace Unicorn under `src/hosts/accent.py`) likewise: `test_i86_contract.exe`
 and `x64/`, `x86/pc86.dll` (`../pc86`) by `build_board.py`, `test_i86_contract` and `libpc86.so` by `build_linux.sh`.
 Gated: the contract tests, `compare_i86_accent.py --quick` with its twelve controls (one value flipped; one write
 time, one PCM sample, one register, one log line, one memory byte outside and one inside the allow-list, the MAME
 snapshot's registers perturbed; FLAGS: IF flipped, CF flipped, a masked bit changed, the snapshot's IF flipped), and
-driver_sim on the built add-on with `SSI263_ACCENT_CORE=mame`. Opt-in only: Unicorn stays the default.
+driver_sim on the built add-on. MAME is the default; Unicorn is not packaged.
 
 Licences: `cpu.h`, `CONTRACT.md` and our own files are MIT. A build containing `z180_legacy.c` is GPL (z180emu). A
 build using only the MAME core is MIT plus MAME's BSD-3 notice.

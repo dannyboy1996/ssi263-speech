@@ -1,8 +1,8 @@
 # src/csrc/accentsa: the Aicom Accent SA board on MAME's 8085 core
 
-**Opt-in, not yet accepted.** The Accent SA voice of the Accent add-on still runs its 8085 in Python
-(`src/hosts/accent_sa.py` on `src/hosts/i8085.py`). This folder is the same machine and the same host in C, so that
-every front end can have it without Python (Android next: Tomi, 2026-09-30). The board is `accent_sa.py`'s machine
+**The 0.7 release default.** The Accent SA voice uses this C board on MAME's 8085.
+The Python 8085 is retained only as a development reference. This folder provides
+the machine and host in C for front ends that run without Python. The board is `accent_sa.py`'s machine
 with nothing changed; the host is its lockstep with the chip, line for line. Aicom's ROMs are not built in: they are
 read from a folder or given in memory (`firmware/aicom-accent-sa`, in the repository with `firmware/AICOM.txt`).
 
@@ -19,8 +19,9 @@ read from a folder or given in memory (`firmware/aicom-accent-sa`, in the reposi
 | `build_board.py` | Windows build (w64devkit): `nvda/dist/accentsa-lib/` gets `test_as_board.exe`, `as_render.exe`, `x64/` and `x86/accent_sa.dll` (importing `ssi263.dll`, as `bl.dll` does). `../../../build_linux.sh` builds `test_as_board`, `as_render` and `libaccent_sa.so`. |
 
 The CPU is `../cpu/i8085_mame.cpp` (CONTRACT.md's 8085 clauses). Python reaches the host through
-`src/hosts/accent_sa_c.py`; `SSI263_ACCENT_SA_CORE=c` makes `AccentSA()` return it. The add-on carries that module,
-not the DLL: it is found through `SSI263_ACCENT_SA_DLL` or the research tree's `nvda/dist/accentsa-lib/`.
+`src/hosts/accent_sa_c.py`; `AccentSA()` returns it by default. The add-on carries
+the module and both x86/x64 DLLs. Development builds may select a library through
+`SSI263_ACCENT_SA_DLL` or use the research tree's `nvda/dist/accentsa-lib/`.
 
 ## Two numbers that are not the unit's
 
