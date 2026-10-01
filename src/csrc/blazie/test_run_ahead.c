@@ -8,11 +8,13 @@
  *   test_run_ahead.exe old-alloc         RA_BRK_ALLOC: failed allocations ignored (must fail)
  *   test_run_ahead.exe old-reading       RA_BRK_READING: every answer over 5 ms moved up (must fail)
  *   test_run_ahead.exe old-settle        RA_BRK_SETTLE: a cancel meets the unit where the capture stopped it (must fail)
+ *   test_run_ahead.exe old-request       RA_BRK_REQUEST: the final load's request taken as the end (must fail)
+ *   test_run_ahead.exe old-sticky        RA_BRK_STICKY: a new utterance starts over an error (must fail)
  *
  * The chip: a phoneme load drops A/R for its duration (spoken 50 ms, pause 30 ms); a spoken phoneme sounds on (0.5)
  * after its duration until the next load, as the SSI-263 holds it; a pause is silence.  The board: a unit that loads
  * its phonemes one per request, each a given CPU time after A/R rises, optionally with register writes before it.
- * The first two cases are Astra's run_ahead_probe.c fixtures.
+ * The first two cases are Astra's run_ahead_probe.c fixtures (the first extended as her completion_probe.c).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -188,30 +190,49 @@ int main(int argc, char **argv)
     if (argc > 1)
         brk = !strcmp(argv[1], "old-completion") ? RA_BRK_COMPLETION : !strcmp(argv[1], "old-limit") ? RA_BRK_LIMIT
             : !strcmp(argv[1], "old-alloc") ? RA_BRK_ALLOC : !strcmp(argv[1], "old-reading") ? RA_BRK_READING
-            : !strcmp(argv[1], "old-settle") ? RA_BRK_SETTLE : -1;
+            : !strcmp(argv[1], "old-settle") ? RA_BRK_SETTLE : !strcmp(argv[1], "old-request") ? RA_BRK_REQUEST
+            : !strcmp(argv[1], "old-sticky") ? RA_BRK_STICKY : -1;
     if (brk < 0 || !b) {
-        fprintf(stderr, "usage: test_run_ahead [old-completion|old-limit|old-alloc|old-reading|old-settle]\n");
+        fprintf(stderr, "usage: test_run_ahead [old-completion|old-limit|old-alloc|old-reading|old-settle|old-request|"
+                "old-sticky]\n");
         return 2;
     }
 
-    {   /* 1. Astra's fixture: one spoken load, no cleanup write.  Complete only once the chip requests again */
-        static const step s[] = {{32.0 / 6144.0, 5, 0}};
-        int seen_final = 0, early = 0;
-        long samples = 0;
+    /* 1. Astra's fixture (Reply 107), extended as her completion_probe.c (Reply 112): one spoken load and no cleanup
+          write.  Its timer ends and the chip requests -- permission for the next load, not silence: the phoneme sounds
+          on.  The utterance must never be complete while it does; it ends at RA_FINAL_S unresolved (a limit, held),
+          and the 100 ms rendered after that end are still loud: the continuation accounted for, not called done.
+       1b, its passing control: the same load and then a cleanup pause.  Complete, and silent after */
+    for (i = 0; i < 2; i++) {
+        static const step nc[] = {{32.0 / 6144.0, 5, 0}};
+        static const step cl[] = {{32.0 / 6144.0, 5, 0}, {0.06, 0, 0}};
+        int seen_final = 0, loud_done = 0, ok;
+        long samples = 0, after = 0, k;
         double played;
-        setup(b, s, 1);
-        while (b->r.active && b->chip.time < 2.0) {
-            samples += ra_play(&b->r, &b->chip, RATE, 0.01, buf, &played);
+        setup(b, i ? cl : nc, i ? 2 : 1);
+        while (b->r.active && b->chip.time < 3.0) {
+            n = ra_play(&b->r, &b->chip, RATE, 0.01, buf, &played);
+            samples += n;
             st = ra_state(&b->r, &b->chip);
             seen_final |= st == RA_FINAL_LOAD;
-            early |= (st == RA_COMPLETE || !b->r.active) && !b->chip.request;
+            loud_done |= st == RA_COMPLETE && b->chip.code != 0;     /* "complete" while a spoken phoneme sounds */
         }
         st = ra_state(&b->r, &b->chip);
-        report(st == RA_COMPLETE && seen_final && !early && b->chip.request && samples > 0,
-               "last load, no cleanup", "final load seen %.0f, ended while the chip still sounded %.0f, "
-               "%.0f samples played", seen_final, early, (double)samples);
-        if (st != RA_COMPLETE || early)
-            printf("     ... ended as %s with the chip %s\n", names[st], b->chip.request ? "requesting" : "SOUNDING");
+        n = ssi263_run(&b->chip, 4410, buf);                        /* 100 ms after the end */
+        for (k = 0; k < n; k++)
+            after += buf[k] != 0.0;
+        if (!i) {
+            ok = st == RA_LIMIT && b->r.held && seen_final && !loud_done && after == n && samples > 0;
+            report(ok, "last load, no cleanup (held: not complete)", "complete while it sounded %.0f, ended held %.0f, "
+                   "audible after its end %.0f of 4410 samples", loud_done, b->r.held, (double)after);
+        } else {
+            ok = st == RA_COMPLETE && !loud_done && after == 0;
+            report(ok, "last load, then a cleanup pause (complete)", "complete while it sounded %.0f, complete %.0f, "
+                   "audible after its end %.0f of 4410 samples", loud_done, st == RA_COMPLETE, (double)after);
+        }
+        if (!ok)
+            printf("     ... ended as %s at %.3f s, the chip %s\n", names[st], b->chip.time,
+                   b->chip.code ? "SOUNDING" : "silent");
         ra_free(&b->r);
     }
     {   /* 2. Astra's fixture: speech still owed, its first load 3.1 s of CPU in.  A limit, never a success */
@@ -394,6 +415,30 @@ int main(int argc, char **argv)
                "cancel while capturing: the unit settles first",
                "mid-routine at the stop %.0f, waits for an interrupt at the cancel %.0f, %.0f of its writes dropped "
                "(none applied)", busy_before, idle_cb(b), b->r.dropped);
+        ra_free(&b->r);
+    }
+    {   /* 12. an error is sticky (Reply 112 item 2): after an allocation failure no new utterance starts over it -- the
+           failed script is abandoned explicitly first (ra_reset), then the next one starts */
+        static step s[300];
+        int refused, after_reset;
+        for (i = 0; i < 300; i++) {
+            s[i].lat_ms = 0.06;
+            s[i].code = i & 1 ? 0 : 5;
+        }
+        setup(b, s, 300);
+        fail_size = 512 * sizeof(unsigned long long);
+        play(b, 30.0, &loud);
+        fail_size = 0;
+        st = ra_state(&b->r, &b->chip);
+        refused = !ra_start(&b->r, 0, 1);
+        if (!refused)
+            ra_abort(&b->r);
+        ra_reset(&b->r);
+        after_reset = ra_start(&b->r, 0, 1);
+        report(st == RA_ERROR && refused && after_reset, "an error is sticky until reset",
+               "ended as state %.0f (error = 7), a new start over it refused %.0f, started after ra_reset %.0f", st,
+               refused, after_reset);
+        ra_abort(&b->r);
         ra_free(&b->r);
     }
     if (failures)

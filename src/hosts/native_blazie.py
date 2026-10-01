@@ -47,12 +47,20 @@ class Probe(ctypes.Structure):
         "port_e0", "asci_cntla", "asci_cntlb", "asci_stat", "asci_asext", "asci_astc")]
 
 
-class RunAheadError(RuntimeError):
-    """A run-ahead utterance failed (out of memory: its script is incomplete), or input was refused."""
+class BlazieHostError(RuntimeError):
+    """The host lost something the unit did (out of memory): a chip write or serial byte the board could not store, a
+    transmitted byte or a logged write the host could not keep (Astra, Reply 112: never silently).  A fault stops the
+    host -- busy() and new input raise -- until cancel() abandons the utterance."""
+
+
+class RunAheadError(BlazieHostError):
+    """A run-ahead utterance failed (out of memory: its script is incomplete), or input was refused.  Sticky: busy(),
+    say() and send() raise until cancel(); input held for the unit is not delivered over it."""
 
 
 # run_ahead.h's RA_* states, by number
 RA_STATES = ("idle", "capturing", "replaying", "trailing", "final load", "complete", "limit", "error", "cancelled")
+FAULT_RUN_AHEAD, FAULT_EVENT = 1, 2     # bl_host.c BH_FAULT_*
 
 
 def _load(path):
@@ -176,6 +184,23 @@ class NativeBlazie:
         for i in range(n):
             self._on_write(p[i].t, p[i].reg, p[i].val)
         self._lib.bh_clear_writes(self._h)
+        lost = self._lib.bh_get_int(self._h, b"writes_lost")
+        if lost:
+            self._lib.bh_set_int(self._h, b"writes_lost", 0)
+            raise BlazieHostError("the write log lost %d write(s): out of memory, the log is incomplete" % lost)
+
+    @property
+    def fault(self):
+        """bl_host.c's BH_FAULT_* bits now (0: none)"""
+        return self._lib.bh_get_int(self._h, b"fault")
+
+    def _raise_fault(self, what):
+        f = self.fault
+        if f & FAULT_EVENT:
+            raise BlazieHostError("%s: the board lost a chip write or serial byte (out of memory); cancel() to "
+                                  "abandon the utterance" % what)
+        raise RunAheadError("%s: the run-ahead utterance failed (out of memory, its script is incomplete); cancel() to "
+                            "abandon it" % what)
 
     def close(self):
         h = getattr(self, "_h", None)
@@ -273,6 +298,10 @@ class NativeBlazie:
     def tx(self):
         if not getattr(self, "_h", None):
             return list(getattr(self, "_tx_closed", []))
+        lost = self._lib.bh_get_int(self._h, b"tx_lost")
+        if lost:
+            self._lib.bh_set_int(self._h, b"tx_lost", 0)
+            raise BlazieHostError("the transmit record lost %d byte(s): out of memory, it is incomplete" % lost)
         p = ctypes.POINTER(ctypes.c_ubyte)()
         n = self._lib.bh_tx(self._h, ctypes.byref(p))
         return list(p[:n]) if n else []
@@ -285,6 +314,8 @@ class NativeBlazie:
             self._record("send", data.decode("latin-1"))
             ok = self._lib.bh_send(self._h, data, len(data))
             self._drain()
+            if ok < 0:
+                self._raise_fault("send refused")
             if not ok:
                 raise RunAheadError("bh_send: out of memory holding input for the run-ahead utterance")
 
@@ -294,6 +325,8 @@ class NativeBlazie:
         self._record("say", data.decode("latin-1"))
         ok = self._lib.bh_say(self._h, data, len(data))
         self._drain()
+        if ok < 0:
+            self._raise_fault("say refused")
         if not ok:
             raise RunAheadError("bh_say: out of memory holding input for the run-ahead utterance")
 
@@ -305,7 +338,7 @@ class NativeBlazie:
         self._record("busy", quiet, patience)
         v = self._lib.bh_busy(self._h, quiet, patience)
         if v < 0:
-            raise RunAheadError("the run-ahead utterance failed: out of memory, its script is incomplete")
+            self._raise_fault("busy")
         return bool(v)
 
     def cancel(self, limit=3.0, quiet=None, cut=None):

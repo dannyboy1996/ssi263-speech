@@ -245,21 +245,31 @@ CHECKS.append(check("open channel CONTROL (plain wait on the last onDone, must f
 RA_TEST = os.path.join(LIB, "test_run_ahead.exe")
 if os.path.isfile(RA_TEST):
     CHECKS.append(check("run ahead contract (synthetic board)", [RA_TEST]))
+    # (Astra, Reply 112) a chip's request is not silence: the final load spoken and held is never complete, its
+    # cleanup pause is (old-request: complete at the request, 4410 of 4410 samples still audible after); an error is
+    # sticky until reset (old-sticky)
     for arg, marks in (
-            ("old-completion", [r"^FAIL last load, no cleanup: final load seen 0, ended while the chip still sounded 1, "
-                                r"0 samples played$", r"^FAIL final load never ends: ended as state 5 ",
-                                r"^run ahead contract: 4 of 11 FAILED$"]),
+            ("old-completion", [r"^FAIL last load, no cleanup \(held: not complete\): complete while it sounded 1, "
+                                r"ended held 0, audible after its end 4410 of 4410 samples$",
+                                r"^FAIL final load never ends: ended as state 5 ",
+                                r"^run ahead contract: 4 of 13 FAILED$"]),
             ("old-limit", [r"^FAIL owed, first load at 3\.1 s: ended as state 5 \(limit = 6\)",
-                           r"^run ahead contract: 1 of 11 FAILED$"]),
+                           r"^run ahead contract: 1 of 13 FAILED$"]),
             ("old-alloc", [r"^FAIL allocation fails \(acknowledgements\): ended as state 5 .* after 300 of 300 loads$",
                            r"^FAIL allocation fails \(writes\): ended as state 6 .* after 1024 of 1050 writes$",
-                           r"^run ahead contract: 2 of 11 FAILED$"]),
+                           r"^run ahead contract: 3 of 13 FAILED$"]),
             ("old-reading", [r"^FAIL 5 ms threshold .*first wrong: load 5 answered 0\.0\d\d ms after the request$",
                              r"^FAIL slow service \(50 ms answers in speech\): worst answer off by 49\.9\d\d ms",
-                             r"^run ahead contract: 2 of 11 FAILED$"]),
+                             r"^run ahead contract: 2 of 13 FAILED$"]),
             ("old-settle", [r"^FAIL cancel while capturing: the unit settles first: mid-routine at the stop 1, waits "
                             r"for an interrupt at the cancel 0, 0 of its writes dropped",
-                            r"^run ahead contract: 1 of 11 FAILED$"])):
+                            r"^run ahead contract: 1 of 13 FAILED$"]),
+            ("old-request", [r"^FAIL last load, no cleanup \(held: not complete\): complete while it sounded 1, ended "
+                             r"held 0, audible after its end 4410 of 4410 samples$",
+                             r"^ok +last load, then a cleanup pause \(complete\)",
+                             r"^run ahead contract: 1 of 13 FAILED$"]),
+            ("old-sticky", [r"^FAIL an error is sticky until reset: ended as state 7 \(error = 7\), a new start over it "
+                            r"refused 0", r"^run ahead contract: 1 of 13 FAILED$"])):
         CHECKS.append(check("run ahead contract CONTROL (%s, must fail)" % arg, [RA_TEST, arg], expect_fail=True,
                             fail_marks=marks))
 if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
@@ -342,6 +352,22 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                         env={"RUN_AHEAD_CANCEL_BREAK": "settle"}, expect_fail=True,
                         fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
                                     r"^run ahead cancel \(English\): 1 FAILED$"]))
+    # faults are never silent (run_ahead_fault.py; Astra, Reply 112 item 2): a run-ahead capture failing mid-utterance
+    # with a say or a setting waiting, a board event, a transmitted byte and a logged write lost -- each seen first
+    # (bh_busy -1, raising), no input delivered or taken over it, cancel() the recovery.  Its controls put the error
+    # behind held input (sticky) and the losses back to silent (drop)
+    CHECKS.append(check("run ahead faults: seen first, sticky until cancel, never silent", [PY, "run_ahead_fault.py"]))
+    FAULT_SUM = r"^run ahead faults: %d FAILED$"
+    for what, brk, marks in (
+            ("the error behind held input, delivered over", "sticky",
+             [r"^FAIL run-ahead script, a say waiting: .*the held say was DELIVERED over the error",
+              r"^FAIL run-ahead script, a send waiting: .*the held send was DELIVERED over the error", FAULT_SUM % 2]),
+            ("losses silent", "drop",
+             [r"^FAIL board event lost \(lockstep\): a lost board event passed SILENTLY",
+              r"^FAIL transmit record: a transmitted byte lost SILENTLY", r"^FAIL write log: a logged write lost SILENTLY",
+              FAULT_SUM % 3])):
+        CHECKS.append(check("run ahead faults CONTROL (%s, must fail)" % what, [PY, "run_ahead_fault.py"],
+                            env={"RUN_AHEAD_FAULT_BREAK": brk}, expect_fail=True, fail_marks=marks))
     # ... and through the real driver (run_ahead_driver.py): Tab held in Windows' Run dialog, NVDA's cancel and speak
     # every 30 and 50 ms; its control never cancels the unit
     if os.path.isdir(os.path.join(os.path.dirname(HERE), "dist", "blazie-build")):
