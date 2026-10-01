@@ -131,10 +131,12 @@ if [ ! -x "$GTK_EMU" ]; then
     echo "skip  emulator (GTK): $GTK_EMU not built (no GTK 3 headers: sudo apt install libgtk-3-dev)"
 else
     GTK_SHIP="$GTK_EMU"
+    # the loader is NEEDED too on x86-64 built against glibc 2.31 (the static libstdc++'s __tls_get_addr lives there;
+    # aarch64 uses TLS descriptors): every program's interpreter anyway, so it is allowed
     check "emulator (GTK): libraries needed (libc, libm, sound, GTK's own; libstdc++ inside)" sh -c "! readelf -d \
         $GTK_EMU | grep NEEDED | grep -v -E '\[lib(c|m|pthread|dl|asound|pulse|pulse-simple|gtk-3|gdk-3|glib-2\.0|\
 gobject-2\.0|gio-2\.0|atk-1\.0|pango-1\.0|pangocairo-1\.0|cairo|cairo-gobject|gdk_pixbuf-2\.0|harfbuzz)\.so' | \
-        grep -q . && ! readelf -d $GTK_EMU | grep NEEDED | grep -q -E 'libstdc|libgcc_s' && \
+        grep -v -F '[ld-linux' | grep -q . &&! readelf -d $GTK_EMU | grep NEEDED | grep -q -E 'libstdc|libgcc_s' && \
         echo 'only the C library, the sound library and GTK (dynamic)'"
     if ! command -v xvfb-run >/dev/null 2>&1; then
         echo "skip  emulator (GTK): no Xvfb (sudo apt install xvfb)"
