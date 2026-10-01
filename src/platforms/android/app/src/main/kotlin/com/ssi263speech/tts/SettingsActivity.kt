@@ -224,10 +224,10 @@ class SettingsActivity : Activity() {
 
         root.addView(ui.heading("Licenses and source"))
         root.addView(ui.body(
-            "This app is free software under the GNU General Public License, version 2 or later, because it " +
-            "carries z180emu. Its complete source is inside the app and at github.com/tgeczy/ssi263-speech. The " +
-            "Accent SA's firmware is Aicom's, carried with a notice, and is not covered by that license. The app " +
-            "carries no Braille Lite firmware: the copy you import is Blazie's, is not covered by that license " +
+            "This app is free software under the MIT License; its emulated processors are MAME's, under their " +
+            "BSD-3-Clause licenses. Its source is at github.com/tgeczy/ssi263-speech. The " +
+            "Accent SA's firmware is Aicom's, carried with a notice, and is not covered by those licenses. The app " +
+            "carries no Braille Lite firmware: the copy you import is Blazie's, is not covered by them " +
             "either, and never leaves this phone."))
         root.addView(Button(this).apply { text = "Licenses and source"; setOnClickListener { showLicenses() } })
     }

@@ -7,7 +7,7 @@ SSI-263 hardware:
   core (`src/csrc/accentsa`), the NVDA Accent add-on's "Accent SA" voice. Aicom's ROMs are the one firmware the APK
   carries (`assets/aicom`, with `firmware/AICOM.txt`). English. It is the default voice while no Braille Lite is
   imported.
-- **The Blazie Braille Lite 2000, imported**: the unit's own June 2003 firmware on z180emu's Z180. English and
+- **The Blazie Braille Lite 2000, imported**: the unit's own June 2003 firmware on MAME's Z180. English and
   Spanish, each once its firmware is imported.
 
 The native part is the same C as the NVDA add-ons' libraries and the Linux speech-dispatcher module (`src/csrc`),
@@ -65,8 +65,9 @@ words); in a zip beside firmware (the add-on), it is left out and said so. Refus
 the Setup page and announced to TalkBack.
 
 The unit's battery-backed state (it holds what the firmware wrote, so it cannot ship either) is made on the phone
-from the firmware (`bl_state.c`): the bns.c runs that made the shipped states, replayed -- byte-identical to them,
-checked on the phone against the list's hash for that release. English takes a few seconds, Spanish about a minute
+from the firmware (`bl_state.c`): the bns.c runs that made the shipped states, replayed on MAME's Z180, and checked
+on the phone against the list's hash for that release (MAME-made: the same bytes on the phone, the desktop and Linux;
+the desktop's shipped states, made on z180emu, differ by the recipe's timing and are refused). English takes a few seconds, Spanish about a minute
 (1150 million Z180 instructions; 71 s for both on the A024); the progress bar moves every 10 million instructions and
 TalkBack hears every fifth of the way, no closer than 5 s apart. Then the unit speaks once (`ssa_probe`) and only then
 do the files replace what was there, in device-protected storage. Until then the service reports its languages as
@@ -78,28 +79,30 @@ missing data and CheckVoiceData fails.
     cd src/platforms/android && ./gradlew assembleDebug assembleRelease
     python src/platforms/android/test/check_apk_no_firmware.py app/build/outputs/apk/release/app-release.apk
 
-`build_android.sh` needs the NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`) and z180emu (`Z180EMU`,
-or the `Z180EMU` key in `paths.local`, or `third_party/z180emu`). MAME's 8085 core is C++17 (no exceptions, no RTTI),
+`build_android.sh` needs the NDK (`ANDROID_NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`). MAME's Z180 and 8085
+cores are C++17 (no exceptions, no RTTI),
 built with the NDK's clang++; libc++ is linked statically into the one `libssi263speech.so` and kept inside it (the
 build checks that the library needs nothing beyond libc, libm, libdl and liblog). It writes the libraries to
 `app/src/main/jniLibs/<abi>/` and everything else the APK carries to `build/android/assets/` at the repository root
--- the Accent SA's ROMs (from `firmware/aicom-accent-sa`), the licences (Aicom's notice, MAME's BSD-3 for the 8085
-core) and, for z180emu's GPL, the complete source. None of that is committed. A developer build may carry
+-- the Accent SA's ROMs (from `firmware/aicom-accent-sa`), the licences (the project's MIT, Aicom's notice, MAME's
+BSD-3-Clause notices for the Z180 and 8085 cores). None of that is committed. A developer build may carry
 the firmware, by asking: `SSI263_ANDROID_BUNDLE_FIRMWARE=1` (with `SSI263_FIRMWARE`, default `firmware/blazie`, the
 Spanish unit there or in `spanish/`); never distribute one. Gradle then needs `-Pssi263BundleFirmware=1` too: without
-it, staged firmware stops the build (a leftover once rode into a plain `assembleDebug`). `check_apk_no_firmware.py` looks inside an APK (and the
-source archive in it): Aicom's three ROMs pass by sha256 and nothing else does -- a Braille Lite ROM image or a
+it, staged firmware stops the build (a leftover once rode into a plain `assembleDebug`). `check_apk_no_firmware.py` looks inside an APK (and any
+archive in it): Aicom's three ROMs pass by sha256 and nothing else does -- a Braille Lite ROM image or a
 unit's state by content, the Speak-Out's HEX by its hash and any Intel HEX by content, firmware, state or ROM files
 by name, anything else in `assets/aicom`. `--control <BL2ENG.BNS> <apk>` adds the firmware under a bland name beside
 the Aicom ROMs and must fail, as must `--control <bl2_2003_warm.state>`, `--control <SPEAKOUT.HEX>` and
 `--control-aicom-flipped` (u2 with one byte changed); `--synthetic` in place of the APK checks an APK-like zip made
-on the spot (run_tests uses it).
+on the spot (run_tests uses it). It also checks the licences: MIT (ours and Casso's), both MAME notices, Aicom's and the distribution
+notice present, and no z180emu, GPL text or Unicorn anywhere, the native libraries included (`tools/check_no_gpl.py`);
+`--control-gpl` adds z180emu's GPL text among the licences and must fail.
 
 Release signing reads `signing.properties` beside `settings.gradle.kts` (gitignored), as outspoken's and
 TGSpeechBox's builds: `STORE_FILE`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. Without it a release stays unsigned.
 
-The app is GPL-2.0-or-later as a whole, because of z180emu; the project's own code is MIT. The Setup page's
-"Licenses and source" shows both, and the source archive inside the APK.
+The app is MIT (Tomi, 0.7: every unit on MAME's cores); MAME's Z180 and 8085 cores keep their BSD-3-Clause notices,
+shipped in the APK. The Setup page's "Licenses and source" shows them all and points to the source on GitHub.
 
 ## Test
 
@@ -121,8 +124,8 @@ The app is GPL-2.0-or-later as a whole, because of z180emu; the project's own co
 `$SSI263_FIRMWARE`, else `firmware/blazie`, with `spanish/`, `tns/` and `once2000/` -- ONCE's September 2000
 `BL2ENG.BNS`, its cases skipped when absent): the listed releases written as they came, the list and its labels, an
 update program and the 1998 layout, two unknown releases refused, TNSENG.TNS refused, states and noise not firmware;
-the states made from the firmware alone must be the listed ones (the shipped ones byte for byte), speak every case of
-the Android test as they do, and report their progress every 10 million instructions, steadily. Its controls hold the
+the states made from the firmware alone must be the listed ones byte for byte (the shipped z180emu-made ones are
+refused), speak every case of the Android test within a few samples of the shipped ones, and report their progress every 10 million instructions, steadily. Its controls hold the
 wrong chord at the English warm reset, and drop the list (the unknown releases are then taken). The JVM tests
 (`app/src/test`) play the native side with a fake and check the zip layouts (top, one folder down, the add-on, an
 update program inside a zip), the refusals' words (unknown releases, other units, states alone, in a zip and beside
@@ -130,7 +133,7 @@ firmware) and the choices between releases.
 
 The Braille Lite's reference in both is the desktop library the NVDA add-on and Linux ship (`bl.dll` + `ssi263.dll`
 from `build_board.py` / `build_native.py`, or `build/linux/libssi263speech.so`), driven the way `sd_ssi263.c` maps
-SSIP. The Accent SA's is the NVDA Accent add-on's driver itself (`accent_reference.py`: the built
+SSIP: the board on MAME's Z180, as the app's -- a library carrying z180emu is refused as a reference. The Accent SA's is the NVDA Accent add-on's driver itself (`accent_reference.py`: the built
 `nvda/dist/accent-build` under the stand-in NVDA of `nvda/tools/fake_nvda_driver_test.py`, its "sa" voice on the
 desktop's C host, `accent_sa.dll`), a fresh unit per case, the request's rate and pitch mapped as the app maps them
 and the pitch said as a capital's PitchCommand; and its text (currencies, `_clean`, number words) on 22 texts. The
@@ -140,7 +143,10 @@ pitch sent as a setting, glided to without snap_pitch (`accent-glide`); one Acce
 (`accent-reuse`); the plain pitch mapping, 120 % on 100 %'s step (`accent-step`). `test_device_service.py` chooses
 each voice through SettingsActivity's `setvoice` hook (and puts the device's choice back) and checks the Accent SA's
 sentence and its capitals through the platform TTS against the NVDA driver, and the Braille Lite's against bl_voice,
-at the app's default volume.
+at the app's default volume. The Braille Lite's reference runs the device's own unit files (its firmware and the
+state it made, read with run-as): a 0.7 import makes MAME's state, an earlier one z180emu's, and the two speak a few
+samples apart (Spanish's sentence differs), so a reference from the repository's shipped (z180emu-made) state
+(`--firmware-from-repo`) fails on a phone imported on 0.7.
 
 ## Rate, pitch, volume
 
@@ -186,8 +192,8 @@ Accent's ten pitch steps are coarse, so a request other than 100 % always moves 
 | `.../CheckVoiceDataActivity.kt` | Answers the framework's voice-data check: English always (the Accent SA), Spanish once its firmware is imported |
 | `app/src/test/kotlin/.../FirmwareImportTest.kt` | The JVM tests of `FirmwareImport`, with a fake native side |
 | `.../GetSampleTextActivity.kt` | The sample sentence the system's TTS settings speak |
-| `licenses/DISTRIBUTION.txt` | The distribution notice the licences dialog shows first (GPL, the source, Aicom's ROMs, no Braille Lite firmware) |
-| `licenses/Kotlin-LICENSE.txt`, `Kotlin-NOTICE.txt` | The Kotlin runtime's licence (the project's MIT licence and z180emu's GPL are added by `build_android.sh`) |
+| `licenses/DISTRIBUTION.txt` | The distribution notice the licences dialog shows first (MIT, MAME's cores, the source, Aicom's ROMs, no Braille Lite firmware) |
+| `licenses/Kotlin-LICENSE.txt`, `Kotlin-NOTICE.txt` | The Kotlin runtime's licence (the project's and Casso's MIT licences and MAME's notices are added by `build_android.sh`) |
 | `test/test_android_native.c` | The host-side test program: the app's C on the same chip, boards, hosts and voices, each case's PCM hashed; `--texts` (the Accent SA's text) and `--level` (the volume test's measure) |
 | `test/test_android_native.py` | Builds and runs it on the desktop (and over adb), and compares with `bl_voice` driven as `sd_ssi263` drives it and with the NVDA Accent driver; the capitals; the controls |
 | `test/accent_reference.py` | The Accent SA's reference: the NVDA Accent add-on's driver under the stand-in NVDA, a fresh unit per case |

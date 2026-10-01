@@ -1,17 +1,26 @@
 #!/bin/sh
 # The Linux gate (x86_64 or aarch64), run on the Linux box itself -- separate from nvda/tools/run_tests.py, which is
-# Windows and NVDA.  Needs a build (./build_linux.sh) and the unit's firmware in a data folder: the built NVDA add-on's
-# engine folder, or any folder with BL2ENG.BNS + bl2_2003_warm.state (and BL2SPA.BNS + bl2spa_fresh.state).
+# Windows and NVDA.  Needs a build (./build_linux.sh; LEGACY=1 adds the z180emu reference checks and the audit's
+# real-GPL control) and the unit's firmware in a data folder: the built NVDA add-on's engine folder, or any folder
+# with BL2ENG.BNS + bl2_2003_warm.state (and BL2SPA.BNS + bl2spa_fresh.state).
 #
 #   tools/linux_tests.sh [data folder]      (default: nvda/dist/blazie-build/synthDrivers/_ssi263_blazie)
 #
-# The goldens compare with those made on Windows, byte for byte (writes, serial and the audio hash); the module
-# harness checks speech-dispatcher's protocol and every message's audio, and its control must fail.
+# Everything here runs the shipping library: the Braille Lite on MAME's Z180, through the NATIVE host (bl_host.c, with
+# its default cancel protection, cancel_settle 3: Astra, Replies 124-129).  The goldens (nvda/tools/golden/
+# blazie_{en,es}.txt: the native host's, made on Windows with the MAME bl.dll) compare byte for byte: writes and their
+# times, serial and the audio hash.  The pipe host (bl_live) has its own cancel path and baseline, not checked here.
+# The z180emu goldens (blazie_*_legacy.txt, made before the cancel protection) are REFERENCE checks only, labelled so:
+# English's spoken values still match them write for write; Spanish's do not, by the two writes the protection adds
+# after the 3.9 s cancel (R1=40, R0=C0), so it is not compared; the times legitimately differ.  The module
+# harness checks speech-dispatcher's protocol and every message's audio, and its control must fail; the no-GPL audit
+# (tools/check_no_gpl.py) searches the library, the module, the package and the wheel, and its controls must fail.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$(cd "${1:-$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie}" && pwd)"
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 LIB="$ROOT/src/ssi263/_bin/$PLAT/libssi263speech.so"
-export SSI263_LIB="$LIB" PYTHONDONTWRITEBYTECODE=1
+LEGACY="$ROOT/build/linux/legacy"
+export SSI263_LIB="$LIB" PYTHONDONTWRITEBYTECODE=1 PYTHON_COLORS=0
 cd "$ROOT" || exit 1
 fail=0
 check() {                          # name, then the command
@@ -27,18 +36,32 @@ if [ "$DATA" != "$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie" ]; th
     mkdir -p "$ROOT/nvda/dist/blazie-build/synthDrivers"
     ln -sfn "$DATA" "$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie"
 fi
-check "two units in one process" ./build/linux/test_bl_board "$DATA/BL2ENG.BNS" "$DATA/bl2_2003_warm.state" \
-    "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
+check "two units in one process (MAME Z180)" ./build/linux/test_bl_board "$DATA/BL2ENG.BNS" \
+    "$DATA/bl2_2003_warm.state" "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
 check "CPU contract tests (MAME Z180 core)" ./build/linux/test_z180_contract
 check "white-box tests (MAME Z180 core)" ./build/linux/test_z180_whitebox
 check "CPU contract tests (MAME 8085 core)" ./build/linux/test_i8085_contract
 check "CPU contract tests (MAME 8086 core)" ./build/linux/test_i86_contract
-check "legacy path exceptions (z180emu)" ./build/linux/test_z180_legacy
-check "two units in one process (MAME Z180 core)" ./build/linux/test_bl_board_mame "$DATA/BL2ENG.BNS" \
-    "$DATA/bl2_2003_warm.state" "$DATA/BL2SPA.BNS" "$DATA/bl2spa_fresh.state"
-check "golden (en)" python3 nvda/tools/bns_equiv.py --native "$LIB" --against=nvda/tools/golden/blazie_en.txt
-[ -f "$DATA/BL2SPA.BNS" ] && check "golden (es)" python3 nvda/tools/bns_equiv.py --native --es "$LIB" \
+check "golden, native host (en)" python3 nvda/tools/bns_equiv.py --native "$LIB" \
+    --against=nvda/tools/golden/blazie_en.txt
+[ -f "$DATA/BL2SPA.BNS" ] && check "golden, native host (es)" python3 nvda/tools/bns_equiv.py --native --es "$LIB" \
     --against=nvda/tools/golden/blazie_es.txt
+# the full comparison sees a different core: the shipping library against z180emu's golden must fail
+control "golden CONTROL (the z180emu golden, must fail)" "^DIFFERS from blazie_en_legacy\.txt at line [0-9]+" \
+    -- python3 nvda/tools/bns_equiv.py --native "$LIB" --against=nvda/tools/golden/blazie_en_legacy.txt
+# REFERENCE (z180emu, not shipped): what English speaks, write for write, is z180emu's; only the times moved.  (Not
+# Spanish: the cancel protection adds two writes after its 3.9 s cancel, R1=40 and R0=C0 -- Astra, Reply 126.)
+check "reference: spoken values = z180emu's (en)" python3 nvda/tools/bns_equiv.py --native --values-only "$LIB" \
+    --against=nvda/tools/golden/blazie_en_legacy.txt
+control "reference CONTROL (one value flipped, must fail)" \
+    "^write values DIFFER from blazie_en_legacy\.txt at write [0-9]+ of" \
+    -- env BNS_EQUIV_FLIP=1 python3 nvda/tools/bns_equiv.py --native --values-only "$LIB" \
+    --against=nvda/tools/golden/blazie_en_legacy.txt
+if [ -x "$LEGACY/test_z180_legacy" ]; then
+    check "reference: z180emu legacy path exceptions (development build)" "$LEGACY/test_z180_legacy"
+else
+    echo "skip  reference: the z180emu development build (LEGACY=1 ./build_linux.sh)"
+fi
 check "chip defaults" python3 src/csrc/gen_chip_defaults.py --check
 check "speech-dispatcher module" python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^stop +module .*identical" \
@@ -49,6 +72,40 @@ control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^s
 check "Python wheel" python3 python/test_wheel.py --build "$DATA"
 control "Python wheel CONTROL (rate 70, must fail)" "^ok +the chip alone:" "^FAIL +the Braille Lite:" \
     "^wheel: 1 FAILED$" -- env WHEEL_TEST_BREAK=1 python3 python/test_wheel.py --build "$DATA"
+# the no-GPL audit: what ships -- the library, the module, the package (built here, firmware included) and a wheel
+rm -rf build/audit && mkdir -p build/audit
+check "package" sh tools/package_linux.sh "$DATA"
+check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
+    --out build/audit
+check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \
+    build/linux/sd_ssi263 build/ssi263-speech-*-linux-"$(uname -m)".tar.gz build/audit/ssi263speech-*.whl
+# the licences that must ship: MIT (ours, Casso's) and MAME's BSD-3-Clause for the Z180, in the package and the wheel
+check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
+    grep -c -E '/(LICENSE|licenses/Casso-MIT\.txt|licenses/MAME-Z180-core-BSD-3-Clause\.txt)\$' | grep -qx 3 && \
+    python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); sys.exit(sum(x.endswith(( \
+    \".dist-info/LICENSE\", \".dist-info/Casso-MIT.txt\", \".dist-info/MAME-Z180-core-BSD-3-Clause.txt\")) \
+    for x in n) != 3)' build/audit/ssi263speech-*.whl && echo 'MIT, Casso MIT, MAME Z180 BSD-3-Clause: in both'"
+check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
+    --clean-sample
+check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263"
+control "no-GPL audit CONTROL (genuine legacy payloads, must fail)" \
+    "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: z180emu engine" \
+    "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: Unicorn engine" \
+    "^FAIL control\.apk: control\.apk!lib/x86/unicorn\.dll: a legacy payload by name" \
+    "^FAIL control\.apk: control\.apk!hosts/ucmini\.py: Unicorn import" \
+    "^FAIL control\.apk: control\.apk!hosts/i8085\.py: a legacy payload by name" \
+    "^FAIL control\.apk: control\.apk!assets/licenses/third-party\.txt: GPL notice" "^no-GPL audit: 1 of 1 FAILED$" \
+    -- python3 tools/check_no_gpl.py --control
+if [ -f "$LEGACY/libssi263speech_legacy.so" ]; then
+    # the real thing, stripped as the APK's library is: what stripping keeps must still give z180emu away
+    strip --strip-unneeded -o build/audit/libssi263speech_legacy.so "$LEGACY/libssi263speech_legacy.so"
+    control "no-GPL audit CONTROL (the stripped z180emu library, must fail)" \
+        "^FAIL libssi263speech_legacy\.so: libssi263speech_legacy\.so: z180emu engine" \
+        "^no-GPL audit: 1 of 1 FAILED$" \
+        -- python3 tools/check_no_gpl.py build/audit/libssi263speech_legacy.so
+else
+    echo "skip  no-GPL audit CONTROL on the real z180emu library (LEGACY=1 ./build_linux.sh)"
+fi
 # and the judgement itself: wrong failures, crashes and silent exits never pass as controls
 check "control guard" sh tools/linux_control_guard.sh
 [ $fail -eq 0 ] && echo "all Linux checks passed ($PLAT)" || echo "Linux checks FAILED ($PLAT)"

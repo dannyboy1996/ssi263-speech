@@ -1,77 +1,79 @@
 #!/bin/sh
-# Build the one native library for Linux: the SSI-263 chip, the Braille Lite board (z180emu's Z180 core) and the
-# Braille Lite host, as libssi263speech.so -- plus the two-unit isolation test.
+# Build the one native library for Linux: the SSI-263 chip, the Braille Lite board on MAME's Z180 core and the
+# Braille Lite host, as libssi263speech.so -- plus the speech-dispatcher module and the test programs.
 #
-#   ./build_linux.sh                 # build/linux/libssi263speech.so + test_bl_board
-#   Z180EMU=/path ./build_linux.sh   # z180emu's tree (default: third_party/z180emu)
-#   CC=clang ./build_linux.sh
+#   ./build_linux.sh                 # build/linux/libssi263speech.so, sd_ssi263, the tests
+#   LEGACY=1 ./build_linux.sh        # also the DEVELOPMENT references on z180emu (GPL), in build/linux/legacy/:
+#                                    # never copied into src/ssi263/_bin, the package or the wheel
+#   CC=clang CXX=clang++ ./build_linux.sh
 #
 # On Windows the same sources make ssi263.dll and bl.dll (src/csrc/build_native.py, src/csrc/blazie/build_board.py);
 # the flags here are theirs: -ffp-contract=off keeps the Python reference's arithmetic (no fused multiply-adds),
 # so the golden vectors (nvda/tools/golden) hold on every platform.  The .so is also copied to
 # src/ssi263/_bin/<platform>-<machine>/, where ssi263/dsp.py loads it.
 #
-# No firmware is built, fetched or shipped by this script.
+# Licences: the project's code is MIT; MAME's extracted CPU cores keep their BSD-3-Clause notices
+# (src/csrc/cpu/mame_*/LICENSE-BSD-3-Clause.txt).  No z180emu (GPL) and no Unicorn in anything that ships
+# (tools/check_no_gpl.py checks it).  No firmware is built, fetched or shipped by this script.
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-Z180="${Z180EMU:-$ROOT/third_party/z180emu}"
 OUT="$ROOT/build/linux"
 CC="${CC:-cc}"
+CXX="${CXX:-c++}"
 SRC="$ROOT/src/csrc"
 
-[ -f "$Z180/z180/z180.c" ] || { echo "z180emu not found at $Z180 (set Z180EMU)"; exit 1; }
+# a fresh object folder for the shipping library: it is linked from an explicit list, and an object left by an
+# older build (z180emu's bl_unity.o) must never come back in
+rm -rf "$OUT/obj" "$OUT/obj_mame"
 mkdir -p "$OUT/obj"
 
 # the chip: plain C99, as build_native.py
 CHIP="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter"
-# the board and host: gnu89 and -fcommon for z180emu's MAME-era C, as build_board.py.  initial-exec TLS: the z180emu
-# adapter's current-instance pointer (src/csrc/cpu/z180_legacy.c) is read on every emulated instruction and memory
-# access, and a shared library's default model makes each read a __tls_get_addr call (perf: ~5%).  The prefix map
-# keeps the checkout's path out of z180.c's __FILE__ string.
-BOARD="-O3 -ftls-model=initial-exec -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
+# the board and host: gnu89 with the board on MAME's Z180 (-DBL_Z180_MAME), as build_board.py's bl.dll
+BOARD="-O3 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -DBL_Z180_MAME -w -I$SRC/blazie -I$SRC/cpu -I$SRC"
+# MAME's cores: C++17 without exceptions or RTTI.  -fPIC and hidden for the shared library (its classes stay inside)
+MAME="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC"
+# libstdc++ and libgcc inside the .so, their symbols kept there: the library needs only libc and libm on any distro
+SHARED_CXX="-static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL"
 
 $CC $CHIP -c -o "$OUT/obj/ssi263.o" "$SRC/ssi263.c"
 $CC $CHIP -c -o "$OUT/obj/ssi263dsp.o" "$SRC/ssi263dsp.c"
-$CC $BOARD -c -o "$OUT/obj/bl_unity.o" "$SRC/blazie/bl_unity.c"
-$CC $BOARD -c -o "$OUT/obj/bl_host.o" "$SRC/blazie/bl_host.c"
-$CC $BOARD -c -o "$OUT/obj/bl_voice.o" "$SRC/blazie/bl_voice.c"
-$CC $BOARD -c -o "$OUT/obj/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
-$CC $BOARD -c -o "$OUT/obj/bl_state.o" "$SRC/blazie/bl_state.c"
+$CXX $MAME -c -o "$OUT/obj/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
+$CXX $MAME -c -o "$OUT/obj/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
+for f in bl_board flash29 bl_serial bl_idle bl_host bl_voice bl_firmware bl_state; do
+    $CC $BOARD -c -o "$OUT/obj/$f.o" "$SRC/blazie/$f.c"
+done
+CHIP_OBJS="$OUT/obj/ssi263.o $OUT/obj/ssi263dsp.o"
+# the board alone (test_bl_board), and the board with its host and voice (the library)
+BOARD_OBJS="$OUT/obj/bl_board.o $OUT/obj/flash29.o $OUT/obj/bl_serial.o $OUT/obj/bl_idle.o $OUT/obj/z180_mame.o $OUT/obj/z180_asci.o"
+LIB_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj/bl_voice.o $OUT/obj/bl_firmware.o $OUT/obj/bl_state.o"
 
-# only the API is exported (SSI263_API / BL_API mark it); the Z180 core's globals stay inside
-$CC -shared -o "$OUT/libssi263speech.so" "$OUT"/obj/*.o -lm
-$CC $BOARD -o "$OUT/test_bl_board" "$SRC/blazie/test_bl_board.c" "$OUT/obj/bl_unity.o" -lm
-# the legacy path's exceptions (CONTRACT.md 3) on z180emu
-$CC $BOARD -I$SRC/cpu -o "$OUT/test_z180_legacy" "$SRC/cpu/test_z180_legacy.c" "$SRC/cpu/z180_legacy.c" -lm
-# the speech-dispatcher module: one static-linked program (no .so to install beside it)
-$CC $BOARD -o "$OUT/sd_ssi263" "$ROOT/src/platforms/speechd/sd_ssi263.c" "$OUT"/obj/*.o -lm
+# only the API is exported (SSI263_API / BL_API mark it); the Z180 core and the C++ runtime stay inside
+$CXX -shared $SHARED_CXX -o "$OUT/libssi263speech.so" $LIB_OBJS -lm
+# two units in one process, on the shipping board
+$CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
+$CXX -o "$OUT/test_bl_board" "$OUT/test_bl_board.o" $BOARD_OBJS -lm
+# the speech-dispatcher module: one program with the library inside (no .so to install beside it)
+$CC $BOARD -c -o "$OUT/sd_ssi263.o" "$ROOT/src/platforms/speechd/sd_ssi263.c"
+$CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" $LIB_OBJS -lm
+rm -f "$OUT/test_bl_board_mame"                     # the old name of test_bl_board on MAME
 
-# MAME's Z180 core (src/csrc/cpu/z180_mame.cpp; not yet accepted, the .so above keeps z180emu): the two-unit test
-# on it, so the C++ is built and checked on every platform.  Its own object folder: the .so's glob stays unchanged.
-CXX="${CXX:-c++}"
-MAME="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -Wall -I$SRC/cpu -I$SRC"
-mkdir -p "$OUT/obj_mame"
-$CXX $MAME -c -o "$OUT/obj_mame/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
-$CXX $MAME -c -o "$OUT/obj_mame/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
-$CC -O3 -std=gnu89 -ffp-contract=off -DBL_Z180_MAME -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/bl_board.o" "$SRC/blazie/bl_board.c"
-$CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -c -o "$OUT/obj_mame/flash29.o" "$SRC/blazie/flash29.c"
-$CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -c -o "$OUT/obj_mame/bl_serial.o" "$SRC/blazie/bl_serial.c"
-$CC -O3 -std=gnu89 -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
-$CXX -o "$OUT/test_bl_board_mame" "$OUT"/obj_mame/*.o -lm
+# MAME's Z180 core's own tests (CONTRACT.md's clauses, and white-box)
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/test_z180_contract.o" "$SRC/cpu/test_z180_contract.c"
-$CXX -o "$OUT/test_z180_contract" "$OUT/test_z180_contract.o" "$OUT/obj_mame/z180_mame.o" "$OUT/obj_mame/z180_asci.o"
-$CXX $MAME -o "$OUT/test_z180_whitebox" "$SRC/cpu/test_z180_whitebox.cpp" "$OUT/obj_mame/z180_asci.o"
+$CXX -o "$OUT/test_z180_contract" "$OUT/test_z180_contract.o" "$OUT/obj/z180_mame.o" "$OUT/obj/z180_asci.o"
+$CXX $MAME -o "$OUT/test_z180_whitebox" "$SRC/cpu/test_z180_whitebox.cpp" "$OUT/obj/z180_asci.o"
 # MAME's 8085 core (src/csrc/cpu/i8085_mame.cpp, the Accent SA's; its board below): the CPU contract's tests.  Its own
-# object folder, outside obj_mame's glob.
+# object folder.
+MAMET="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -Wall -I$SRC/cpu -I$SRC"
 mkdir -p "$OUT/obj_i8085"
-$CXX $MAME -Wno-sign-compare -c -o "$OUT/obj_i8085/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
+$CXX $MAMET -Wno-sign-compare -c -o "$OUT/obj_i8085/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i8085/test_i8085_contract.o" "$SRC/cpu/test_i8085_contract.c"
 $CXX -o "$OUT/test_i8085_contract" "$OUT/obj_i8085/test_i8085_contract.o" "$OUT/obj_i8085/i8085_mame.o"
-# MAME's V40 core (src/csrc/cpu/v40_mame.cpp, the Speak-Out's; opt-in, not yet accepted): the CPU contract's tests,
-# the Speak-Out board's tests (src/csrc/speakout) and the board as a shared library for src/hosts/speakout_v40.py.
-mkdir -p "$OUT/obj_v40"
-$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_v40/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
+# MAME's V40 core (src/csrc/cpu/v40_mame.cpp, the Speak-Out's): the CPU contract's tests, the Speak-Out board's tests
+# (src/csrc/speakout) and the board as a shared library for src/hosts/speakout_v40.py.
+rm -rf "$OUT/obj_v40"; mkdir -p "$OUT/obj_v40"
+$CXX $MAMET -fPIC -Wno-sign-compare -c -o "$OUT/obj_v40/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
 for f in so_board so_icu so_scu so_hex; do
     $CC -O2 -std=gnu89 -ffp-contract=off -fPIC -Wall -I$SRC/cpu -I$SRC/speakout -c -o "$OUT/obj_v40/$f.o" "$SRC/speakout/$f.c"
 done
@@ -82,30 +84,51 @@ $CXX -o "$OUT/test_so_board" "$OUT/test_so_board.o" "$OUT"/obj_v40/*.o
 $CXX -shared -o "$OUT/libspeakout_v40.so" "$OUT"/obj_v40/*.o
 
 # MAME's 8086 core (src/csrc/cpu/i86_mame.cpp, the Accent-mini's PC): the CPU contract's tests, and libpc86.so
-# (src/csrc/pc86) for the Accent-mini host's opt-in CPU (src/hosts/pc86.py, SSI263_ACCENT_CORE=mame).  Own folder.
-mkdir -p "$OUT/obj_i86"
-$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_i86/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
+# (src/csrc/pc86) for the Accent-mini host (src/hosts/pc86.py).  Own folder.
+rm -rf "$OUT/obj_i86"; mkdir -p "$OUT/obj_i86"
+$CXX $MAMET -fPIC -Wno-sign-compare -c -o "$OUT/obj_i86/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/obj_i86/test_i86_contract.o" "$SRC/cpu/test_i86_contract.c"
 $CXX -o "$OUT/test_i86_contract" "$OUT/obj_i86/test_i86_contract.o" "$OUT/obj_i86/i86_mame.o"
 $CC -O3 -std=gnu89 -fPIC -I$SRC/cpu -c -o "$OUT/obj_i86/pc86.o" "$SRC/pc86/pc86.c"
 $CXX -shared -o "$OUT/libpc86.so" "$OUT/obj_i86/pc86.o" "$OUT/obj_i86/i86_mame.o"
 
-# The Accent SA (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host in C; opt-in, the add-on keeps
-# the Python 8085): the board's tests, as_render (the C API alone, the chip built in) and libaccent_sa.so for
-# src/hosts/accent_sa_c.py.  The .so leaves the chip's functions undefined: they come from the libssi263speech.so
-# that ssi263/native.py loaded, made global by accent_sa_c.py first, so the host drives the caller's chip.  Own folder.
-mkdir -p "$OUT/obj_accentsa"
-$CXX $MAME -fPIC -Wno-sign-compare -c -o "$OUT/obj_accentsa/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
+# The Accent SA (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host in C): the board's tests,
+# as_render (the C API alone, the chip built in) and libaccent_sa.so for src/hosts/accent_sa_c.py.  The .so leaves
+# the chip's functions undefined: they come from the libssi263speech.so that ssi263/native.py loaded, made global by
+# accent_sa_c.py first, so the host drives the caller's chip.  Own folder.
+rm -rf "$OUT/obj_accentsa"; mkdir -p "$OUT/obj_accentsa"
+$CXX $MAMET -fPIC -Wno-sign-compare -c -o "$OUT/obj_accentsa/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
 for f in as_board as_usart as_host; do
     $CC -O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/accentsa -I$SRC -c -o "$OUT/obj_accentsa/$f.o" "$SRC/accentsa/$f.c"
 done
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC/accentsa -c -o "$OUT/test_as_board.o" "$SRC/accentsa/test_as_board.c"
 $CXX -o "$OUT/test_as_board" "$OUT/test_as_board.o" "$OUT/obj_accentsa/as_board.o" "$OUT/obj_accentsa/as_usart.o" "$OUT/obj_accentsa/i8085_mame.o"
 $CC -O2 -std=gnu89 -I$SRC/accentsa -I$SRC -c -o "$OUT/as_render.o" "$SRC/accentsa/as_render.c"
-$CXX -o "$OUT/as_render" "$OUT/as_render.o" "$OUT"/obj_accentsa/*.o "$OUT/obj/ssi263.o" "$OUT/obj/ssi263dsp.o" -lm
+$CXX -o "$OUT/as_render" "$OUT/as_render.o" "$OUT"/obj_accentsa/*.o $CHIP_OBJS -lm
 $CXX -shared -o "$OUT/libaccent_sa.so" "$OUT"/obj_accentsa/*.o -lm
+
+# DEVELOPMENT ONLY (LEGACY=1): the board on z180emu's Z180 (GPL-2.0-or-later, third_party/z180emu), as references
+# for comparing the cores and as tools/check_no_gpl.py's must-fail control.  Its own folder, build/linux/legacy;
+# nothing below is copied to src/ssi263/_bin, packaged (tools/package_linux.sh) or put in a wheel.
+rm -rf "$OUT/legacy" "$OUT/test_z180_legacy"
+if [ "${LEGACY:-0}" = 1 ]; then
+    Z180="${Z180EMU:-$ROOT/third_party/z180emu}"
+    [ -f "$Z180/z180/z180.c" ] || { echo "LEGACY=1: z180emu not found at $Z180 (set Z180EMU)"; exit 1; }
+    L="$OUT/legacy"
+    mkdir -p "$L/obj"
+    # gnu89 and -fcommon for z180emu's MAME-era C; initial-exec TLS for the adapter's instance pointer
+    # (src/csrc/cpu/z180_legacy.c); the prefix map keeps the checkout's path out of z180.c's __FILE__
+    LB="-O3 -ftls-model=initial-exec -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
+    $CC $LB -c -o "$L/obj/bl_unity.o" "$SRC/blazie/bl_unity.c"
+    for f in bl_host bl_voice bl_firmware bl_state; do $CC $LB -c -o "$L/obj/$f.o" "$SRC/blazie/$f.c"; done
+    $CC -shared -o "$L/libssi263speech_legacy.so" $CHIP_OBJS "$L"/obj/*.o -lm
+    $CC $LB -o "$L/test_bl_board_legacy" "$SRC/blazie/test_bl_board.c" "$L/obj/bl_unity.o" -lm
+    # the legacy path's exceptions (CONTRACT.md 3) on z180emu
+    $CC $LB -I$SRC/cpu -o "$L/test_z180_legacy" "$SRC/cpu/test_z180_legacy.c" "$SRC/cpu/z180_legacy.c" -lm
+    echo "built the z180emu development references in $L (GPL; never shipped)"
+fi
 
 PLAT="$(python3 -c 'import sys, platform; print("%s-%s" % (sys.platform, platform.machine()))')"
 mkdir -p "$ROOT/src/ssi263/_bin/$PLAT"
 cp "$OUT/libssi263speech.so" "$ROOT/src/ssi263/_bin/$PLAT/"
-echo "built $OUT/libssi263speech.so ($PLAT)"
+echo "built $OUT/libssi263speech.so ($PLAT, MAME Z180)"

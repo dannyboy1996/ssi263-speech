@@ -135,6 +135,18 @@ def accent(a):
     return bad
 
 
+def device_unit(tmp, spanish):
+    """The unit's files from the device's storage (a debug build: run-as), into `tmp`."""
+    names = T.FILES["en"] + (T.FILES["es"] if spanish else [])
+    for name in names:
+        r = adb("exec-out", "run-as", PKG, "cat", "/data/user_de/0/%s/files/unit/%s" % (PKG, name))
+        if r.returncode or not r.stdout:
+            sys.exit("could not read %s from the device: %s" % (name, (r.stderr or b"").decode(errors="replace")))
+        with open(os.path.join(tmp, name), "wb") as f:
+            f.write(r.stdout)
+    return tmp
+
+
 def braille_lite(a):
     arch = "x64" if T.struct.calcsize("P") == 8 else "x86"
     lib = a.lib or (os.path.join(T.REPO, "nvda", "dist", "blazie-lib", arch, "bl.dll") if T.WINDOWS
@@ -153,8 +165,18 @@ def braille_lite(a):
     tmp = tempfile.mkdtemp(prefix="ssi263-device-test-")
     bad = 0
     try:
-        data = T.data_folder(a.firmware, tmp)
+        # The device's own unit files (its imported firmware and the state it made from it), so the desktop reference
+        # runs exactly what the phone runs: a state made by a 0.7 import is MAME's (the list's hash), one from an
+        # earlier import z180emu's -- both run, and they differ by a few samples, so the inputs must be the phone's.
+        data = device_unit(tmp, spanish) if not a.firmware_from_repo else T.data_folder(a.firmware, tmp)
         lib = T.load_reference(lib, chip)
+        lib.blv_state_check.argtypes = [T.ctypes.c_char_p, T.ctypes.c_char_p]
+        for bns, state in T.FILES["en"], T.FILES["es"]:
+            if os.path.isfile(os.path.join(data, bns)):
+                listed = lib.blv_state_check(os.path.join(data, bns).encode(), os.path.join(data, state).encode())
+                print("info  %s %s: %s" % ("the repository's" if a.firmware_from_repo else "the device's", state,
+                                           "the list's (made on MAME's Z180, 0.7)" if listed else
+                                           "not the list's (made on z180emu: shipped, or imported before 0.7)"))
         ref = T.Ref(lib, data, False)
         want_pcm = ref.say(TEXT["braillelite"], T.ssip_from_percent(int(round(a.rate * 100))), 0, None,
                            default_volume())
@@ -175,6 +197,8 @@ def main():
     ap.add_argument("--aloud", action="store_true")
     ap.add_argument("--voice", choices=("accent", "braillelite", "both"), default="both")
     ap.add_argument("--firmware", default=os.environ.get("SSI263_FIRMWARE") or os.path.join(T.REPO, "firmware", "blazie"))
+    ap.add_argument("--firmware-from-repo", action="store_true",
+                    help="the Braille Lite reference from --firmware's shipped state, not the device's own unit files")
     ap.add_argument("--lib", default=None)
     ap.add_argument("--chip", default=None)
     a = ap.parse_args()

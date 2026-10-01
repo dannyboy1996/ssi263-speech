@@ -455,6 +455,28 @@ if os.path.isfile(ANDROID_TEST):
                         [PY, APK_CHECK, "--control-aicom-flipped", "--synthetic"], expect_fail=True,
                         fail_marks=[r"assets/aicom/u2\.BIN: in assets/aicom/ but not one of the Aicom ROMs",
                                     r"Aicom ROMs allowed: 2 \(u3\.BIN, u4\.BIN\)$"]))
+    # the licences (all-MAME 0.7): MIT (ours, Casso's), MAME's BSD-3-Clause notices, Aicom's; no z180emu or Unicorn
+    # engine and no GPL notice (tools/check_no_gpl.py: real evidence only -- comments and MAME's compatibility names
+    # are not, Astra's Reply 127)
+    CHECKS.append(check("Android APK check: MIT and MAME's BSD notices, no GPL", [PY, APK_CHECK, "--synthetic"],
+                        ok=lambda out: bool(re.search(r"^synthetic\.apk: licences MIT \(ours, Casso's\), MAME's "
+                                                      r"BSD-3-Clause \(Z180, 8085\), Aicom's; no GPL or Unicorn$",
+                                                      out, re.M))))
+    CHECKS.append(check("Android APK check CONTROL (z180emu's GPL among the licences, must fail)",
+                        [PY, APK_CHECK, "--control-gpl", "--synthetic"], expect_fail=True,
+                        fail_marks=[r"^synthetic\.apk: \d+ entries, no firmware; Aicom ROMs allowed: 3 ",
+                                    r"^synthetic\.apk: licences WRONG: .*z180emu-GPL-2\.0\.txt: GPL notice"]))
+    NO_GPL = os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "check_no_gpl.py")
+    CHECKS.append(check("no-GPL audit: comments and MAME compatibility names are not evidence",
+                        [PY, NO_GPL, "--clean-sample"]))
+    CHECKS.append(check("no-GPL audit CONTROL (genuine legacy payloads, must fail)", [PY, NO_GPL, "--control"],
+                        expect_fail=True,
+                        fail_marks=[r"^FAIL control\.apk: .*libssi263speech\.so: z180emu engine",
+                                    r"^FAIL control\.apk: .*libssi263speech\.so: Unicorn engine",
+                                    r"^FAIL control\.apk: .*unicorn\.dll: a legacy payload by name",
+                                    r"^FAIL control\.apk: .*ucmini\.py: Unicorn import",
+                                    r"^FAIL control\.apk: .*i8085\.py: a legacy payload by name",
+                                    r"^no-GPL audit: 1 of 1 FAILED$"]))
     ROOT_FW = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware")
     for fw, what, mark in ((os.path.join(ROOT_FW, "blazie", "BL2ENG.BNS"), "a Blazie image beside Aicom's ROMs",
                             r"unit\.dat: a Braille Lite ROM image; Aicom ROMs allowed: 3 "),
@@ -465,15 +487,15 @@ if os.path.isfile(ANDROID_TEST):
                                 [PY, APK_CHECK, "--control", fw, "--synthetic"], expect_fail=True,
                                 fail_marks=[r"^synthetic\.apk: \d+ entries, FIRMWARE: ", mark]))
 # ... its firmware import (src/csrc/blazie/bl_firmware.c, bl_state.c): files found and refused by content, only the
-# releases on the list taken, and the states made from the firmware alone = the listed ones, byte for byte and in
-# speech; one control holds the wrong chord at the English warm reset and must differ in the state and in every
-# English case, the other drops the list and must take the unknown releases
+# releases on the list taken, and the states made from the firmware alone = the listed ones (MAME-made, 0.7), byte
+# for byte, the z180emu-made shipped states refused; one control holds the wrong chord at the English warm reset and
+# its state must not be the list's, the other drops the list and must take the unknown releases
 IMPORT_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_import_native.py")
 if os.path.isfile(IMPORT_TEST):
     CHECKS.append(check("Android import: known firmware only, states made on the device", [PY, IMPORT_TEST]))
     CHECKS.append(check("Android import CONTROL (wrong warm-reset chord, must fail)", [PY, IMPORT_TEST],
                         env={"SSI263_IMPORT_TEST_BREAK": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAIL generated English state = the shipped", r"^import: 7 FAILED$"]))
+                        fail_marks=[r"^FAIL generated English state = the list's", r"^import: 1 FAILED$"]))
     CHECKS.append(check("Android import CONTROL (the list dropped, must fail)", [PY, IMPORT_TEST],
                         env={"SSI263_IMPORT_TEST_BREAK": "hash"}, expect_fail=True,
                         fail_marks=[r"^FAIL a release not on the list", r"^import: 2 FAILED$"]))

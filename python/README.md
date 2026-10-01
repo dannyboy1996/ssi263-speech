@@ -25,5 +25,6 @@ Or from the command line:
 `run_until_request`); `BrailleLite` takes NVDA's scales for rate, pitch, volume and tone (`set`), and `speak` or
 `stream`s an utterance as 16-bit mono PCM.
 
-Wheels: Windows (64- and 32-bit) and Linux (x86_64, aarch64), attached to the GitHub releases. Licence: the chip is
-MIT; the Braille Lite's board carries z180emu, a GPL-2.0-or-later Z180 core, so the wheel as a whole is GPL.
+Wheels: Windows (64- and 32-bit) and Linux (x86_64, aarch64), attached to the GitHub releases. Licence: MIT
+(with Casso's MIT notice, which the chip model draws on), except MAME's Z180 core inside the Braille Lite's board,
+which keeps its BSD-3-Clause licence; all three notices are in the wheel.

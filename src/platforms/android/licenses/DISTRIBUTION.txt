@@ -2,19 +2,18 @@ SSI-263 Speech for Android: distribution and licenses
 
 Copyright (c) 2026 Tamas Geczy
 
-This app is distributed under the GNU General Public License, version 2 or
-(at your option) any later version, because its native library carries
-z180emu -- Michal Tomek's Z180 system emulator, built on Juergen
-Buchmueller's Z180 core from MAME -- which is GPL-2.0-or-later. The
-project's own code -- the SSI-263 chip model, the Braille Lite and Accent SA
-boards, hosts and voices, and this app -- is MIT, and stays MIT where it is
-used on its own; combined with z180emu in this app, the whole is under the
-GPL. The Accent SA runs on MAME's Intel 8085 core (BSD-3-Clause: Juergen
-Buchmueller, Roberto Fresca, Grull Osgo).
+This app is free software under the MIT License: the SSI-263 chip model,
+the Braille Lite and Accent SA boards, hosts and voices, and the app itself.
+The chip model draws on Casso's SSI-263 model (MIT License: Robert Elmer),
+whose notice is under Full licenses.
 
-The complete corresponding source of the native library, and how to build
-it, is inside this app (source/ssi263-speech-source.tgz and
-source/BUILD.txt in the APK), and at:
+Its emulated processors are MAME's, and keep their own BSD-3-Clause
+licenses and copyright notices:
+- the Braille Lite's Zilog Z180: Juergen Buchmueller;
+- the Accent SA's Intel 8085: Juergen Buchmueller, Roberto Fresca,
+  Grull Osgo.
+
+The source, and how to build this app, are at:
 https://github.com/tgeczy/ssi263-speech
 
 The app also carries the Kotlin runtime (Apache License 2.0).
@@ -32,5 +31,3 @@ not covered by the licenses above.
 
 Use Full licenses to read the included terms. Third-party components retain
 their own licenses.
-
-z180emu: https://github.com/mtdev79/z180emu

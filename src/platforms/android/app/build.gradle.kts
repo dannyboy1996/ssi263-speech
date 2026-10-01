@@ -6,7 +6,7 @@ plugins {
 }
 
 // Everything the APK carries besides code is staged by build_android.sh at the repository root into
-// build/android/assets: the Accent SA's ROMs (Aicom's, the built-in voice), the licences and z180emu's GPL source.
+// build/android/assets: the Accent SA's ROMs (Aicom's, the built-in voice), and the licences (MIT, MAME's BSD notices).
 // No Braille Lite firmware: the app's users import their own (FirmwareImport.kt); only a developer build asked for
 // with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it.  The native library, from the same sources as the Linux and
 // Windows builds, is dropped under jniLibs.  Gradle only checks both are there.
@@ -19,11 +19,15 @@ val verifyNativeBuild = tasks.register("verifyNativeBuild") {
             val library = file("src/main/jniLibs/$abi/libssi263speech.so")
             check(library.isFile) { "Build the $abi library with `sh build_android.sh` first" }
         }
-        for (name in listOf("licenses/DISTRIBUTION.txt", "licenses/z180emu-GPL-2.0.txt",
-                            "licenses/Aicom-Accent-SA-notice.txt", "licenses/MAME-8085-core-BSD-3-Clause.txt",
-                            "aicom/u2.BIN", "aicom/u3.BIN", "aicom/u4.BIN",
-                            "source/ssi263-speech-source.tgz")) {
+        for (name in listOf("licenses/DISTRIBUTION.txt", "licenses/ssi263-speech-MIT.txt",
+                            "licenses/Aicom-Accent-SA-notice.txt", "licenses/MAME-Z180-core-BSD-3-Clause.txt",
+                            "licenses/MAME-8085-core-BSD-3-Clause.txt", "licenses/Casso-MIT.txt",
+                            "aicom/u2.BIN", "aicom/u3.BIN", "aicom/u4.BIN")) {
             check(File(stagedAssets, name).isFile) { "build/android/assets/$name is missing: run `sh build_android.sh`" }
+        }
+        // All-MAME 0.7: no GPL code, so nothing of 0.6's GPL staging may ride along from an older stage
+        for (name in listOf("licenses/z180emu-GPL-2.0.txt", "source/ssi263-speech-source.tgz")) {
+            check(!File(stagedAssets, name).exists()) { "build/android/assets/$name is stale: run `sh build_android.sh`" }
         }
         // A developer build's staged firmware must not ride into an APK unasked: Gradle packs whatever is staged, so
         // a leftover of SSI263_ANDROID_BUNDLE_FIRMWARE=1 went into a plain assembleDebug (0.7).  Ask with
