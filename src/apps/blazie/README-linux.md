@@ -102,7 +102,10 @@ default) uses them on a text console, when a keyboard can be read; `on` everywhe
 read whichever window is in front); or a device's path. Reading them needs the `input` group: `sudo usermod -aG input
 $USER`, then log in again. With `grab = 1` (the default) only this program gets those keys while it runs -- not the
 console, not a screen reader -- except while its menu is open; the kernel lets go if the program ends. A braille
-keyboard that Linux reports with its own dot keys (`brl_dot1`..`brl_dot8`) is mapped too.
+keyboard that Linux reports with its own dot keys (`brl_dot1`..`brl_dot8`) is mapped too. A keyboard another
+program holds for itself (BRLTTY can) is left alone and named at the start ("held by another program"): its keys
+come through the terminal as characters, so letters mode is the way in there. With the devices grabbed, keys that
+still reach the terminal can only be another keyboard's, and go to the unit too.
 
 ### Keys held: the hold key
 
@@ -129,6 +132,13 @@ key's speech plays behind 30-40 ms of queued sound. A thread renders each block 
 clock paces the unit; it asks for real-time priority and runs without it. On a desktop, ALSA's default device
 reaches PulseAudio or PipeWire through their ALSA plugin. With no sound card (or `--no-sound`) the unit runs on,
 silent, paced by the system clock.
+
+On a Raspberry Pi 5 the running unit takes about a fifth of one core at 44100 Hz (measured with ALSA, PulseAudio
+and silent). A BTSpeak's Compute Module 4 is two to three times slower: if the sound breaks up there, choose 22050
+Hz (menu 6), or `[sound] block_ms = 20`.
+
+Saving the unit's memory (every minute, and on exit) holds the unit while the file is written, as on Windows: the
+Type 'n Speak's is 5 MB, so on slow storage a short gap in the sound can be heard once a minute.
 
 ## The serial port
 
@@ -163,7 +173,9 @@ is given):
   two clock checks.
 
 Also run by hand on a Raspberry Pi 5 (Debian 13, arm64): the input devices with a virtual keyboard (uinput) --
-found, grabbed, a chord down and up, F11 opening the menu -- and the menu itself in a terminal.
+found, grabbed, a chord down and up, F11 opening the menu; and the same keyboard held by another program: named,
+the terminal's keys used --; the menu itself in a terminal; the sound with ALSA and with the PulseAudio build,
+paced by the device (about a fifth of a core); each unit started from the unpacked package.
 
 ## Not yet verified on a real BTSpeak
 
@@ -181,4 +193,6 @@ None of this has run on a BTSpeak yet. To find out there:
 - the Type 'n Speak needs a QWERTY keyboard (a USB one on the BTSpeak's USB-C port).
 
 Not tried on any machine: WinDisk or PCDISK on the far end of the serial port (the tests answer the unit's storage
-call themselves), a real serial adapter, PulseAudio's build.
+call themselves), a real serial adapter, a real keyboard on the input devices (a virtual one was), sound actually
+heard (the Pi used had no speaker: the devices took the sound at the right pace), an x86-64 build (the 0.7 work
+was tested on arm64 only).

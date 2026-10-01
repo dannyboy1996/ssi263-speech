@@ -504,15 +504,24 @@ static void audio_start(void)
     }
 }
 
-static void audio_stop(void)
+/* 1 when stopped; 0 when the sound thread stays stuck in the device for 2 s (it is left to the end of the program:
+   leaving must not hang on a sound server that stopped answering) */
+static int audio_stop(void)
 {
     if (g_audio_running) {
+        struct timespec t;
         g_audio_stop = 1;
-        pthread_join(g_audio_thread, NULL);
+        clock_gettime(CLOCK_REALTIME, &t);
+        t.tv_sec += 2;
+        if (pthread_timedjoin_np(g_audio_thread, NULL, &t) != 0) {
+            say("The sound device does not answer.");
+            return 0;
+        }
         g_audio_running = 0;
     }
     audio_close(g_audio);
     g_audio = NULL;
+    return 1;
 }
 
 /* ---- the serial port ------------------------------------------------------------------------------------------- */
@@ -794,7 +803,10 @@ chosen:
             }
             r = choose("Sample rate", items, N_RATES, cur);
             if (RATES[r] != g_rate) {           /* the card reopened at it, the unit restarted at it (memory kept) */
-                audio_stop();
+                if (!audio_stop()) {
+                    say("The sample rate stays %d Hz.", g_rate);
+                    continue;
+                }
                 g_rate = RATES[r];
                 start_unit(g_kind, NULL);
                 audio_start();
@@ -1326,7 +1338,14 @@ int main(int argc, char **argv)
     save_settings();
     term_restore();
     evdev_close(&g_ev);
-    emu_destroy(g_unit);
+    {
+        emu_unit *u;
+        pthread_mutex_lock(&g_lock);            /* a sound thread left stuck renders nothing from here */
+        u = g_unit;
+        g_unit = NULL;
+        pthread_mutex_unlock(&g_lock);
+        emu_destroy(u);
+    }
     ini_free(g_ini);
     return 0;
 }
