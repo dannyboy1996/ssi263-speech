@@ -14,9 +14,12 @@
  *   SSI263Whine "off"          off | hiss | whine: the unit's idle sound
  *   SSI263Tone 7               0-26, the unit's tone (factory 7)
  *   SSI263ShortPauses 1        sentences packed onto one line from the second on (the NVDA driver's default)
+ *   SSI263RunAhead 0           1: the NVDA driver's "Run the unit ahead" (EXPERIMENTAL, off by default; with short
+ *                              pauses on only, as there): blv_set_run_ahead
  * SSI263_DATADIR overrides the data folder.  The firmware is not part of this program: it is loaded from there.
  *
- * Test hook: SD_SSI263_TEST_NO_CANCEL=1 leaves the unit uncancelled on STOP -- the harness's control must fail.
+ * Test hooks: SD_SSI263_TEST_NO_CANCEL=1 leaves the unit uncancelled on STOP, SD_SSI263_TEST_IGNORE_RUN_AHEAD=1 drops
+ * SSI263RunAhead on its way to the voice -- the harness's controls must fail.
  */
 #include <errno.h>
 #include <signal.h>
@@ -136,7 +139,7 @@ static void strip_ssml(char *s)
 
 /* ---- config ------------------------------------------------------------------------------------------------------ */
 static char datadir[1024] = "";
-static int sample_rate = 22050, inflection = 1, whine = 0, tone = 7, short_pauses = 1;
+static int sample_rate = 22050, inflection = 1, whine = 0, tone = 7, short_pauses = 1, run_ahead = 0;
 
 static void read_config(const char *path)
 {
@@ -152,6 +155,7 @@ static void read_config(const char *path)
         else if (!strcmp(key, "SSI263Inflection")) inflection = atoi(val) != 0;
         else if (!strcmp(key, "SSI263Tone")) tone = atoi(val);
         else if (!strcmp(key, "SSI263ShortPauses")) short_pauses = atoi(val) != 0;
+        else if (!strcmp(key, "SSI263RunAhead")) run_ahead = atoi(val) != 0;
         else if (!strcmp(key, "SSI263Whine")) whine = !strcmp(val, "hiss") ? 1 : !strcmp(val, "whine") ? 2 : 0;
     }
     fclose(f);
@@ -241,6 +245,7 @@ static void speak(char *text)
     send_line("200 OK SPEAKING");
     send_line("701 BEGIN");
     blv_set(v, to100(ssip_rate), to100(ssip_pitch), tone, to100(ssip_volume), short_pauses);
+    blv_set_run_ahead(v, run_ahead && !getenv("SD_SSI263_TEST_IGNORE_RUN_AHEAD"));
     blv_speak(v, text);
     while (!done) {
         int n = blv_render(v, &pcm, &done);
