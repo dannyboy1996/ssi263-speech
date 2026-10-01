@@ -9,6 +9,8 @@
  *   blazie_files extract STATE DIR [--crlf]     every file into DIR/<folder>/<name>; --crlf: text files with CR LF
  *                                               line ends, for a PC editor (the image keeps the unit's CR)
  *   blazie_files check STATE                    the file system's rules, checked
+ *   --codepage=852 (anywhere)                   the unit's names in code page 852: the Slovak Braille 'n Speak
+ *                                               2000's (its "fles subory" folder); 850 otherwise (bl_files_xfer.h)
  *
  * And, since 7-Zip only reads disk images and Windows does not open one by itself, a way to make and take apart
  * images with a plain folder in between (Linux can also mount the image: mount -o loop):
@@ -156,6 +158,8 @@ static int by_name(const void *a, const void *b)
 
 static const char *const MODEL[] = {"Braille Lite", "Type 'n Speak"};
 
+static int g_cp = BLX_CP850;                /* --codepage=852: the unit's names' code page */
+
 static int usage(void)
 {
     printf("usage: blazie_files list|check STATE\n"
@@ -163,7 +167,8 @@ static int usage(void)
            "       blazie_files import STATE IMAGE.img [--dry-run]\n"
            "       blazie_files extract STATE DIR [--crlf]\n"
            "       blazie_files unpack IMAGE.img DIR\n"
-           "       blazie_files pack DIR IMAGE.img\n");
+           "       blazie_files pack DIR IMAGE.img\n"
+           "       --codepage=852: the unit's names in code page 852 (the Slovak Braille 'n Speak 2000)\n");
     return 2;
 }
 
@@ -253,10 +258,10 @@ static int extract(const blf_fs *fs, const char *dir, int crlf)
             } else
                 out[o++] = d[k];
         }
-        blx_unit_to_utf8(fo && fo->name[0] ? fo->name : "no folder", f8, sizeof f8);
+        blx_unit_to_utf8_cp(g_cp, fo && fo->name[0] ? fo->name : "no folder", f8, sizeof f8);
         snprintf(path, sizeof path, "%s/%s", dir, f8);
         make_dir(path);
-        blx_unit_to_utf8(x->name, u8, sizeof u8);
+        blx_unit_to_utf8_cp(g_cp, x->name, u8, sizeof u8);
         snprintf(path, sizeof path, "%s/%s/%s", dir, f8, u8);
         if (!write_file(path, out, o))
             printf("could not write %s\n", path);
@@ -372,6 +377,19 @@ int main(int argc, char **argv)
         fat_break = atoi(getenv("TEST_FILES_FAT_BREAK"));
     if (getenv("TEST_FILES_BREAK"))          /* the Linux round trip's control (bl_files.h blf_break) */
         blf_break = atoi(getenv("TEST_FILES_BREAK"));
+    {                                        /* --codepage=852, anywhere: taken out of the arguments */
+        int i, k = 1;
+        for (i = 1; i < argc; i++) {
+            if (!strncmp(argv[i], "--codepage=", 11)) {
+                int cp = atoi(argv[i] + 11);
+                if (cp != BLX_CP850 && cp != BLX_CP852)
+                    return usage();
+                g_cp = cp;
+            } else
+                argv[k++] = argv[i];
+        }
+        argc = k;
+    }
     if (argc < 3)
         return usage();
     if (!strcmp(argv[1], "pack") && argc >= 4)
@@ -402,7 +420,7 @@ int main(int argc, char **argv)
         unsigned long size;
         unsigned char *img;
         blx_report_init(&r);
-        img = blx_export(fs, u.model, &size, &r, err, sizeof err);
+        img = blx_export_cp(fs, u.model, g_cp, &size, &r, err, sizeof err);
         if (!img || !write_file(argv[3], img, size)) {
             printf("export failed: %s\n", img ? "cannot write the image" : err);
             rc = 1;
@@ -421,7 +439,7 @@ int main(int argc, char **argv)
         if (!img) {
             printf("cannot read %s\n", argv[3]);
             rc = 1;
-        } else if (!blx_import(fs, img, size, &r, err, sizeof err)) {
+        } else if (!blx_import_cp(fs, g_cp, img, size, &r, err, sizeof err)) {
             printf("import failed: %s\n", err);
             rc = 1;
         } else {

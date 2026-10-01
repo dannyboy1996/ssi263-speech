@@ -1,7 +1,9 @@
 /* test_emu_unit.c -- the emulator's unit, headless: it boots and speaks its greeting, a chord makes it answer (and
  * the same run without the chord stays quiet there: the control), and it renders faster than real time.
  *
- *   test_emu_unit bl FIRMWARE STATE     the Braille Lite (a chord: dot 1)
+ *   test_emu_unit bl FIRMWARE STATE [LATENCY_MS]
+ *                                       the Braille Lite (a chord: dot 1), or the Braille 'n Speak 2000 on its board;
+ *                                       LATENCY_MS: the firmware's own key-to-sound bound (the Slovak unit's is longer)
  *   test_emu_unit tns FIRMWARE -        the Type 'n Speak from cold (its cold reset's first question, then y
  *                                       answered: "are you sure?"); its key latency and options menu from its
  *                                       factory setup (tns_setup.h)
@@ -24,6 +26,7 @@
 #define RATE 44100
 
 static int g_kind;
+static double latency_max = 320.0;  /* the firmware's own key-to-sound pace, at most (ms of chip time) */
 
 static int failures;
 
@@ -132,12 +135,14 @@ int main(int argc, char **argv)
     double greet, with_key, without, secs;
     const char *fw, *st, *ready;
     if (argc < 4) {
-        printf("usage: test_emu_unit bl|tns FIRMWARE STATE|-\n");
+        printf("usage: test_emu_unit bl|tns FIRMWARE STATE|- [LATENCY_MS]\n");
         return 2;
     }
     g_kind = !strcmp(argv[1], "tns") ? EMU_TYPE_N_SPEAK : EMU_BRAILLE_LITE;
     fw = argv[2];
     st = strcmp(argv[3], "-") ? argv[3] : NULL;
+    if (argc > 4)
+        latency_max = atof(argv[4]);
     ready = st;
     if (g_kind == EMU_TYPE_N_SPEAK && !st) {   /* the Type 'n Speak in its main menu: its factory setup, saved */
         char err[256];
@@ -160,13 +165,16 @@ int main(int argc, char **argv)
     snprintf(d, sizeof d, "10 s of unit in %.2f s (%.1fx real time)", secs, 10.0 / secs);
     check("faster than real time", secs < 5.0, d);
     {   /* key to first sound, in chip time: the firmware's own pace (the English Braille Lite ~283 ms, the Spanish
-           ~107, the Type 'n Speak ~242: the unit's work before it speaks), which the host must not lengthen; and with
-           quick key response the words come sooner */
+           ~107, the Type 'n Speak ~242, the English Braille 'n Speak 2000 ~247, the Slovak ~443 -- its letter-to-sound
+           rules take longer, and 8 times the CPU brings it to ~113: the unit's work before it speaks), which the host
+           must not lengthen (LATENCY_MS: that bound for a slower firmware, 320 by default); and with quick key
+           response the words come sooner (at most 100 ms, scaled with the bound) */
         double slow = key_latency(fw, ready, 0), fast = key_latency(fw, ready, 1);
-        snprintf(d, sizeof d, "key to first sound %.1f ms of chip time (at most 320: the firmware's own)", slow);
-        check("key latency", slow > 0 && slow <= 320.0, d);
+        snprintf(d, sizeof d, "key to first sound %.1f ms of chip time (at most %.0f: the firmware's own)", slow,
+                 latency_max);
+        check("key latency", slow > 0 && slow <= latency_max, d);
         snprintf(d, sizeof d, "key to first sound %.1f ms with quick key response, %.1f ms without", fast, slow);
-        check("quick key response", fast > 0 && fast <= 100.0 && fast < slow, d);
+        check("quick key response", fast > 0 && fast <= latency_max * 100.0 / 320.0 && fast < slow, d);
     }
     {   /* switched off and on: the saved memory is the state format, and the unit boots from it and speaks */
         char err[256], path[64];     /* per process: run_tests runs the bl and tns checks side by side */

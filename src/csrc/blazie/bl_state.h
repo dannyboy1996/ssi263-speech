@@ -17,7 +17,10 @@ extern "C" {
 #endif
 
 #define BLV_STATE_ENGLISH 0        /* the June 2003 BL2ENG.BNS -> bl2_2003_warm.state; also ONCE's September 2000
-                                      English (bl_firmware.c's list holds each release's state hash) */
+                                      English (bl_firmware.c's list holds each release's state hash); and the
+                                      Braille 'n Speak 2000's English and Slovak (BS03ENG.BNS, BS2SLL.BNS: the
+                                      emulator's factory states), whose prompts come at the same points and take
+                                      the same keys (bl_state.c) */
 #define BLV_STATE_SPANISH 1        /* ONCE's BL2SPA.BNS -> bl2spa_fresh.state */
 
 /* Called between runs with the share done so far (0..1); a nonzero return abandons the state. */

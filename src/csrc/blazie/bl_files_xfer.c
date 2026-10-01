@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "bl_cp850.h"
+#include "bl_cp852.h"
 #include "bl_files_xfer.h"
 #include "fat_img.h"
 
@@ -51,12 +52,28 @@ static int fail(char *err, int errlen, const char *msg)
 }
 
 /* ---- names ------------------------------------------------------------------------------------------------------ */
+static const unsigned short *high_half(int codepage)
+{
+    return codepage == BLX_CP852 ? bl_cp852_high : bl_cp850_high;
+}
+
 void blx_unit_to_utf8(const char *unit, char *out, size_t cap)
 {
+    blx_unit_to_utf8_cp(BLX_CP850, unit, out, cap);
+}
+
+void blx_utf8_to_unit(const char *utf8, char *out, size_t cap)
+{
+    blx_utf8_to_unit_cp(BLX_CP850, utf8, out, cap);
+}
+
+void blx_unit_to_utf8_cp(int codepage, const char *unit, char *out, size_t cap)
+{
+    const unsigned short *high = high_half(codepage);
     const unsigned char *s = (const unsigned char *)unit;
     size_t n = 0;
     for (; *s && n + 4 < cap; s++) {
-        unsigned c = *s < 0x80 ? *s : bl_cp850_high[*s - 0x80];
+        unsigned c = *s < 0x80 ? *s : high[*s - 0x80];
         if (c < 0x80) out[n++] = (char)c;
         else if (c < 0x800) { out[n++] = (char)(0xC0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3F)); }
         else { out[n++] = (char)(0xE0 | (c >> 12)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
@@ -64,8 +81,9 @@ void blx_unit_to_utf8(const char *unit, char *out, size_t cap)
     out[n] = 0;
 }
 
-void blx_utf8_to_unit(const char *utf8, char *out, size_t cap)
+void blx_utf8_to_unit_cp(int codepage, const char *utf8, char *out, size_t cap)
 {
+    const unsigned short *high = high_half(codepage);
     const unsigned char *s = (const unsigned char *)utf8;
     size_t n = 0;
     while (*s && n + 1 < cap) {
@@ -80,7 +98,7 @@ void blx_utf8_to_unit(const char *utf8, char *out, size_t cap)
             out[n++] = (char)c;
         else {
             int i;
-            for (i = 0; i < 128 && bl_cp850_high[i] != c; i++) ;
+            for (i = 0; i < 128 && high[i] != c; i++) ;
             out[n++] = i < 128 ? (char)(0x80 + i) : '_';
         }
     }
@@ -143,6 +161,12 @@ static int ci_eq(const char *a, const char *b)
 /* ---- export ----------------------------------------------------------------------------------------------------- */
 unsigned char *blx_export(const blf_fs *fs, int model, unsigned long *size, blx_report *r, char *err, int errlen)
 {
+    return blx_export_cp(fs, model, BLX_CP850, size, r, err, errlen);
+}
+
+unsigned char *blx_export_cp(const blf_fs *fs, int model, int codepage, unsigned long *size, blx_report *r, char *err,
+                             int errlen)
+{
     fat_builder *b = fat_new(model == BLF_BRAILLE_LITE ? "BRAILLELITE" : "TYPENSPEAK");
     int dir_of[BLF_FOLDERS], f, i;
     char u8[200], fu8[200];
@@ -161,7 +185,7 @@ unsigned char *blx_export(const blf_fs *fs, int model, unsigned long *size, blx_
                 time = x->dos_time;
             }
         }
-        blx_unit_to_utf8(fo->name, u8, sizeof u8);
+        blx_unit_to_utf8_cp(codepage, fo->name, u8, sizeof u8);
         dir_of[f] = fat_add_dir(b, 0, u8, time, date ? date : EMPTY_FOLDER_DATE);
         if (dir_of[f] < 0) {
             say(r, "folder %s: its name cannot be a folder in the image (another like it?); its files are at the top", u8);
@@ -173,9 +197,9 @@ unsigned char *blx_export(const blf_fs *fs, int model, unsigned long *size, blx_
         unsigned long n;
         const unsigned char *d = blf_data(fs, i, &n);
         int parent = x->folder < BLF_FOLDERS ? dir_of[x->folder] : 0;
-        blx_unit_to_utf8(x->name, u8, sizeof u8);
+        blx_unit_to_utf8_cp(codepage, x->name, u8, sizeof u8);
         if (parent)
-            blx_unit_to_utf8(blf_folder_get(fs, x->folder)->name, fu8, sizeof fu8);
+            blx_unit_to_utf8_cp(codepage, blf_folder_get(fs, x->folder)->name, fu8, sizeof fu8);
         else
             snprintf(fu8, sizeof fu8, "the top");
         if (!fat_add_file(b, parent, u8, d, n, x->dos_time, x->dos_date, (x->prot & 2) != 0)) {
@@ -228,6 +252,12 @@ static unsigned long to_unit_lines(unsigned char *d, unsigned long n)
 
 int blx_import(blf_fs *fs, const unsigned char *img, unsigned long size, blx_report *r, char *err, int errlen)
 {
+    return blx_import_cp(fs, BLX_CP850, img, size, r, err, errlen);
+}
+
+int blx_import_cp(blf_fs *fs, int codepage, const unsigned char *img, unsigned long size, blx_report *r, char *err,
+                  int errlen)
+{
     fat_volume *v;
     want_t *want = NULL;
     int n_want = 0, i, k, root_folder;
@@ -265,7 +295,7 @@ int blx_import(blf_fs *fs, const unsigned char *img, unsigned long size, blx_rep
                 r->skipped++;
                 continue;
             }
-            blx_utf8_to_unit(fe->name, un, sizeof un);
+            blx_utf8_to_unit_cp(codepage, fe->name, un, sizeof un);
             f = blf_folder_find(fs, un);
             if (f < 0) {
                 char clean[BLF_NAME_MAX + 1];
@@ -295,7 +325,7 @@ int blx_import(blf_fs *fs, const unsigned char *img, unsigned long size, blx_rep
         }
         if (fe->parent >= 0 && fat_get(v, fe->parent)->parent >= 0)
             continue;               /* in a skipped deeper folder */
-        blx_utf8_to_unit(fe->name, un, sizeof un);
+        blx_utf8_to_unit_cp(codepage, fe->name, un, sizeof un);
         if (!unit_name(un, want[n_want].name)) {
             say(r, "skipped %s: no file name the unit takes can be made of it", fe->name);
             r->skipped++;

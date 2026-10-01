@@ -12,7 +12,9 @@
  * Settings: blazie_emu.ini beside the program.  Settings > Serial port plugs the unit's serial port
  * into a COM port (serial_win.c), for WinDisk, PCDISK or a terminal on the other end.
  *
- * Firmware: firmware\ beside the program (a release carries it), or firmware_dir= in the settings.
+ * Firmware: firmware\ beside the program (a release carries it), or firmware_dir= in the settings.  The Braille 'n
+ * Speak 2000 (bns2000\, its factory states made by make_state.exe) is in the menu when its firmware is there, and
+ * takes the Braille Lite's keys.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -36,22 +38,31 @@
 #define NBLOCKS 4
 #define BLOCK_MS_DEFAULT 10
 
-enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_EXPORT, ID_IMPORT,
+enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_BNS_EN, ID_BNS_SK, ID_FACTORY, ID_EXIT, ID_EXPORT, ID_IMPORT,
        ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
        ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK, ID_QUICK = 218,
        ID_RATE = 220,
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
 
-/* state NULL: a cold start (the Type 'n Speak's cold reset asks how to set itself up: TNS_FIRST_START) */
-typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; } unit_kind;
+/* state NULL: a cold start (the Type 'n Speak's cold reset asks how to set itself up: TNS_FIRST_START); codepage:
+   its file names' code page (bl_files_xfer.h) */
+typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; int codepage; } unit_kind;
 static const unit_kind KINDS[] = {
     {"Braille Lite 2000 (English)", EMU_BRAILLE_LITE, "BL2ENG.BNS", "bl2_2003_warm.state", "english.state",
-     "english"},
+     "english", BLX_CP850},
     {"Braille Lite 2000 (Spanish)", EMU_BRAILLE_LITE, "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state",
-     "spanish.state", "spanish"},
-    {"Type 'n Speak (English)", EMU_TYPE_N_SPEAK, "tns\\TNSENG.TNS", NULL, "tns_english.state", "tns_english"},
-    {"Type 'n Speak (Spanish)", EMU_TYPE_N_SPEAK, "tns\\TNSSPA.TNS", NULL, "tns_spanish.state", "tns_spanish"},
+     "spanish.state", "spanish", BLX_CP850},
+    {"Type 'n Speak (English)", EMU_TYPE_N_SPEAK, "tns\\TNSENG.TNS", NULL, "tns_english.state", "tns_english",
+     BLX_CP850},
+    {"Type 'n Speak (Spanish)", EMU_TYPE_N_SPEAK, "tns\\TNSSPA.TNS", NULL, "tns_spanish.state", "tns_spanish",
+     BLX_CP850},
+    /* the Braille 'n Speak 2000 on the Braille Lite's board (emu_unit.h emu_model), in the menu when its firmware is
+       there; its factory states made from the firmware by make_state.exe (make_state.c) */
+    {"Braille 'n Speak 2000 (English)", EMU_BRAILLE_LITE, "bns2000\\BS03ENG.BNS", "bns2000\\bs03eng_fresh.state",
+     "bns_english.state", "bns_english", BLX_CP850},
+    {"Braille 'n Speak 2000 (Slovak)", EMU_BRAILLE_LITE, "bns2000\\BS2SLL.BNS", "bns2000\\bs2sll_fresh.state",
+     "bns_slovak.state", "bns_slovak", BLX_CP852},
 };
 #define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
@@ -356,7 +367,7 @@ static void export_files(void)
     saved_path(g_kind, st, sizeof st);
     if (!open_saved(st, &u, &fs)) return;
     blx_report_init(&r);
-    img = blx_export(fs, u.model, &size, &r, err, sizeof err);
+    img = blx_export_cp(fs, u.model, KINDS[g_kind].codepage, &size, &r, err, sizeof err);
     if (!img || !write_bytes(path, img, size)) {
         snprintf(msg, sizeof msg, "Could not export the files: %s", img ? "the image could not be written" : err);
         MessageBoxA(g_wnd, msg, "Export files", MB_OK | MB_ICONERROR);
@@ -418,7 +429,8 @@ static void import_files(void)
     blx_report_init(&r);
     ok = open_saved(st, &u, &fs);
     if (ok) {
-        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err);
+        ok = blx_import_cp(fs, KINDS[g_kind].codepage, img, size, &r, err, sizeof err)
+             && blf_check(fs, err, sizeof err);
         if (ok && r.deleted) {              /* an image holding only new files would empty the unit: ask */
             char ask[3000];
             const char *line = r.log ? r.log : "";
@@ -659,6 +671,14 @@ static void fill_serial_menu(void)
                        : ID_SERIAL_PORT + current, MF_BYCOMMAND);
 }
 
+/* the kind's firmware is in the firmware folder */
+static int fw_present(int kind)
+{
+    char fw[MAX_PATH];
+    snprintf(fw, sizeof fw, "%s\\%s", g_fw_dir, KINDS[kind].firmware);
+    return exists(fw);
+}
+
 static HMENU make_menu(void)
 {
     HMENU bar = CreateMenu(), unit = CreatePopupMenu(), sound = CreatePopupMenu(), help = CreatePopupMenu();
@@ -668,6 +688,10 @@ static HMENU make_menu(void)
     AppendMenuA(unit, MF_STRING, ID_ES, "Braille Lite 2000, &Spanish");
     AppendMenuA(unit, MF_STRING, ID_TNS_EN, "&Type 'n Speak, English");
     AppendMenuA(unit, MF_STRING, ID_TNS_ES, "Type 'n Speak, S&panish");
+    if (fw_present(ID_BNS_EN - ID_EN))
+        AppendMenuA(unit, MF_STRING, ID_BNS_EN, "Braille 'n Speak 2000, E&nglish");
+    if (fw_present(ID_BNS_SK - ID_EN))
+        AppendMenuA(unit, MF_STRING, ID_BNS_SK, "Braille 'n Speak 2000, Sl&ovak");
     AppendMenuA(unit, MF_SEPARATOR, 0, NULL);
     AppendMenuA(unit, MF_STRING, ID_EXPORT, "Exp&ort files to disk image (.img)...");
     AppendMenuA(unit, MF_STRING, ID_IMPORT, "&Import files from disk image (.img)...");
@@ -795,7 +819,7 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_COMMAND:
         switch (LOWORD(wp)) {
-        case ID_EN: case ID_ES: case ID_TNS_EN: case ID_TNS_ES:
+        case ID_EN: case ID_ES: case ID_TNS_EN: case ID_TNS_ES: case ID_BNS_EN: case ID_BNS_SK:
             tns_release_all();
             start_unit(LOWORD(wp) - ID_EN);
             return 0;
@@ -852,7 +876,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             break;
         case ID_KEYS:
             MessageBoxA(w, "Braille Lite, while this window is in front:\n\n"
-                        "F D S = dots 1 2 3\nJ K L = dots 4 5 6\nSpace bar = space\nA or ; = advance bar\n\n"
+                        "F D S = dots 1 2 3\nJ K L = dots 4 5 6\nSpace bar = space\nA or ; = advance bar\n"
+                        "The Braille 'n Speak 2000 takes the same keys; it has no advance bar.\n\n"
                         "Press the keys of a chord together; it goes to the unit when you let go of them.\n"
                         "Keys held while the unit starts are read as it starts: p-chord, l restarts it; "
                         "hold i-chord at once for the cold reset.\n"

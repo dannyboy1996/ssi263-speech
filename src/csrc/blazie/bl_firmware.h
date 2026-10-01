@@ -6,8 +6,8 @@
  * Only the releases on the list (bl_firmware.c's KNOWN, by the sha256 of their image) are accepted, each one booted
  * and heard through its state recipe before it was listed (Tomi, 2026-09-30): another image -- another country's
  * release, whose addressing may differ -- is refused, never guessed at.  Blazie's other units (Braille 'n Speak, Type
- * 'n Speak, the Braille Lite 18 and 40) carry the same notice and are refused by bl_create's firmware sites.  Only
- * hashes are here, never bytes.
+ * 'n Speak, the Braille Lite 18 and 40) carry the same notice and are refused: by bl_create's firmware sites, and the
+ * Braille 'n Speak 2000 (which bl_create runs, for the emulator) by bl_model.  Only hashes are here, never bytes.
  */
 #ifndef BL_FIRMWARE_H
 #define BL_FIRMWARE_H

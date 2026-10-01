@@ -2,8 +2,9 @@
  * file from .img"; Jage and Jayson asked for a way without the serial cable).
  *
  * The image (fat_img.h: FAT16, opens in 7-Zip, mounts on Linux): one folder per folder the unit has, named as the unit
- * names it -- "ram startup" and "flash startup" on an English unit, "RAM inicial" and "FLASH inicial" on a Spanish
- * Braille Lite, and any the user made -- each holding the unit's files that are in it, under their unit names (as
+ * names it (blx_*_cp: in the unit's code page) -- "ram startup" and "flash startup" on an English unit, "RAM
+ * inicial" and "FLASH inicial" on a Spanish Braille Lite, "ram subory" and "fles subory" (with their accents, cp852)
+ * on the Slovak Braille 'n Speak 2000, and any the user made -- each holding the unit's files that are in it, under their unit names (as
  * long names), with their exact bytes, their time and date, and the read-only mark when the user protected them.
  * Text files are as the unit keeps them: a lone CR ends a line; a grade 2 file (type B: no extension or .brl on the
  * Braille Lite, .brl/.brf on the Type 'n Speak) holds its braille as ASCII braille, as a .brf file does -- it is not
@@ -55,6 +56,18 @@ int blx_import(blf_fs *fs, const unsigned char *img, unsigned long size, blx_rep
    character the code page lacks becomes '_'). */
 void blx_unit_to_utf8(const char *unit, char *out, size_t cap);
 void blx_utf8_to_unit(const char *utf8, char *out, size_t cap);
+
+/* The same with the unit's code page for its names: BLX_CP850 (the functions above: the English and Spanish units)
+   or BLX_CP852 (the Slovak Braille 'n Speak 2000, whose own folders are "ram s\xA3bory" and "fle\xE7 s\xA3bory":
+   "fles subory" with its s-caron in 852, a thorn in 850).  A file's bytes are never converted, only names. */
+#define BLX_CP850 850
+#define BLX_CP852 852
+unsigned char *blx_export_cp(const blf_fs *fs, int model, int codepage, unsigned long *size, blx_report *r, char *err,
+                             int errlen);
+int blx_import_cp(blf_fs *fs, int codepage, const unsigned char *img, unsigned long size, blx_report *r, char *err,
+                  int errlen);
+void blx_unit_to_utf8_cp(int codepage, const char *unit, char *out, size_t cap);
+void blx_utf8_to_unit_cp(int codepage, const char *utf8, char *out, size_t cap);
 
 #ifdef __cplusplus
 }

@@ -134,6 +134,13 @@ int emu_kind(const emu_unit *u)
     return u->kind;
 }
 
+int emu_model(const emu_unit *u)
+{
+    if (u->tns)
+        return EMU_MODEL_TYPE_N_SPEAK;
+    return bh_get_int(u->host, "model") == BL_MODEL_BNS2000 ? EMU_MODEL_BNS2000 : EMU_MODEL_BRAILLE_LITE;
+}
+
 /* ---- the Type 'n Speak's lockstep (bl_host.c's bh_run, without the driver's turbo and whine) ------------------ */
 static void tns_events_to_chip(emu_unit *u)
 {

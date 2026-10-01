@@ -874,6 +874,7 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "held")) return h->n_held;
     if (!strcmp(name, "log_ar")) return h->log_ar;
     if (!strcmp(name, "port_a0")) return bl_port_a0(h->unit);
+    if (!strcmp(name, "model")) return bl_model(h->unit);
     if (!strcmp(name, "flash_busy")) return bl_flash_busy(h->unit, NULL, NULL);
     if (!strcmp(name, "flash_chip_erases")) {
         unsigned long n;

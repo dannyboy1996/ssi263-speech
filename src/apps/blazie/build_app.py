@@ -11,6 +11,8 @@
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
   test_idle.exe    the idle channel against Tomi's unit (its board built with bl_idle.c's test hooks)
+  make_state.exe   a unit's factory state from its firmware (the Braille 'n Speak 2000's: bl_state.c's recipe)
+  test_bns.exe     the Braille 'n Speak 2000 on the board: the units told apart, its words through the chip's writes
   LICENSE, licenses/  the project's MIT, MAME's BSD-3-Clause notice for the Z180 core, Casso's MIT
 
 The boards run on MAME's Z180 (src/csrc/cpu/z180_mame.cpp, BSD-3-Clause), built as build_board.py builds the release
@@ -140,6 +142,11 @@ def main():
     win = os.path.join(obj, "serial_win.o")
     for exe, objs in (("test_serial_win.exe", unit), ("test_serial_win_cut.exe", unit_cut)):
         link(exe, [serial_win, win] + objs, libs=("-lsetupapi", "-lm"))
+    # the Braille 'n Speak 2000 (Tomi: the Slovak firmware): its factory states made from its firmware by the state
+    # recipe (bl_state.c), and its checks on the board -- the units told apart, its words through the chip's writes
+    recipes = [compile_c(os.path.join(BLAZIE, f + ".c"), BOARD) for f in ("bl_state", "bl_firmware")]
+    link("make_state.exe", [compile_c(os.path.join(HERE, "make_state.c"), APP)] + recipes + chip + board())
+    link("test_bns.exe", [compile_c(os.path.join(HERE, "test_bns.c"), APP)] + recipes + chip + board())
     # the idle channel's sounds against the unit's (run_tests passes the firmware); its board built with the test hooks
     # its must-fail controls use (bl_idle.c, BLI_TEST_HOOKS)
     link("test_idle.exe", [compile_c(os.path.join(HERE, "test_idle.c"), ["-O2"])] + chip + board("hooks"))

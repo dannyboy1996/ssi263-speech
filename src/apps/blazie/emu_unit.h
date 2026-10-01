@@ -1,6 +1,7 @@
 /* emu_unit.h -- one emulated Blazie unit running in real time: the firmware, its board, the SSI-263, 16-bit PCM out.
  *
- * Two kinds: the Braille Lite 2000 (bl_board, braille chords) and the Type 'n Speak (tns_board, QWERTY key events).
+ * Two kinds: the Braille Lite 2000 (bl_board, braille chords; the Braille 'n Speak 2000 too, emu_model) and the Type
+ * 'n Speak (tns_board, QWERTY key events).
  * Portable (no platform calls): the shell pulls audio with emu_render at the pace of its sound card, and pushes keys
  * with emu_key from its keyboard.  The two may come from different threads: the shell serialises them with its own
  * lock (see main_win.c), and the unit takes each key at an instruction boundary.
@@ -27,6 +28,12 @@ emu_unit *emu_create(int kind, const char *firmware, const char *state, double o
                      int errlen);
 void emu_destroy(emu_unit *u);
 int emu_kind(const emu_unit *u);
+/* The unit the firmware is for.  EMU_BRAILLE_LITE also runs the Braille 'n Speak 2000's firmware (BS03ENG.BNS,
+   BS2SLL.BNS: its factory states from make_state.c): the Braille Lite 2000's board without the braille display
+   (../../csrc/blazie/bl_board.h bl_model), the same six keys and space bar as chords; it has no advance bar (the
+   firmware never reads that bit).  Its idle channel is the Braille Lite's (measured on Tomi's Braille Lite only). */
+enum { EMU_MODEL_BRAILLE_LITE, EMU_MODEL_BNS2000, EMU_MODEL_TYPE_N_SPEAK };
+int emu_model(const emu_unit *u);
 
 /* renders `n` samples of the unit running in real time into out (16-bit mono PCM at out_rate) */
 void emu_render(emu_unit *u, short *out, int n);

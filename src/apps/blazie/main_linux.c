@@ -1,5 +1,6 @@
 /* main_linux.c -- the Linux shell of the Blazie emulator: the same unit as the Windows app (emu_unit.c: the Braille
- * Lite 2000 or the Type 'n Speak running its own firmware), in a terminal.  For a Raspberry Pi's console, a desktop's
+ * Lite 2000, the Braille 'n Speak 2000 or the Type 'n Speak running its own firmware), in a terminal.  The Braille 'n
+ * Speak 2000 takes the Braille Lite's keys.  For a Raspberry Pi's console, a desktop's
  * terminal, and the BTSpeak (Blazie Technologies' Linux notetaker, on ARM) -- no desktop needed.
  *
  * The keyboard (README-linux.md has it all):
@@ -70,8 +71,16 @@ static const unit_kind KINDS[] = {
      "tns_english.state", "tns_english"},
     {"Type 'n Speak (Spanish)", "tns-es", EMU_TYPE_N_SPEAK, {"tns/TNSSPA.TNS", "TNSSPA.TNS"}, {NULL, NULL},
      "tns_spanish.state", "tns_spanish"},
+    /* the Braille 'n Speak 2000 on the Braille Lite's board (emu_unit.h emu_model), in the menu when its firmware is
+       there (menu numbers 15 and 16: 5-14 are the settings); its factory states made by make_state (make_state.c) */
+    {"Braille 'n Speak 2000 (English)", "bns-en", EMU_BRAILLE_LITE, {"bns2000/BS03ENG.BNS", "BS03ENG.BNS"},
+     {"bns2000/bs03eng_fresh.state", "bs03eng_fresh.state"}, "bns_english.state", "bns_english"},
+    {"Braille 'n Speak 2000 (Slovak)", "bns-sk", EMU_BRAILLE_LITE, {"bns2000/BS2SLL.BNS", "BS2SLL.BNS"},
+     {"bns2000/bs2sll_fresh.state", "bs2sll_fresh.state"}, "bns_slovak.state", "bns_slovak"},
 };
 #define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
+#define N_FIRST_KINDS 4             /* the menu's 1-4; the kinds after them are 15 on */
+#define MENU_LATER_KINDS 15
 static const int RATES[] = {11025, 16000, 22050, 32000, 44100, 48000};
 #define N_RATES ((int)(sizeof RATES / sizeof RATES[0]))
 static const char *const IDLE_NAMES[] = {"off", "hiss", "whine", "unit"};
@@ -210,6 +219,31 @@ static void fw_file(const char *const names[2], char *out, int cap)
         }
     if (names[0])
         snprintf(out, (size_t)cap, "%s/%s", g_fw_dir, names[0]);   /* named in the error */
+}
+
+/* the menu's number for a kind (1-4, then 15 on), and the kind for a number (-1: none); a kind after the first four
+   is offered only when its firmware is there */
+static int kind_menu_number(int kind)
+{
+    return kind < N_FIRST_KINDS ? kind + 1 : MENU_LATER_KINDS + kind - N_FIRST_KINDS;
+}
+
+static int kind_offered(int kind)
+{
+    char fw[PATH_MAX];
+    if (kind < N_FIRST_KINDS)
+        return 1;
+    fw_file(KINDS[kind].firmware, fw, sizeof fw);
+    return exists(fw);
+}
+
+static int kind_of_menu_number(int n)
+{
+    int k;
+    for (k = 0; k < N_KINDS; k++)
+        if (kind_menu_number(k) == n && kind_offered(k))
+            return k;
+    return -1;
 }
 
 /* --firmware, else firmware_dir in the settings, else beside the program: the package's share/ssi263-speech, a
@@ -747,6 +781,7 @@ static void keys_help(void)
     say("Hold (F12 or Ctrl+K): the next chord stays held down until you press it again -- the unit reads keys held");
     say("  while it starts: p-chord, hold, i-chord, l restarts it into the cold reset; then hold again.");
     say("  With an input device (evdev; the input group) keys are seen going down and up: no hold key needed.");
+    say("Braille 'n Speak 2000: the Braille Lite's keys, both modes; it has no advance bar.");
     say("Type 'n Speak: the whole keyboard is the unit's.");
     say("%s", TNS_FIRST_START);
     say("F11 opens this menu (Ctrl+O too for the Braille Lite; Alt+Shift+F always). Keys are set in %s.", g_ini_path);
@@ -808,8 +843,8 @@ static void menu(void)
         }
         list = 0;
         say("Menu. Type a number and Enter; Enter alone goes back to the unit.");
-        for (k = 0; k < N_KINDS; k++)
-            say("  %d %s%s", k + 1, KINDS[k].name, k == g_kind ? " (on now)" : "");
+        for (k = 0; k < N_FIRST_KINDS; k++)
+            say("  %d %s%s", kind_menu_number(k), KINDS[k].name, k == g_kind ? " (on now)" : "");
         say("  5 Back to the factory state (erases this unit's files)");
         say("  6 Sample rate: %d Hz", g_rate);
         say("  7 Idle channel sound: %s", IDLE_TEXT[g_whine]);
@@ -821,14 +856,17 @@ static void menu(void)
         say("  13 Braille Lite keyboard: %s", g_blk.mode == BLK_LETTERS
             ? "letters (each character its braille cell)" : "keys (F D S J K L)");
         say("  14 Keys (help)");
+        for (k = N_FIRST_KINDS; k < N_KINDS; k++)
+            if (kind_offered(k))
+                say("  %d %s%s", kind_menu_number(k), KINDS[k].name, k == g_kind ? " (on now)" : "");
         say("  0 Exit (the unit's memory is saved)");
         read_line(line, sizeof line);
         if (!line[0])
             break;
 chosen:
         k = atoi(line);
-        if (k >= 1 && k <= N_KINDS) {
-            start_unit(k - 1, NULL);
+        if (kind_of_menu_number(k) >= 0) {
+            start_unit(kind_of_menu_number(k), NULL);
             break;
         }
         switch (k) {
@@ -1157,8 +1195,9 @@ static void on_signal(int sig)
 
 static void usage(void)
 {
-    printf("blazie_emu -- a Blazie Braille Lite 2000 or Type 'n Speak, running its own firmware.\n\n"
-           "  blazie_emu [--unit bl-en|bl-es|tns-en|tns-es] [--firmware DIR] [--config DIR]\n"
+    printf("blazie_emu -- a Blazie Braille Lite 2000, Braille 'n Speak 2000 or Type 'n Speak, running its own "
+           "firmware.\n\n"
+           "  blazie_emu [--unit bl-en|bl-es|tns-en|tns-es|bns-en|bns-sk] [--firmware DIR] [--config DIR]\n"
            "  blazie_emu --show-keys          what this keyboard sends (for the key settings)\n"
            "  blazie_emu --no-sound           no sound card: the unit runs on silent, paced by the system clock\n"
            "  blazie_emu --help\n\n"
@@ -1267,7 +1306,7 @@ int main(int argc, char **argv)
             kind = i;
     if (kind < 0) {
         if (unit_id) {
-            fprintf(stderr, "blazie_emu: --unit bl-en, bl-es, tns-en or tns-es\n");
+            fprintf(stderr, "blazie_emu: --unit bl-en, bl-es, tns-en, tns-es, bns-en or bns-sk\n");
             return 2;
         }
         kind = 0;

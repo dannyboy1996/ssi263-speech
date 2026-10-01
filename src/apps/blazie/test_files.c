@@ -1,7 +1,8 @@
 /* test_files.c -- files in and out of the units (Tomi: files in and out; ../../csrc/blazie/bl_files.h,
  * bl_files_xfer.h), headless, against the units' own commands.
  *
- *   test_files bl FIRMWARE STATE [--break=N]   a Braille Lite (English or Spanish) from its shipped state
+ *   test_files bl FIRMWARE STATE [--break=N]   a Braille Lite (English or Spanish) from its shipped state, or a
+ *                                              Braille 'n Speak 2000 (English or Slovak) from its factory state
  *   test_files tns FIRMWARE [--break=N|cold]   the Type 'n Speak from its factory start: its cold reset, its own
  *                                              questions answered yes (tns_setup.h)
  *
@@ -19,7 +20,8 @@
  *
  * --break=N (bl_files.h's blf_break) puts one bug back; run_tests' controls must fail on exactly the checks that see
  * it: 1 the open file's live pointers ignored, 2 new flash blocks not marked used, 3 a new RAM file's end of text one
- * byte short, 4 an imported file's date dropped, 5 the open file's number not followed.  --break=cold
+ * byte short, 4 an imported file's date dropped, 5 the open file's number not followed; --break=cp the Slovak unit's
+ * names in code page 850 (its folders reach the PC with a thorn for the s-caron).  --break=cold
  * (tns_board.h's tns_cold_break) starts the Type 'n Speak as the emulator did before: the unit's warm reset.
  */
 #include <stdio.h>
@@ -110,6 +112,13 @@ enum { B_OCHORD = 0x55, B_F = 0x0B, B_C = 0x09, B_O = 0x15, B_ECHORD = 0x51, B_V
 #define AFTER_KEY 3.6
 /* the first key after power-on: once the unit has said it is ready (a key during the greeting only silences it) */
 #define SPOKEN_START 8.0
+/* ... after the import, the Slovak Braille 'n Speak 2000's first key comes at 12 s: with it at 8 s the q never
+   reached the open file (it stayed "abcxyz"), with it at 12 s it does -- its words at power-on take longer (its
+   letter-to-sound rules are slower: a key's answer takes it ~443 ms against the English unit's ~247) */
+static double g_spoken_start = SPOKEN_START;
+/* the unit's names' code page (bl_files_xfer.h): 852 on the Slovak Braille 'n Speak 2000 (--break=cp: 850, the
+   control -- its flash folder then reaches the PC as "fle\xC3\xBE", a thorn, not its s-caron) */
+static int g_cp = BLX_CP850, g_cp_break, g_slovak;
 
 /* the files menu: the Braille Lite's o-chord, f; the Type 'n Speak's F1 */
 static void files_menu(script *sc)
@@ -265,18 +274,20 @@ static int same(const unsigned char *a, unsigned long na, const char *b, unsigne
     return a && na == nb && !memcmp(a, b, nb);
 }
 
-/* a file's bytes in an image ("folder/name"); NULL if absent */
+/* a file's bytes in an image ("folder/name", the folder as the unit names it: the image's name is its UTF-8, the
+   Slovak unit's "fles subory" with its own letters); NULL if absent */
 static unsigned char *image_file(const unsigned char *img, unsigned long size, const char *folder, const char *name,
                                  unsigned long *n)
 {
-    char err[200];
+    char err[200], f8[200];
     fat_volume *v = fat_read(img, size, err, sizeof err);
     unsigned char *d = NULL;
     int i;
     if (!v) return NULL;
+    blx_unit_to_utf8_cp(g_cp, folder, f8, sizeof f8);
     for (i = 0; i < fat_count(v); i++) {
         const fat_entry *e = fat_get(v, i);
-        if (!e->dir && !strcmp(e->name, name) && e->parent >= 0 && !strcmp(fat_get(v, e->parent)->name, folder)) {
+        if (!e->dir && !strcmp(e->name, name) && e->parent >= 0 && !strcmp(fat_get(v, e->parent)->name, f8)) {
             d = fat_data(v, i, n);
             break;
         }
@@ -349,7 +360,7 @@ static unsigned char *changed_image(const unit_t *x, const char *drop, const cha
     for (f = 0; f < BLF_FOLDERS; f++) {
         const blf_folder *fo = blf_folder_get(x->fs, f);
         if (!fo->name[0]) continue;
-        blx_unit_to_utf8(fo->name, u8, sizeof u8);
+        blx_unit_to_utf8_cp(g_cp, fo->name, u8, sizeof u8);
         dir_of[f] = fat_add_dir(b, 0, u8, 0, 0x0021);
         if (!strcmp(fo->name, ram_folder)) ram_dir = dir_of[f];
         if (!strcmp(fo->name, flash_folder)) flash_dir = dir_of[f];
@@ -367,7 +378,7 @@ static unsigned char *changed_image(const unit_t *x, const char *drop, const cha
             d = (const unsigned char *)NEW_NOTES;
             n = strlen(NEW_NOTES);
         }
-        blx_unit_to_utf8(fl->name, f8, sizeof f8);
+        blx_unit_to_utf8_cp(g_cp, fl->name, f8, sizeof f8);
         fat_add_file(b, dir_of[fl->folder], f8, d, n, fl->dos_time, fl->dos_date, (fl->prot & 2) != 0);
     }
     /* new: a RAM file with a PC's CR LF, a RAM file of two pages, a flash file of several blocks, a new folder */
@@ -388,7 +399,7 @@ static unsigned char *export_of(const unit_t *x, unsigned long *size)
     blx_report r;
     unsigned char *img;
     blx_report_init(&r);
-    img = blx_export(x->fs, x->u.model, size, &r, err, sizeof err);
+    img = blx_export_cp(x->fs, x->u.model, g_cp, size, &r, err, sizeof err);
     blx_report_free(&r);
     return img;
 }
@@ -493,12 +504,26 @@ static void all_checks(int tns, const char *fw, const char *state)
         free(e1);
         free(e2);
     }
+    if (g_slovak) {                 /* its folders reach the PC in its own letters: cp852, not cp850 */
+        static const char want[] = "fle\xC5\xA1 s\xC3\xBA" "bory";   /* "fles subory", s-caron and u-acute */
+        char e[200];
+        fat_volume *v = fat_read(exp, size, e, sizeof e);
+        int found = 0, i;
+        for (i = 0; v && i < fat_count(v); i++)
+            if (fat_get(v, i)->dir && !strcmp(fat_get(v, i)->name, want))
+                found = 1;
+        if (v)
+            fat_close(v);
+        snprintf(d, sizeof d, "the flash folder in the image as UTF-8 \"fle\\xC5\\xA1 s\\xC3\\xBAbory\": %s",
+                 found ? "yes" : "no");
+        check("export: the Slovak unit's folder names", found, d);
+    }
 
     /* 3. the import: temp dropped (before the open file: the open file moves down a slot), new files in RAM, in
        flash, in a new folder */
     img = changed_image(&a, dropped, ram_folder, flash_folder, tns, &size2);
     blx_report_init(&r);
-    ok = img && blx_import(a.fs, img, size2, &r, err, sizeof err);
+    ok = img && blx_import_cp(a.fs, g_cp, img, size2, &r, err, sizeof err);
     if (ok && !bls_save(imported, &a.u, err, sizeof err)) {   /* saved whatever the rules say: the unit runs on */
         printf("FAIL save %s: %s\n", imported, err);
         exit(1);
@@ -519,7 +544,7 @@ static void all_checks(int tns, const char *fw, const char *state)
         unit_t f;
         img2 = export_of(&a, &size);
         blx_report_init(&r);
-        ok = blx_import(a.fs, img2, size, &r, err, sizeof err);
+        ok = blx_import_cp(a.fs, g_cp, img2, size, &r, err, sizeof err);
         img3 = export_of(&a, &size3);
         snprintf(d, sizeof d, "%lu bytes; again %lu bytes, %s; %d unchanged, %d changed", size, size3,
                  img3 && size3 == size && !memcmp(img2, img3, size) ? "the same" : "DIFFERENT", r.unchanged,
@@ -530,7 +555,7 @@ static void all_checks(int tns, const char *fw, const char *state)
         free(img3);
         if (load(tns ? fresh_tns : state, &f)) {   /* a fresh unit: the shipped state, or the cold reset's */
             blx_report_init(&r);
-            ok = blx_import(f.fs, img2, size, &r, err, sizeof err);
+            ok = blx_import_cp(f.fs, g_cp, img2, size, &r, err, sizeof err);
             img3 = export_of(&f, &size3);
             snprintf(d, sizeof d, "%d files into a fresh unit; its export %s", blf_count(f.fs),
                      img3 && size3 == size && !memcmp(img2, img3, size) ? "the same" : "DIFFERENT");
@@ -556,7 +581,7 @@ static void all_checks(int tns, const char *fw, const char *state)
     }
     memset(&sc, 0, sizeof sc);
     sc.tns = tns;
-    sc.t = SPOKEN_START;
+    sc.t = g_spoken_start;
     type_text(&sc, "q");
     wait_s(&sc, 2.0);
     list_to_clipboard(&sc);
@@ -636,13 +661,19 @@ int main(int argc, char **argv)
         return 2;
     }
     for (i = 3; i < argc; i++)
-        if (!strcmp(argv[i], "--break=cold"))
+        if (!strcmp(argv[i], "--break=cp"))
+            g_cp_break = 1;
+        else if (!strcmp(argv[i], "--break=cold"))
             tns_cold_break = 1;
         else if (!strncmp(argv[i], "--break=", 8))
             blf_break = atoi(argv[i] + 8);
     snprintf(g_tmp, sizeof g_tmp, "test_files.%d", (int)_getpid());
     if (strstr(argv[2], "SPA") || strstr(argv[2], "spa"))
         g_yes = 's';
+    if (strstr(argv[2], "SLL") || strstr(argv[2], "sll"))   /* the Slovak Braille 'n Speak 2000 (BS2SLL.BNS) */
+        g_spoken_start = 12.0, g_cp = BLX_CP852, g_slovak = 1;
+    if (g_cp_break)
+        g_cp = BLX_CP850;
     g_doc = strcmp(argv[1], "tns") ? "doc" : "doc.brl";
     g_imp = strcmp(argv[1], "tns") ? "imported" : "imported.txt";
     g_imp_image = strcmp(argv[1], "tns") ? "Imported" : "Imported.txt";
