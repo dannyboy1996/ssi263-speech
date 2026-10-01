@@ -69,7 +69,7 @@ units, and every minute (written whole, then put in place: a power cut never lea
 the Braille Lite starts from the shipped state and the Type 'n Speak as a new unit: its own cold reset (Ctrl+Alt+Del
 held at power-on) asks how to set itself up, and the program says so. Press y for each question (the Spanish unit:
 s), seven times: initialize file system, are you sure; initialize flash system, are you sure (then the flash chip's
-32 seconds of clicks); initialize folder system (it says it is ready and opens its help); delete all data in file
+~46 seconds of clicks); initialize folder system (it says it is ready and opens its help); delete all data in file
 area, are you sure (then about 35 seconds of silence while it clears its memory, and it starts again). README.md,
 "The Type 'n Speak's first start", says why each one matters.
 

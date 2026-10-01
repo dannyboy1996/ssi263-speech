@@ -179,7 +179,7 @@ static void start(int kind, const char *fw, const char *st, long long host)
         printf("FAIL create: %s\n", err);
         exit(1);
     }
-    emu_set_flash_timed(g_u, 0);            /* the cold start's flash erase done at once: its 32 s are test_flash's */
+    emu_set_flash_timed(g_u, 0);            /* the cold start's flash erase done at once: its ~46 s are test_flash's */
     g_t = 0.0;
 }
 

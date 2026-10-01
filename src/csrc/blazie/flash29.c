@@ -13,6 +13,24 @@ int flash29_busy(const flash29 *f, unsigned long long now)
     return (f->busy_status & DQ3) ? 1 : 2;
 }
 
+/* The embedded erase first programs every byte it erases to 00h, then erases: the data sheet's erase times exclude
+   that ("Excludes 00H programming prior to erasure").  It takes the chip programming time's share per byte not
+   already 00h.  FLASH29_NO_PREPROGRAM (the tests' must-fail control): the erase time alone, as before. */
+static double preprogram_s(const flash29 *f, unsigned long from, unsigned long n)
+{
+#ifdef FLASH29_NO_PREPROGRAM
+    (void)f; (void)from; (void)n;
+    return 0.0;
+#else
+    unsigned long i, k = 0;
+    if (n > FLASH29_CHIP_BYTES)
+        n = FLASH29_CHIP_BYTES;                  /* one 29F016 (the Type 'n Speak's board pages a 4 MB window) */
+    for (i = 0; i < n; i++)
+        k += f->data[from + i] != 0x00;
+    return k * (FLASH29_CHIP_PROGRAM_S / FLASH29_CHIP_BYTES);
+#endif
+}
+
 static void begin(flash29 *f, unsigned long long now, double seconds, unsigned char status)
 {
     if (f->hz <= 0)
@@ -59,13 +77,16 @@ void flash29_write(flash29 *f, unsigned long off, unsigned char v, unsigned long
     case 5: f->state = (is2aa && v == 0x55) ? 6 : 0; break;
     case 6: f->state = 0;
             if (v == 0x10) {
+                double pre = f->hz > 0 ? preprogram_s(f, 0, f->size) : 0.0;
                 memset(f->data, 0xFF, f->size);
                 f->n_chip_erase++;
-                begin(f, now, FLASH29_CHIP_ERASE_S, DQ3);
+                begin(f, now, pre + FLASH29_CHIP_ERASE_S, DQ3);
             } else if (v == 0x30) {
-                memset(f->data + (off & ~(FLASH29_SECTOR - 1) & (f->size - 1)), 0xFF, FLASH29_SECTOR);
+                unsigned long from = off & ~(FLASH29_SECTOR - 1) & (f->size - 1);
+                double pre = f->hz > 0 ? preprogram_s(f, from, FLASH29_SECTOR) : 0.0;
+                memset(f->data + from, 0xFF, FLASH29_SECTOR);
                 f->n_sector_erase++;
-                begin(f, now, FLASH29_SECTOR_ERASE_S, DQ3);
+                begin(f, now, pre + FLASH29_SECTOR_ERASE_S, DQ3);
             }
             break;
     }

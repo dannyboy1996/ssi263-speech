@@ -5,16 +5,18 @@
  *
  * Type 'n Speak (Jayson, Timothy): its first start, its cold reset, asks "initialize flash system?" after the file
  * system (tns_setup.h) -- the firmware asks only when the chip answers the 29F016's ID (a 29F040's: it skips the flash
- * and never asks) -- and after y, y erases the chip; the erase takes the chip's 32 s, and the unit chirps through the
- * speech chip meanwhile (heard: a sound every ~2 s); saved and started again, it does not ask again (y, y then erase
- * nothing).
+ * and never asks) -- and after y, y erases the chip; the erase takes the chip's time, 32 s plus the 14.4 s it first
+ * spends programming every byte to 00h (flash29.h; users: the flash initialization beeps), and the unit chirps through
+ * the speech chip meanwhile (heard: a sound every ~2 s); saved and started again, it does not ask again (y, y then
+ * erase nothing).
  * Braille Lite: its reset (the i-chord held at power-on, then y four times) erases the flash with the same chirps,
  * each R4 F0, R1 F0, R2 FE, R3 58 and phoneme 17h; a file moved to flash lands at the top of the 2 MB chip the
  * firmware manages (E0h bits 0-1 page it), not over the first 512 KB, and survives a save and a restart.
  *
  * Must fail: --break=instant (every erase done at once: no wait, no chirps), --break=persist (saved before the flash
- * was initialised: the unit asks again), and test_flash_break.exe, built with BLAZIE_FLASH_BREAK (the Type 'n
- * Speak's chip answers a 29F040's ID; the Braille Lite's board puts every bank on the same 512 KB, as before).
+ * was initialised: the unit asks again), test_flash_break.exe, built with BLAZIE_FLASH_BREAK (the Type 'n
+ * Speak's chip answers a 29F040's ID; the Braille Lite's board puts every bank on the same 512 KB, as before), and
+ * test_flash_old.exe, built with FLASH29_NO_PREPROGRAM (the erase without its preprogramming: 32 s, as before).
  */
 #include <math.h>
 #include <stdio.h>
@@ -105,7 +107,7 @@ static void tns_checks(const char *fw)
     static const double again[] = {3.0, 6.0};
     snprintf(path, sizeof path, "test_flash.%d.state", (int)_getpid());
     /* from cold: its cold reset's first four questions (tns_setup.h): the file system y y, the flash y y -- the
-       erase, 32 s, done a little before the folder question; saved then (persist: at 2 s, while the unit still asks;
+       erase, 46.4 s, done a little before the folder question; saved then (persist: at 2 s, while the unit still asks;
        the rest of the setup is test_files.c's) */
     for (k = 0; k < 4; k++)
         at[k] = tns_setup_answer_at(k, 1);
@@ -116,10 +118,11 @@ static void tns_checks(const char *fw)
              "asked)", a.erases);
     check("flash ID accepted, flash initialised", a.erases == 1, d);
     span = a.busy_from >= 0 && a.busy_to >= 0 ? a.busy_to - a.busy_from : 0;
-    snprintf(d, sizeof d, "the erase ran %.1f s of chip time (want 31-33: a 29F016's 32 s)", span);
-    check("erase takes the chip's time", span > 31.0 && span < 33.0, d);
-    snprintf(d, sizeof d, "%d sounds began while it ran (want >= 12: a chirp every ~2 s)", a.onsets);
-    check("erase chirps", a.onsets >= 12, d);
+    snprintf(d, sizeof d, "the erase ran %.1f s of chip time (want 45.5-47.5: a 29F016's 32 s and 14.4 s "
+             "preprogramming)", span);
+    check("erase takes the chip's time", span > 45.5 && span < 47.5, d);
+    snprintf(d, sizeof d, "%d sounds began while it ran (want >= 18: a chirp every ~2 s)", a.onsets);
+    check("erase chirps", a.onsets >= 18, d);
     /* started again from what it saved: it speaks, and y, y erase nothing (it did not ask again) */
     if (!tns_run(fw, path, yes, again, 2, 12.0, NULL, 0, &b))
         exit(1);
@@ -188,11 +191,11 @@ static void bl_checks(const char *fw, const char *st)
     }
     bl_hold(u, 0x4A);
     bl_flash_timed(u, strcmp(brk, "instant") != 0);
-    bl_steps(u, reset, 4, 64.0, &span, &chirps);
+    bl_steps(u, reset, 4, 80.0, &span, &chirps);
     bl_destroy(u);
-    snprintf(d, sizeof d, "the reset's erase ran %.1f s (want 31-33), %d chirps (phoneme 17h) meanwhile (want >= 12)",
-             span, chirps);
-    check("Braille Lite reset: erase and chirps", span > 31.0 && span < 33.0 && chirps >= 12, d);
+    snprintf(d, sizeof d, "the reset's erase ran %.1f s (want 45.5-47.5), %d chirps (phoneme 17h) meanwhile (want >= "
+             "24)", span, chirps);
+    check("Braille Lite reset: erase and chirps", span > 45.5 && span < 47.5 && chirps >= 24, d);
 
     /* a file moved to flash, then saved and restarted */
     snprintf(path, sizeof path, "test_flash.%d.state", (int)_getpid());

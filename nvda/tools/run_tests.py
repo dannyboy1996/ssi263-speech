@@ -235,7 +235,8 @@ if os.path.isfile(CLOCK):
                         env={"TEST_CLOCK_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAIL time passes \(a leap day\) ", r"^ok +set and read over its bytes "]))
     # the file flash (src/apps/blazie/test_flash.c; Jayson, Timothy): the Type 'n Speak's ID check passes and its flash
-    # is initialised, the erase takes a 29F016's 32 s with the firmware's chirps through the chip, the initialised flash
+    # is initialised, the erase takes a 29F016's 32 s plus its 14.4 s preprogramming (every byte to 00h first) with the
+    # firmware's chirps through the chip, the initialised flash
     # kept across a save and restart; the Braille Lite's reset erases with the same chirps, and a file moved to flash
     # lands in the 2 MB chip the firmware manages and survives a restart.  Controls: each must fail on its checks.
     FLASH = os.path.join(EMU, "test_flash.exe")
@@ -251,6 +252,12 @@ if os.path.isfile(CLOCK):
                             fail_marks=[r"^ok +Braille Lite reset: erase and chirps",
                                         r"^FAIL a flash file in the fourth 512 KB +top of the 2 MB: FF FF",
                                         r"^FAIL the flash file kept across a restart +saved 786432 bytes", r"^FAILED$"]))
+        # the erase without its embedded preprogramming (flash29.c FLASH29_NO_PREPROGRAM: 32 s and 18 chirps, as
+        # before; users: the flash initialization beeps)
+        CHECKS.append(check("Blazie emulator: file flash CONTROL (Braille Lite, erase without preprogramming, must fail)",
+                            [os.path.join(EMU, "test_flash_old.exe")] + BL_FLASH, expect_fail=True,
+                            fail_marks=[r"^FAIL Braille Lite reset: erase and chirps .* ran 3[12]\.\d s.* 18 chirps",
+                                        r"^ok +a flash file in the fourth 512 KB", r"^FAILED$"]))
         for name in ("TNSENG.TNS", "TNSSPA.TNS"):
             if os.path.isfile(os.path.join(TNS_DIR, name)):
                 CHECKS.append(check("Blazie emulator: file flash, Type 'n Speak %s" % name[3:6],
@@ -268,6 +275,10 @@ if os.path.isfile(CLOCK):
             CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, a 29F040's ID, must fail)",
                                 [os.path.join(EMU, "test_flash_break.exe")] + TNS_FLASH, expect_fail=True,
                                 fail_marks=[r"^FAIL flash ID accepted, flash initialised +0 chip erase", r"^FAILED$"]))
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, erase without preprogramming, "
+                                "must fail)", [os.path.join(EMU, "test_flash_old.exe")] + TNS_FLASH, expect_fail=True,
+                                fail_marks=[r"^ok +flash ID accepted", r"^FAIL erase takes the chip's time +the erase ran "
+                                            r"3[12]\.\d s", r"^ok +flash kept across save and restart", r"^FAILED$"]))
 # files in and out of the units without the serial cable (src/apps/blazie/test_files.c, src/csrc/blazie/bl_files.c;
 # Tomi, for Jage and Jayson): files the firmware made with its own commands exported exactly (the open file with the
 # text typed since it was opened); an image imported (RAM, flash, a new folder, PC line ends, a file before the open

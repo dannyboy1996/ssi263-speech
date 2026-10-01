@@ -28,7 +28,7 @@ static int g_kind;
 static int failures;
 
 /* the unit, its flash done at once: these checks keep the Type 'n Speak's cold-start timeline (y, y, then ready by
-   12 s); the flash's own time, with its 32 s erase and chirps, is test_flash.c's */
+   12 s); the flash's own time, with its ~46 s erase and chirps, is test_flash.c's */
 static emu_unit *make(const char *fw, const char *st, char *err, int errlen)
 {
     emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, errlen);

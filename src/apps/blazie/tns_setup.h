@@ -5,7 +5,7 @@
  * cold reset.  It asks, each answered y (the Spanish unit: s) -- measured on the running firmware, both languages:
  *
  *   1 "initialize file system?"            2 "are you sure?"       ("system initialized")
- *   3 "initialize flash system?"           4 "are you sure?"       ("please wait": the flash's 32 s erase, clicking)
+ *   3 "initialize flash system?"           4 "are you sure?"       ("please wait": the flash's ~46 s erase, clicking)
  *   5 "initialize folder system?"                                   ("Type 'n Speak ready", the date, "help is open")
  *   6 "delete all data in file area."      7 "are you sure?"       (the wipe: ~35 s, silent, keys ignored; then
  *                                                                    "system initialized" and the unit starts again:
@@ -30,7 +30,7 @@
     "The first time (and after Back to the factory state), the Type 'n Speak starts as a new unit: its own cold " \
     "reset asks how to set itself up. Press y for each question (the Spanish unit: s), seven times in all:\n" \
     "  initialize file system? y. Are you sure? y.\n" \
-    "  initialize flash system? y. Are you sure? y. Then about 30 seconds of clicks while it erases the flash.\n" \
+    "  initialize flash system? y. Are you sure? y. Then about 45 seconds of clicks while it erases the flash.\n" \
     "  initialize folder system? y. It says it is ready and opens its help.\n" \
     "  delete all data in file area? y. Are you sure? y. Then about 35 seconds of silence while it clears its " \
     "memory, and it starts again: ready.\n" \
@@ -38,7 +38,7 @@
     "offers to set it up the next time it starts."
 
 /* answer k's time (0..6) in seconds of the unit's time from its start, each a little after the question is asked
-   (a key while the unit asks is its answer); flash_timed: with the flash erase's own 32 s (emu_set_flash_timed),
+   (a key while the unit asks is its answer); flash_timed: with the flash erase's own ~46 s (emu_set_flash_timed),
    which comes after answer 4 */
 double tns_setup_answer_at(int k, int flash_timed);
 /* by then every answer is in, the unit set up and quiet in its main menu */

@@ -3,8 +3,11 @@
  * 64 KB) behind a window the board pages (the Type 'n Speak's window reaches 4 MB; its firmware uses the first 2).
  *
  * Timing (flash29.hz > 0): an erase or a program runs for the chip's typical time, the Am29F016 data sheet's (sector
- * erase 1 s, chip erase 32 s, a byte 7 us), counted in the board's CPU cycles.  Meanwhile a read anywhere returns the
- * status, not the data: DQ7 the complement of the byte being programmed (0 while erasing), DQ6 toggling on every read,
+ * erase 1 s, chip erase 32 s, a byte 7 us), counted in the board's CPU cycles.  An erase also takes its embedded
+ * preprogramming: the chip first programs every byte it erases to 00h, which the data sheet's erase times exclude
+ * ("Excludes 00H programming prior to erasure"), at its chip programming time (14.4 s typical for the 2 MB) per byte
+ * not already 00h -- an initialisation's chip erase is ~46 s, not 32 (users: the flash initialization beeps).
+ * Meanwhile a read anywhere returns the status, not the data: DQ7 the complement of the byte being programmed (0 while erasing), DQ6 toggling on every read,
  * DQ5 0 (no time-out), DQ3 1 while erasing; writes are ignored.  The firmware polls DQ7 and keeps its user informed
  * while it waits (the Blazie units chirp through the speech chip during an erase).  hz = 0: every operation is done
  * at once (the screen-reader drivers and their state recipes, which press keys at fixed instruction counts).
@@ -31,6 +34,8 @@ typedef struct {
 #define FLASH29_SECTOR_ERASE_S 1.0
 #define FLASH29_CHIP_ERASE_S 32.0
 #define FLASH29_PROGRAM_S 7e-6
+#define FLASH29_CHIP_PROGRAM_S 14.4        /* the whole 2 MB, typical: the erase's preprogramming, pro rata per byte */
+#define FLASH29_CHIP_BYTES 0x200000UL
 
 /* `now`: the board's CPU cycle count at the access */
 unsigned char flash29_read(flash29 *f, unsigned long off, unsigned long long now);
