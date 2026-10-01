@@ -178,6 +178,12 @@ class Ref:
 
 
 def load_reference(lib_path, chip_path):
+    """The desktop reference library.  It must be the shipping kind -- the Braille Lite on MAME's Z180 -- never a
+    z180emu build (a legacy bl.dll left in nvda/dist would compare the app's MAME engine with the old core)."""
+    from tools import check_no_gpl
+    hits = check_no_gpl.check(lib_path)[0]
+    if hits:
+        sys.exit("the reference library is not the shipping MAME build: %s" % hits[0])
     if chip_path:
         ctypes.CDLL(chip_path)                      # bl.dll imports ssi263.dll: load that copy first
     lib = ctypes.CDLL(lib_path)
@@ -236,7 +242,6 @@ def accent_reference():
 # ---- the program ------------------------------------------------------------------------------------------------
 def build_desktop():
     """test_android_native with the desktop compiler, the flags of build_linux.sh / build_board.py."""
-    z180 = repo_paths.Z180_CORE
     if WINDOWS:
         bindir = repo_paths.bin_dir("W64DEVKIT")
         cc, cxx = os.path.join(bindir, "gcc.exe"), os.path.join(bindir, "g++.exe")
@@ -245,8 +250,11 @@ def build_desktop():
         cc, cxx, env = os.environ.get("CC", "cc"), os.environ.get("CXX", "c++"), None
     os.makedirs(OUT, exist_ok=True)
     chip = ["-O2", "-std=c99", "-ffp-contract=off"]
-    board = ["-O3", "-fcommon", "-std=gnu89", "-ffp-contract=off", "-w", "-I" + z180, "-I" + os.path.join(z180, "z180"),
-             "-fmacro-prefix-map=%s=." % z180]
+    # the Braille Lite's board on MAME's Z180, as the shipping libraries (bl.dll, libssi263speech.so, the app's)
+    board = ["-O3", "-std=gnu89", "-ffp-contract=off", "-w", "-DBL_Z180_MAME", "-I" + os.path.join(SRC, "blazie"),
+             "-I" + os.path.join(SRC, "cpu"), "-I" + SRC]
+    z180 = ["-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-I" + os.path.join(SRC, "cpu"),
+            "-I" + SRC]
     front = ["-O2", "-std=c99", "-ffp-contract=off", "-Wall", "-I" + SRC, "-I" + CPP]
     mame = ["-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-Wall", "-Wno-sign-compare",
             "-I" + os.path.join(SRC, "cpu"), "-I" + SRC]
@@ -254,8 +262,9 @@ def build_desktop():
               "-I" + os.path.join(SRC, "accentsa"), "-I" + SRC]
     asa = os.path.join(SRC, "accentsa")
     units = [(chip, os.path.join(SRC, "ssi263.c")), (chip, os.path.join(SRC, "ssi263dsp.c")),
-             (board, os.path.join(SRC, "blazie", "bl_unity.c")), (board, os.path.join(SRC, "blazie", "bl_host.c")),
-             (board, os.path.join(SRC, "blazie", "bl_voice.c")),
+             (z180, os.path.join(SRC, "cpu", "z180_mame.cpp")), (z180, os.path.join(SRC, "cpu", "z180_asci.cpp"))] + \
+            [(board, os.path.join(SRC, "blazie", n + ".c")) for n in ("bl_board", "flash29", "bl_serial", "bl_idle",
+                                                                     "bl_host", "bl_voice")] + [
              (mame, os.path.join(SRC, "cpu", "i8085_mame.cpp")), (accent, os.path.join(asa, "as_board.c")),
              (accent, os.path.join(asa, "as_usart.c")), (accent, os.path.join(asa, "as_host.c")),
              (front, os.path.join(asa, "as_voice.c")), (front, os.path.join(SRC, "numwords.c")),

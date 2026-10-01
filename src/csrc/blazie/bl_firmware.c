@@ -20,7 +20,11 @@ BL_API int blv_firmware_break = 0;
        prompts during the recipe are June 2003's but for one power-on sentence, the keys land on the same prompts,
        and it speaks the Android test's cases as June 2003 does to within a few samples.
      September 20, 2000 Spanish ("versión del 20 de Septiembre de 2000 ver. a"): ONCE's disk, blite2000/BL2SPA.BNS;
-       the Spanish unit's reset (bl2spa_fresh.state). */
+       the Spanish unit's reset (bl2spa_fresh.state).
+   The state hashes are MAME-made (0.7, all-MAME: Tomi): blv_make_state on MAME's Z180, the same bytes on Windows x64,
+   Linux x86_64 and aarch64 and the phone.  z180emu made other bytes (its SLP slice accounting moves the recipe's
+   timing), so the desktop's shipped bl2_2003_warm.state / bl2spa_fresh.state, made on z180emu, are not these; they
+   still run on MAME and stay the desktop goldens' inputs. */
 static const struct {
     int language;
     long length;
@@ -29,13 +33,13 @@ static const struct {
     const char *label;
 } KNOWN[] = {
     {BLV_FW_ENGLISH, 262074, "ff8f30ec67397638c9a28c9738e7550b3c886ce42f647c462e06ded6e1576d51",
-     "fc6dffeff8c4be355455223291dabf26b0ebd567c1c02e3399f1dd1d0056e8c7",
+     "cca5a7c359e184f01077fed81c23f5fe68573416f53e03a2f4432d4749db013b",
      "Braille Lite English: the June 5, 2003 revision"},
     {BLV_FW_ENGLISH, 262067, "c840112f81f7337255cff290c58ed2d74d6f29f6fa056daf6a36db149a87cd4b",
-     "86a0d41e5d37decb1b79adba526ad1a2072ca977ff94606c20065252918465fc",
+     "bcc74d1e3c53074a91a1405c660b69a6a660e4407f7d88881f8aaebc94377b01",
      "Braille Lite English: ONCE's September 20, 2000 revision"},
     {BLV_FW_SPANISH, 261746, "eedd606e3644c22bd24d5bebd6ebd79286e5f0e6bdb6f638f8f6955ab2be4ed7",
-     "2ad81f5fe40ba259dec7eaa323b443b74edc3acfe41be1c30c6ed3b569f55bca",
+     "d69dd10541b413b0cf160f76894168aadc7648ed826f1cba395f58d0b67e888d",
      "Braille Lite Spanish: ONCE's September 20, 2000 revision"},
 };
 #define N_KNOWN ((int)(sizeof KNOWN / sizeof *KNOWN))

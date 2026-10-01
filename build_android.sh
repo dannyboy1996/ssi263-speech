@@ -1,10 +1,11 @@
 #!/bin/sh
-# Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (z180emu's
+# Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (on MAME's
 # Z180 core), the Braille Lite host and voice, the Aicom Accent SA's board, host and voice on MAME's 8085 core (C++17,
 # with a static libc++ inside the one .so) -- the same sources and flags as build_linux.sh -- plus the app's front end
 # (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle packages
 # prebuilt libraries.  Then it stages what the APK carries besides code: the Accent SA's ROMs (Aicom's, the one
-# firmware the app ships: Tomi, 2026-09-30), the licences, and for z180emu's GPL the complete corresponding source.
+# firmware the app ships: Tomi, 2026-09-30) and the licences: the project's MIT, and MAME's BSD-3-Clause notices for
+# the Z180 and 8085 cores.  No GPL code (src/platforms/android/test/check_apk_no_firmware.py audits the APK).
 # Not the Braille Lite's firmware: the app's users import their own.
 #
 #   sh build_android.sh                  arm64-v8a, armeabi-v7a and x86_64
@@ -12,7 +13,6 @@
 #   sh build_android.sh --test arm64-v8a the host-side test program for that ABI (run over adb)
 #
 # Found from the environment first, then paths.local (the key of the same name), then the default:
-#   Z180EMU            a z180emu checkout (default third_party/z180emu)
 #   SSI263_FIRMWARE    only with SSI263_ANDROID_BUNDLE_FIRMWARE=1 (a developer build that carries the firmware):
 #                      the folder with BL2ENG.BNS + bl2_2003_warm.state, and BL2SPA.BNS + bl2spa_fresh.state for
 #                      the Spanish unit, there or in its spanish/ folder (default firmware/blazie)
@@ -35,11 +35,8 @@ local_path() {
     [ -f "$ROOT/paths.local" ] || return 0
     sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ROOT/paths.local" | tail -1 | tr '\\' '/' | tr -d '\r'
 }
-Z180="${Z180EMU:-$ROOT/third_party/z180emu}"
-Z180="${Z180:-$ROOT/third_party/z180emu}"
 FW="${SSI263_FIRMWARE:-$(local_path SSI263_FIRMWARE)}"
 FW="${FW:-$ROOT/firmware/blazie}"
-[ -f "$Z180/z180/z180.c" ] || { echo "z180emu not found at $Z180 (set Z180EMU)"; exit 1; }
 
 newest() { for p in "$@"; do [ -e "$p" ] && echo "$p"; done | sort -V | tail -1; }
 NDK="${ANDROID_NDK_HOME:-}"
@@ -54,16 +51,16 @@ BIN="$NDK/toolchains/llvm/prebuilt/$HOST/bin"
 [ -x "$BIN/clang$EXE" ] || { echo "no clang under $BIN"; exit 1; }
 echo "NDK: $NDK"
 
-# As build_linux.sh.  The chip: plain C99.  The board and host: gnu89 and -fcommon for z180emu's MAME-era C.
+# As build_linux.sh.  The chip: plain C99.  The board and host: gnu89, the board on MAME's Z180 (-DBL_Z180_MAME).
 # -ffp-contract=off keeps the Python reference's arithmetic (no fused multiply-adds, which arm64 would otherwise
-# use), so the PCM is the other platforms' byte for byte.  Not -ftls-model=initial-exec: Bionic refuses an
-# initial-exec TLS access in a library loaded with dlopen (System.loadLibrary), so the adapter's thread-local
-# instance pointer keeps the default model here.
+# use), so the PCM is the other platforms' byte for byte.
 CHIP="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter"
-BOARD="-O3 -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
+BOARD="-O3 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -DBL_Z180_MAME -w -I$SRC/blazie -I$SRC/cpu -I$SRC"
 FRONT="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I$SRC"
-# The Accent SA, as build_linux.sh builds it: MAME's 8085 core in C++17 without exceptions or RTTI, the board and host
-# in gnu89.  libc++ is linked statically into the one .so (-static-libstdc++) and its symbols kept inside it.
+# MAME's cores (the Braille Lite's Z180, the Accent SA's 8085), as build_linux.sh builds them: C++17 without
+# exceptions or RTTI; the Accent SA's board and host in gnu89.  libc++ is linked statically into the one .so
+# (-static-libstdc++) and its symbols kept inside it.
+Z180CXX="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC"
 MAME="-O2 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wno-sign-compare -I$SRC/cpu -I$SRC"
 ACCENT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/accentsa -I$SRC"
 CPP="$APP/cpp"
@@ -84,14 +81,17 @@ cxx() { MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1 "$BIN/clang++$EXE" "$@"; }
 
 objects() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
+    # a fresh folder: the library links every object in it, and one left by an older build (z180emu's bl_unity.o)
+    # must never come back in
+    rm -rf "$O"
     mkdir -p "$O"
     cc --target="$TARGET" $CHIP -c -o "$O/ssi263.o" "$SRC/ssi263.c"
     cc --target="$TARGET" $CHIP -c -o "$O/ssi263dsp.o" "$SRC/ssi263dsp.c"
-    cc --target="$TARGET" $BOARD -c -o "$O/bl_unity.o" "$SRC/blazie/bl_unity.c"
-    cc --target="$TARGET" $BOARD -c -o "$O/bl_host.o" "$SRC/blazie/bl_host.c"
-    cc --target="$TARGET" $BOARD -c -o "$O/bl_voice.o" "$SRC/blazie/bl_voice.c"
-    cc --target="$TARGET" $BOARD -c -o "$O/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
-    cc --target="$TARGET" $BOARD -c -o "$O/bl_state.o" "$SRC/blazie/bl_state.c"
+    cxx --target="$TARGET" $Z180CXX -c -o "$O/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
+    cxx --target="$TARGET" $Z180CXX -c -o "$O/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
+    for f in bl_board flash29 bl_serial bl_idle bl_host bl_voice bl_firmware bl_state; do
+        cc --target="$TARGET" $BOARD -c -o "$O/$f.o" "$SRC/blazie/$f.c"
+    done
     cxx --target="$TARGET" $MAME -c -o "$O/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
     for f in as_board as_usart as_host; do
         cc --target="$TARGET" $ACCENT -c -o "$O/$f.o" "$SRC/accentsa/$f.c"
@@ -102,6 +102,7 @@ objects() {
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
 }
 ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o"
+BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_host.o bl_voice.o"
 
 build_abi() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
@@ -130,8 +131,8 @@ build_test() {
     cc --target="$TARGET" $FRONT -I"$CPP" -c -o "$O/test_android_native.o" \
         "$ROOT/src/platforms/android/test/test_android_native.c"
     cxx --target="$TARGET" -static-libstdc++ -o "$OUT/$ABI/test_android_native" "$O/test_android_native.o" \
-        "$O/ssa_engine.o" "$O/ssa_map.o" "$O/bl_voice.o" "$O/bl_host.o" "$O/bl_unity.o" "$O/ssi263.o" \
-        "$O/ssi263dsp.o" $(for f in $ACCENT_OBJS; do echo "$O/$f"; done) -lm
+        "$O/ssa_engine.o" "$O/ssa_map.o" "$O/ssi263.o" "$O/ssi263dsp.o" \
+        $(for f in $BL_OBJS $ACCENT_OBJS; do echo "$O/$f"; done) -lm
     rm -f "$O/test_android_native.o"
     echo "  -> build/android/$ABI/test_android_native"
 }
@@ -140,7 +141,7 @@ build_test() {
 stage_assets() {
     A="$OUT/assets"
     rm -rf "$A"
-    mkdir -p "$A/licenses" "$A/source" "$A/aicom"
+    mkdir -p "$A/licenses" "$A/aicom"
     # The Accent SA's ROMs, the built-in voice: Aicom's, in the repository with their notice (firmware/AICOM.txt).
     # check_apk_no_firmware.py lets exactly these three through, by their sha256.
     for f in u2.BIN u3.BIN u4.BIN; do
@@ -166,26 +167,10 @@ stage_assets() {
     fi
     cp "$ROOT/src/platforms/android/licenses/"*.txt "$A/licenses/"
     cp "$ROOT/LICENSE" "$A/licenses/ssi263-speech-MIT.txt"
-    cp "$Z180/COPYING" "$A/licenses/z180emu-GPL-2.0.txt"
     cp "$ROOT/firmware/AICOM.txt" "$A/licenses/Aicom-Accent-SA-notice.txt"
+    cp "$SRC/cpu/mame_z180/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-Z180-core-BSD-3-Clause.txt"
     cp "$SRC/cpu/mame_i8085/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-8085-core-BSD-3-Clause.txt"
-    # GPLv2 (z180emu): the complete source this library was built from, and how, as tools/package_linux.sh does
-    Z180_PARENT="$(dirname "$Z180")"; Z180_NAME="$(basename "$Z180")"
-    # --force-local: on Windows the archive's "C:" is a drive, not a remote host
-    (cd "$ROOT" && tar --force-local --exclude=jniLibs --exclude=build --exclude=.gradle --exclude=.kotlin --exclude=.cxx \
-        --exclude=local.properties --exclude=signing.properties \
-        -czf "$A/source/ssi263-speech-source.tgz" build_android.sh build_linux.sh LICENSE \
-        src/csrc/ssi263.c src/csrc/ssi263dsp.c src/csrc/ssi263.h src/csrc/ssi263_defaults.h src/csrc/blazie \
-        src/csrc/numwords.c src/csrc/numwords.h src/csrc/accentsa \
-        src/csrc/cpu src/platforms/android src/platforms/speechd \
-        -C "$Z180_PARENT" "$Z180_NAME/z180" "$Z180_NAME/COPYING")
-    cat > "$A/source/BUILD.txt" <<EOF
-libssi263speech.so was built with the Android NDK $(basename "$NDK") (clang, --target=<abi>-linux-android$API).
-Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, put the Accent SA's ROMs (this
-APK's assets/aicom, or the repository's firmware/aicom-accent-sa) in firmware/aicom-accent-sa, then: sh
-build_android.sh, and in src/platforms/android: ./gradlew assembleDebug.  The Braille Lite firmware is not part of
-it: the app imports it.
-EOF
+    cp "$ROOT/third_party/casso/LICENSE" "$A/licenses/Casso-MIT.txt"
     ls -R "$A" | head -20
 }
 

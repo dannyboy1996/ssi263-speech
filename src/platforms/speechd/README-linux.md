@@ -1,7 +1,7 @@
 # The Braille Lite 2000 voice for Linux
 
-A Blazie Braille Lite 2000 in speech-box mode, emulated: the unit's own June 2003 firmware runs in z180emu and
-drives a register-level model of the Silicon Systems SSI-263 speech chip. The rules, number reading and inflection
+A Blazie Braille Lite 2000 in speech-box mode, emulated: the unit's own June 2003 firmware runs on an emulated Z180
+(MAME's core) and drives a register-level model of the Silicon Systems SSI-263 speech chip. The rules, number reading and inflection
 are the firmware's own, live. Nothing is recorded or concatenated. English, and Spanish when its firmware is
 included.
 
@@ -27,13 +27,15 @@ those lines into `~/.config/ssi263-speech/sd_ssi263.conf`: they win over the mod
 `killall speech-dispatcher` (Orca reconnects by itself). Rate, pitch and volume come from Orca or spd-say, mapped
 onto the unit's own: its factory rate 11 and pitch 16 at the middle.
 
-Builds: x86_64 and aarch64 (a Raspberry Pi 4 or 5 is fine: the unit runs about ten times faster than real time on
-a Pi 5). No Python, no other packages: one program.
+Builds: x86_64 and aarch64 (a Raspberry Pi 4 or 5 is fine: the unit runs several times faster than real time on a
+Pi 5). No Python, no other packages: one program.
 
-## The firmware, and the source
+## The firmware, and the licences
 
 This package carries the Braille Lite's own firmware, shared with permission. It is not ours; it is here so the
 unit can speak again, and it will be removed if its rights holders ask.
 
-z180emu is GPLv2 (`COPYING.z180emu`); the complete source of these binaries, and how to build them, is in
-`source/`. The rest of the project is MIT (`LICENSE`): https://github.com/tgeczy/ssi263-speech
+The program and library are MIT (`LICENSE`; the chip model draws on Casso's, also MIT:
+`licenses/Casso-MIT.txt`), except the Z180 CPU core, which is MAME's and keeps its BSD-3-Clause licence
+(`licenses/MAME-Z180-core-BSD-3-Clause.txt`). The source and how to build it:
+https://github.com/tgeczy/ssi263-speech

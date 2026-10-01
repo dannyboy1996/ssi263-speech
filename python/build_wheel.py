@@ -9,7 +9,8 @@ board, host and voice); Linux: libssi263speech.so -- into dist/ssi263speech-<ver
 library only: a wheel is a zip with METADATA, WHEEL and RECORD.  The package loads the libraries with ctypes, so one
 wheel serves every Python 3 on its platform.  No firmware goes in: the Braille Lite voice takes the user's own.
 
-Licence: the chip is MIT; the board library carries z180emu (GPL-2.0-or-later), so a wheel holding it is GPL.
+Licence: MIT (the project's code, and Casso's, which the chip model draws on), and BSD-3-Clause for MAME's Z180 core
+inside the board library; all three notices ship in the wheel's dist-info.  No GPL code (tools/check_no_gpl.py checks the wheel).
 """
 import argparse
 import base64
@@ -21,6 +22,10 @@ import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PKG = os.path.join(REPO, "python", "ssi263speech")
+# the licences in the wheel's dist-info: (name there, file in the repository)
+LICENSES = (("LICENSE", "LICENSE"),
+            ("Casso-MIT.txt", os.path.join("third_party", "casso", "LICENSE")),
+            ("MAME-Z180-core-BSD-3-Clause.txt", os.path.join("src", "csrc", "cpu", "mame_z180", "LICENSE-BSD-3-Clause.txt")))
 WINDOWS_LIBS = ("ssi263.dll", "bl.dll")
 LINUX_LIBS = ("libssi263speech.so",)
 
@@ -73,9 +78,10 @@ def main():
                 "Summary: The emulated Votrax SSI-263 speech chip, and a Blazie Braille Lite that drives it, "
                 "from Python\n"
                 "Home-page: https://github.com/tgeczy/ssi263-speech\n"
-                "License: GPL-2.0-or-later (the chip itself: MIT)\n"
+                "License: MIT AND BSD-3-Clause (the project: MIT; MAME's Z180 core: BSD-3-Clause)\n"
                 "Requires-Python: >=3.7\n"
-                "Classifier: License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)\n"
+                "Classifier: License :: OSI Approved :: MIT License\n"
+                "Classifier: License :: OSI Approved :: BSD License\n"
                 "Classifier: Topic :: Multimedia :: Sound/Audio :: Speech\n"
                 "Description-Content-Type: text/markdown\n"
                 "\n" % ver) + readme
@@ -84,8 +90,8 @@ def main():
                   "Root-Is-Purelib: false\n"
                   "Tag: py3-none-%s\n" % a.plat)
     files += [(dist_info + "/METADATA", metadata.encode("utf-8")),
-              (dist_info + "/WHEEL", wheel_meta.encode("utf-8")),
-              (dist_info + "/LICENSE", open(os.path.join(REPO, "LICENSE"), "rb").read())]
+              (dist_info + "/WHEEL", wheel_meta.encode("utf-8"))]
+    files += [(dist_info + "/" + name, open(os.path.join(REPO, src), "rb").read()) for name, src in LICENSES]
     record = "\n".join(record_line(n, d) for n, d in files) + "\n%s/RECORD,,\n" % dist_info
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, "ssi263speech-%s-py3-none-%s.whl" % (ver, a.plat))

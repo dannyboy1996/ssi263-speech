@@ -3,7 +3,8 @@
 through the desktop library (bl.dll + ssi263.dll on Windows, libssi263speech.so on Linux), loaded with ctypes.
 
     python test_import_native.py            every case; the generated states must be the listed ones, byte for byte
-                                            (the shipped ones where they ship), and speak as they do
+                                            (MAME-made, 0.7; the desktop's shipped states, made on z180emu, are
+                                            refused), and speak within a few samples of the shipped ones
                                             (test_android_native.py's cases, through bl_voice); the progress
                                             blv_make_state reports must come steadily through each recipe
     SSI263_IMPORT_TEST_BREAK=1              control: the English warm reset holds the wrong chord (bl_state.h), so
@@ -162,17 +163,23 @@ def check_import(lib, fw, tmp):
     case("June 2003 one byte short: refused as unknown", eng[:-1], UNKNOWN, want_msg=unknown)
 
 
-def check_states(lib, fw, tmp):
+def check_states(lib, fw, made, tmp):
+    """blv_state_check on the states made here (the list's hashes are MAME-made, 0.7): one byte changed, the other
+    language's, and the desktop's shipped states -- made on z180emu, other bytes -- are each refused."""
     spa = spanish_dir(fw)
-    pairs = {"English": (os.path.join(fw, "BL2ENG.BNS"), os.path.join(fw, "bl2_2003_warm.state")),
-             "Spanish": (os.path.join(spa, "BL2SPA.BNS"), os.path.join(spa, "bl2spa_fresh.state"))}
-    for name, (bns, state) in pairs.items():
-        result(lib.blv_state_check(bns.encode(), state.encode()) == 1, "the shipped %s state is its release's" % name)
+    pairs = {"English": (os.path.join(made, "BL2ENG.BNS"), os.path.join(made, "bl2_2003_warm.state"),
+                         os.path.join(fw, "bl2_2003_warm.state")),
+             "Spanish": (os.path.join(made, "BL2SPA.BNS"), os.path.join(made, "bl2spa_fresh.state"),
+                         os.path.join(spa, "bl2spa_fresh.state"))}
+    for name, (bns, state, shipped) in pairs.items():
         data = bytearray(open(state, "rb").read())
         data[-1] ^= 1
         changed = os.path.join(tmp, "changed.state")
         open(changed, "wb").write(bytes(data))
-        result(lib.blv_state_check(bns.encode(), changed.encode()) == 0, "... with one byte changed it is not")
+        result(lib.blv_state_check(bns.encode(), changed.encode()) == 0,
+               "the generated %s state with one byte changed is not the list's" % name)
+        result(lib.blv_state_check(bns.encode(), shipped.encode()) == 0,
+               "the shipped %s state (made on z180emu) is not the list's" % name)
     crossed = lib.blv_state_check(pairs["English"][0].encode(), pairs["Spanish"][1].encode())
     result(crossed == 0, "the Spanish state is not the English release's")
 
@@ -225,7 +232,6 @@ def main():
             check_sha256(lib)
             check_list(lib)
             check_import(lib, fw, tmp)
-            check_states(lib, fw, tmp)
         # the states, made from the firmware alone, into a folder laid out as the app's
         made = os.path.join(tmp, "made")
         os.makedirs(made)
@@ -236,12 +242,17 @@ def main():
             langs.append(("Spanish", SPANISH, "BL2SPA.BNS", "bl2spa_fresh.state", spa_dir))
         for label, lang, bns, state, where in langs:
             ok, err, secs, reports = make_state(lib, os.path.join(made, bns), lang, os.path.join(made, state))
-            same = ok and open(os.path.join(made, state), "rb").read() == open(os.path.join(where, state), "rb").read()
-            result(same, "generated %s state = the shipped %s, byte for byte" % (label, state),
-                   "%.1f s" % secs if same else (err or "different bytes"))
+            # the list's hash: the state the phone, the desktop and Linux all make (MAME's Z180), byte for byte
+            listed = ok and lib.blv_state_check(os.path.join(made, bns).encode(),
+                                                os.path.join(made, state).encode()) == 1
+            result(listed, "generated %s state = the list's, byte for byte" % label,
+                   "%.1f s" % secs if listed else (err or "a different state"))
             if not BREAK_STATE:
                 check_progress(label, lang, secs, reports)
-        # ... and it speaks as the shipped one does, every case of the Android test
+        if not BREAK_STATE:
+            check_states(lib, fw, made, tmp)
+        # ... and it speaks every case of the Android test as the desktop's shipped state does (made on z180emu, so a
+        # REFERENCE: within a few samples, the length of each case; the state's own bytes are checked above)
         shipped = os.path.join(tmp, "shipped")
         os.makedirs(shipped)
         want = TAN.reference(lib, TAN.data_folder(fw, shipped))
@@ -249,9 +260,10 @@ def main():
             want.pop("spanish", None)
         got = TAN.reference(lib, made)
         for name in want:
-            ok = got.get(name) == want[name]
-            result(ok, "speech from the generated states: %s" % name,
-                   "%d samples %s" % want[name] if ok else "got %s, shipped %s" % (got.get(name), want[name]))
+            n, want_n = got.get(name, (0, ""))[0], want[name][0]
+            close = n > 0 and abs(n - want_n) <= 64
+            result(close, "speech from the generated states: %s" % name,
+                   "%d samples (the shipped state's: %d)" % (n, want_n))
         if not BREAK_STATE:
             check_once_english(lib, fw, tmp, want)
     finally:
