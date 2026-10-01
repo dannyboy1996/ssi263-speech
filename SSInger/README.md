@@ -37,7 +37,11 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
   patented method, not a bug.
 - The key→phoneme layout is fixed and built in (`note_map.txt` documents
   it — reference only, the plugin reads no files). A custom layout becomes
-  a UI feature (Phase-2 PEC-style editor), not a sidecar file.
+  a UI feature (Phase-2 PEC-style editor), not a sidecar file. All 64
+  chip phonemes are playable: notes 36–89 (C2–F6) sing E to TH in chip
+  order, 90–93 are PA (the patent's spare keys), and 94–102 (A#6–F#7) sing
+  the nine 0.7.0 left out: M, N, NG, :A, :OH, :U, :UH, E2, LB. No earlier
+  key moved. In Expander mode, Program Change N sings note N's phoneme.
 - The 6502 socket, memory map, IRQ line and ROM image slot exist and are
   exercised by the tests; the 6502 core itself (floooh `chips` `m6502.h`,
   MIT) drops in via `third_party/` without touching the translator API.
@@ -45,6 +49,22 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
   Phase-2 milestone — the bus is ready for it.
 - Single-chip (SEQ) and quad-chip (tour rig, channels 1/3/5/7 + 2/4/6/8)
   configurations. External-carrier input = second audio input pair.
+- Tour rig: the filter control (the mod wheel; the pitch wheel under the
+  Patent wheel map) moves all four chips at once, from any of their
+  channels. "Chip 2/3/4 filter offset (tour rig)" set each chip's filter
+  in steps from chip 1's ("Filter frequency (FF)"), so the wheel sweeps
+  the four together and keeps their spread; with one chip they do
+  nothing. Four chips add at full level (one chip sounds as loud as SEQ)
+  through a fixed soft knee that keeps four in unison under 0 dBFS
+  (0.7.0 divided by four, 12 dB quieter).
+
+## System requirements
+
+| OS | Runs on | Why |
+|---|---|---|
+| Windows | **Windows 10 (version 1607) or later**, x64. Not Windows 7 or 8.1: the binaries will not load there. | JUCE 8 and 9 support Windows 10 1607+ only; JUCE imports dcomp.dll, the shcore scaling API and user32's per-monitor DPI functions directly. JUCE 9 has no supported switch to lower this. |
+| macOS | **macOS 10.15 (Catalina) or later**, Apple silicon or Intel (one universal binary) | Built with `CMAKE_OSX_DEPLOYMENT_TARGET=10.15` |
+| Linux | x86-64 or arm64 with **glibc 2.38 and libstdc++ from GCC 13 or newer**: Ubuntu 24.04+, Debian 13+, Fedora 39+, Raspberry Pi OS based on Debian 13. Older systems (Debian 12, Ubuntu 22.04): build from source. | The downloads are built on GitHub's current Ubuntu runners; their binaries ask for GLIBC_2.38 and GLIBCXX_3.4.32 (checked on this build) |
 
 ## Build
 

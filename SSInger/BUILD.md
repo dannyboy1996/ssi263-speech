@@ -17,6 +17,14 @@ runners). The workflow `.github/workflows/ssinger.yml` builds all of this on
 Windows, Linux x86-64, Linux arm64 and macOS, runs the tests and the
 validators below, and keeps the bundles as downloadable artifacts.
 
+## What the built plug-ins run on
+
+| OS | Runs on | Why |
+|---|---|---|
+| Windows | **Windows 10 (version 1607) or later**, x64. Not Windows 7 or 8.1: the binaries will not load there. | JUCE 8 and 9 support Windows 10 1607+ only; JUCE imports dcomp.dll, the shcore scaling API and user32's per-monitor DPI functions directly. JUCE 9 has no supported switch to lower this. |
+| macOS | **macOS 10.15 (Catalina) or later**, Apple silicon or Intel (one universal binary) | Built with `CMAKE_OSX_DEPLOYMENT_TARGET=10.15` |
+| Linux | x86-64 or arm64 with **glibc 2.38 and libstdc++ from GCC 13 or newer**: Ubuntu 24.04+, Debian 13+, Fedora 39+, Raspberry Pi OS based on Debian 13. Older systems (Debian 12, Ubuntu 22.04): build from source. | The downloads are built on GitHub's current Ubuntu runners; their binaries ask for GLIBC_2.38 and GLIBCXX_3.4.32 (checked on this build) |
+
 ## You need
 
 Everywhere: **CMake 3.22+** and **git**, and internet **once**: JUCE 9.0.3
@@ -25,7 +33,8 @@ and clap-juce-extensions are fetched from GitHub at configure time
 SSI-263 engine, the 6502/6850 emulator, the translator) is already in this
 repo.
 
-- **Windows 10/11**: Visual Studio 2022 or newer, or its Build Tools, with
+- **Windows 10/11** (the plug-ins run on Windows 10 1607 or later only,
+  never Windows 7 or 8.1): Visual Studio 2022 or newer, or its Build Tools, with
   the "Desktop development with C++" workload (MSVC). The plug-ins link the
   C runtime statically, so users need no Visual C++ redistributable.
 - **macOS 10.15+** to run, **Xcode 12.4+** (Apple clang) to build. Ninja
@@ -199,7 +208,10 @@ screen-reader-friendly way to play SSInger, on every OS:
 | MIDI embodiment | N/N+1 phoneme+pitch, Expander (PC) |
 | Wheel map | Patent (bend=filter), Clock bend (Polaxis-style) |
 | Articulation (ART) | 0 to 7 |
-| Filter frequency (FF) | 0 to 255 |
+| Filter frequency (FF) | 0 to 255 (with four chips: chip 1's, and the base the others follow) |
+| Chip 2 filter offset (tour rig) | "0 (same as chip 1)", "+12 from chip 1", "-30 from chip 1" (-255 to +255) |
+| Chip 3 filter offset (tour rig) | as above |
+| Chip 4 filter offset (tour rig) | as above |
 | Rate | 0 to 15 |
 | Pitch glide (R1) | 0 to 7 |
 | Phoneme DUR | 0 to 3 |
@@ -208,6 +220,18 @@ screen-reader-friendly way to play SSInger, on every OS:
 | Master clock (st) | "+0.0 st (1.000 MHz)" (-24 to +24) |
 | Carrier | Internal, External (sidechain) |
 | Volume | "-1.9 dB" (-inf to +3.5 dB) |
+
+The three "Chip N filter offset (tour rig)" parameters only do something
+when Voices is "Quad (tour rig)"; with one voice they are stored and have
+no effect. In the tour rig the mod wheel (CC1, with the default Clock bend
+wheel map; the pitch wheel with the Patent map) moves all four chips'
+filters at once, whichever of channels 1-8 it comes on: chip 1 goes to the
+wheel's value and chips 2-4 to that value plus their offsets, clamped to
+0-255. "Filter frequency (FF)" sets chip 1 and the others the same way.
+So, for a choir of different-sized voices: set chip 2 to -20, chip 3 to
+-40, chip 4 to +15, and the wheel sweeps all four together, keeping the
+spread. Like any parameter, the offsets can be automated and are saved
+with the project.
 
 - **REAPER + OSARA (Windows, macOS, Linux)**: the action "OSARA: View FX
   parameters for current track" lists every parameter with its value text.
@@ -257,7 +281,9 @@ output, not gated).
    (defaults; "Phoneme channel" param moves the pair).
 2. Channel 1 alone sings at ~30 Hz — near-inaudible without channel 2.
    That is the patented method, not a bug.
-3. Key→phoneme layout: `note_map.txt` (reference; C4 = middle C).
+3. Key→phoneme layout: `note_map.txt` (reference; C4 = middle C). All 64
+   chip phonemes: notes 36-89 (C2-F6) E to TH, 90-93 PA, and 94-102
+   (A#6-F#7) M, N, NG, :A, :OH, :U, :UH, E2, LB.
 4. No audio checklist: MIDI reaching the track (armed/monitored?) →
    channels 1+2 → pitch velocity > 0 (it owns volume; phoneme velocity is
    ignored) → Volume param up → pitch notes present (pitch latches, so one

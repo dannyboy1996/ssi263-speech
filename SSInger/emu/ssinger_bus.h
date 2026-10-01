@@ -279,7 +279,7 @@ static int ssinger_bus_init(ssinger_bus_t *b, double sample_rate, int nvoices,
         b->regs_mirror[i][0] = (b->fw.cfg.dur & 3) << 6;
         b->regs_mirror[i][2] = (b->fw.cfg.rate & 15) << 4;
         b->regs_mirror[i][3] = (b->fw.cfg.articulation & 7) << 4;
-        b->regs_mirror[i][4] = b->fw.cfg.filter_ff;
+        b->regs_mirror[i][4] = b->fw.v[i].filter_ff; /* FF + the chip's tour-rig offset */
     }
     for (i = 0; i < SG_NVOICES_MAX; i++) {
         b->ff_cur[i] = (float)b->regs_mirror[i][4];
@@ -331,6 +331,26 @@ static void ssinger_bus_service_all(ssinger_bus_t *b)
         ssinger_bus_service(b, i);
 }
 
+/* Tour-rig mix: the chips add at full level (one chip sings exactly as
+ * loud as SEQ), and a fixed soft knee keeps four chips in unison under
+ * 0 dBFS. Memoryless (no envelope, so nothing pumps): linear up to
+ * SG_MIX_KNEE, which one chip at full velocity stays under (-4.2 dBFS
+ * peak measured), then a tanh shoulder that never reaches SG_MIX_CEIL.
+ * 0.7.0 divided by the chip count instead: one chip of four sang 12 dB
+ * down (spacepup: "much quieter than solo"). SEQ (one chip) is never
+ * touched. */
+#define SG_MIX_KNEE 0.70  /* -3.1 dBFS */
+#define SG_MIX_CEIL 0.95  /* -0.45 dBFS */
+static double ssinger_mix_knee(double x)
+{
+    const double a = fabs(x), room = SG_MIX_CEIL - SG_MIX_KNEE;
+    double y;
+    if (a <= SG_MIX_KNEE)
+        return x;
+    y = SG_MIX_KNEE + room * tanh((a - SG_MIX_KNEE) / room);
+    return x < 0.0 ? -y : y;
+}
+
 /* Render n samples, mixed mono. Returns samples written. */
 static long ssinger_bus_render(ssinger_bus_t *b, long n, double *out)
 {
@@ -352,8 +372,11 @@ static long ssinger_bus_render(ssinger_bus_t *b, long n, double *out)
             continue;
         got = ssi263_run(b->chip[v], n, b->render_tmp);
         for (i = 0; i < got; i++)
-            out[i] += b->render_tmp[i] / b->nvoices;
+            out[i] += b->render_tmp[i];
     }
+    if (b->nvoices > 1)
+        for (i = 0; i < n; i++)
+            out[i] = ssinger_mix_knee(out[i]);
     return n;
 }
 

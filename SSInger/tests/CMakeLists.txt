@@ -19,7 +19,9 @@ if(UNIX)
   target_link_libraries(test_6850_midi PRIVATE m)
 endif()
 
-add_test(NAME acia6850_translator_bus_engine COMMAND test_6850_midi)
+# Runs in the SSInger folder: one test reads note_map.txt there.
+add_test(NAME acia6850_translator_bus_engine COMMAND test_6850_midi
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 # The emulator headers ship to C++ (JUCE plugin). Compile-only check.
 add_library(ssinger_cxxcheck STATIC cxxcheck.cpp)

@@ -67,6 +67,13 @@ verbatim.
   channels 2, 4, 6 and 8"). Notes 36–93 = 58 keys for the chip's 54
   phonemes (Fig. 2 groups: dark→bright vowels, voiced, voiceless,
   plosives).
+- VST extension beyond Fig. 2: the SC-02 has 64 codes, so 54 phonemes
+  plus PA leave nine out (M, N, NG, :A, :OH, :U, :UH, E2, LB — codes
+  55–63). The VST keeps the 58-key span exactly as above (36–89 = codes
+  1–54, 90–93 = PA on the spare keys) and plays those nine on notes
+  94–102, above it, in chip order, so no key inside the patent's span
+  moved. Program Change (embodiment 2) uses the same table, so programs
+  94–102 reach them too.
 
 ### 1.2 Embodiment 2 (expander style — VST option) [patent]
 
@@ -128,7 +135,7 @@ auction photos) unless §8 gives a stronger record.
 | 2 | Fixed chip clock implied | Variable master clock = coarse pitch (lower MIDI interface → oscillator in the prototype; CC1 on Polaxis) | `Master Clock` param, ±octaves around nominal XCK |
 | 3 | Single or quad SC-02 | Rack of voices (quad mappings 1/3/5/7 + 2/4/6/8) | 1-voice SEQ default; 4-voice QUAD option |
 | 4 | Internal excitation | INT/EXT per-voice switches; vocoder/harmonizer downstream | `Carrier` audio input + INT/EXT mix (chip TP1/TP2 path is future work — see §5) |
-| 5 | Fig. 2 note→phoneme table | Same table, exact print unrecovered | Editable default table, notes 36–93 (placeholder order, §5) |
+| 5 | Fig. 2 note→phoneme table | Same table, exact print unrecovered | Editable default table, notes 36–93 (placeholder order, §5), plus 94–102 for the nine codes Fig. 2's 54 leave out |
 | 6 | Envelope CC sequences | Unknown numbers | Not modeled: the unit latches velocity straight to Amplitude (no attack/decay); CC learn |
 
 ## 3. SC-02 register map (what the translator writes)
@@ -197,7 +204,12 @@ there); CC2 fine (±1 st, 64 = center) stays sample-exact with it.
    `docs/sources.md` notes EP0396141A2 as the lead). VST models carrier
    select at the input for now, not injection behind the glottal source.
 5. Quad-voice tour wiring (which chip sang lead vs choir; MONO organ-stop
-   assignments) and the Telefunken unit's f/s/d role.
+   assignments) and the Telefunken unit's f/s/d role. The VST's choice:
+   the four chips add at full level (one chip as loud as SEQ) through a
+   fixed soft knee, and the filter control moves all four at once, each
+   chip keeping its own offset from chip 1 (host parameters "Chip 2/3/4
+   filter offset (tour rig)") — a choir of different vocal-tract sizes
+   that the wheel sweeps together.
 6. Whether the '98 rig still used the 6502 boards or had moved to
   Atari/Doepfer-direct serial MIDI — sonically equivalent either way;
   the emulation keeps the patented CPU path.
