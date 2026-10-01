@@ -215,6 +215,15 @@ $CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" "$OUT/sd_voices.o" $LIB_
 $CXX -shared $SHARED_CXX -o "$OUT/libsd_voices_ref.so" $CHIP_OBJS $ENGINE_OBJS -lm
 echo "built $OUT/sd_ssi263: $("$OUT/sd_ssi263" --voices | cut -f3 | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 
+# The Accent-mini in C (src/csrc/accentmini: SPKEMS.DVC on MAME's 8086 above, accent.py's host and the NVDA driver's
+# front end): its objects, and am_render (the C API alone, the chip built in).  Own folder; nothing else links it.
+rm -rf "$OUT/obj_accentmini"; mkdir -p "$OUT/obj_accentmini"
+for f in accentmini/am_host accentmini/am_voice accent_text numwords; do
+    $CC -O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/pc86 -I$SRC -c -o "$OUT/obj_accentmini/${f##*/}.o" "$SRC/$f.c"
+done
+$CC -O2 -std=gnu89 -ffp-contract=off -Wall -I$SRC -c -o "$OUT/am_render.o" "$SRC/accentmini/am_render.c"
+$CXX -o "$OUT/am_render" "$OUT/am_render.o" "$OUT"/obj_accentmini/*.o "$OUT/obj_i86/pc86.o" "$OUT/obj_i86/i86_mame.o" $CHIP_OBJS -lm
+
 # DEVELOPMENT ONLY (LEGACY=1): the board on z180emu's Z180 (GPL-2.0-or-later, third_party/z180emu), as references
 # for comparing the cores and as tools/check_no_gpl.py's must-fail control.  Its own folder, build/linux/legacy;
 # nothing below is copied to src/ssi263/_bin, packaged (tools/package_linux.sh) or put in a wheel.

@@ -268,6 +268,7 @@ def build_desktop():
              (mame, os.path.join(SRC, "cpu", "i8085_mame.cpp")), (accent, os.path.join(asa, "as_board.c")),
              (accent, os.path.join(asa, "as_usart.c")), (accent, os.path.join(asa, "as_host.c")),
              (front, os.path.join(asa, "as_voice.c")), (front, os.path.join(SRC, "numwords.c")),
+             (front, os.path.join(SRC, "accent_text.c")),
              (front, os.path.join(CPP, "ssa_map.c")),
              (front, os.path.join(CPP, "ssa_engine.c")), (front, os.path.join(HERE, "test_android_native.c"))]
     objs = []

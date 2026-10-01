@@ -11,5 +11,5 @@ is retained only as a development comparison and is not packaged.
 | `pc86.h`, `pc86.c` | The library: memory the host reads and writes directly; a run of whole `cpu.h` steps that stops before a given address, after a count, or when a callback asks (the three ways `uc_emu_start` stops); IN/OUT and the INT seam (`cpu_bus.intercept`) as callbacks. MIT. |
 
 Built by `../blazie/build_board.py` as `nvda/dist/blazie-lib/<x64|x86>/pc86.dll` and by `build_linux.sh` as
-`libpc86.so`. `src/hosts/pc86.py` wraps it in the calls `accent.py` makes of Unicorn; `../cpu/compare_i86_accent.py`
+`libpc86.so`; `../accentmini/am_host.c` (the same host in C, for the portable voice) links it directly. `src/hosts/pc86.py` wraps it in the calls `accent.py` makes of Unicorn; `../cpu/compare_i86_accent.py`
 checks the two CPUs against each other (`../cpu/README.md`).
