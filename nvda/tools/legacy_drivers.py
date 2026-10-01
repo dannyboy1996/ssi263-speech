@@ -1,14 +1,16 @@
 """0.7.0's Python Speak-Out and Accent drivers, the reference the native drivers (0.7.5) and the C voices are held
 to: their add-on folders as nvda/build_speakout.py and nvda/build_accent.py made them at REV, the last commit with the
 Python hosts in the add-ons, put together in nvda/tools/out/legacy-<rev>/ from that commit and this tree's native
-libraries.
+libraries.  And 0.7.0's Braille Lite driver, as nvda/build_blazie.py made it at REV: the same driver over bl.dll (the
+board's own library, src/csrc/blazie/build_board.py), where 0.7.5's speaks through ssi263speech.dll.  The SAPI tests'
+reference server runs all three (sapi/reference_drivers.py).
 
-    python legacy_drivers.py [speakout|accent ...]      # print each one's synthDrivers folder (making it once)
-    legacy_drivers.synth_drivers("speakout")            # the same, for a test
+    python legacy_drivers.py [speakout|accent|blazie ...]   # print each one's synthDrivers folder (making it once)
+    legacy_drivers.synth_drivers("speakout")                # the same, for a test
 
 From REV (git show): the drivers, src/hosts, src/ssi263 and src/data, nvda/shared.  From this tree (not in git):
-src/ssi263/_bin (the chip), nvda/dist/speakout-lib (speakout_v40.dll), nvda/dist/blazie-lib (pc86.dll),
-nvda/dist/accentsa-lib (accent_sa.dll), and firmware/.  The Accent-mini's INIT snapshot (SPKEMS.state) is made as
+src/ssi263/_bin (the chip), nvda/dist/speakout-lib (speakout_v40.dll), nvda/dist/blazie-lib (pc86.dll, bl.dll,
+bl_live_mame.exe), nvda/dist/accentsa-lib (accent_sa.dll), and firmware/.  The Accent-mini's INIT snapshot (SPKEMS.state) is made as
 build_accent.py made it, on MAME's 8086.  A test points fake_nvda_driver_test.py at a folder by
 SSI263_SYNTH_DRIVERS.  Made once, into a temporary folder renamed into place, so parallel checks can share it.
 """
@@ -104,6 +106,24 @@ def _accent(build):
     subprocess.run([sys.executable, "-c", code], check=True, env=env, capture_output=True)
 
 
+def _blazie(build):
+    sd = os.path.join(build, "synthDrivers")
+    eng = os.path.join(sd, "_ssi263_blazie")
+    _put("nvda/blazie/synthDrivers/blazie.py", os.path.join(sd, "blazie.py"))
+    _engine(eng)
+    for src, dst in (("blazie.py", "blazie_host.py"), ("native_blazie.py", "native_blazie.py"),
+                     ("blazie_idle.py", "blazie_idle.py")):
+        _put("src/hosts/" + src, os.path.join(eng, dst))
+    for arch in ARCHES:
+        _copy(os.path.join(DIST, "blazie-lib", arch, "bl.dll"), os.path.join(eng, "bin", arch, "bl.dll"))
+    _copy(os.path.join(DIST, "blazie-lib", "bl_live_mame.exe"), os.path.join(eng, "bns_live.exe"))
+    for name in ("BL2ENG.BNS", "bl2_2003_warm.state"):
+        _copy(os.path.join(FW, "blazie", name), os.path.join(eng, name))
+    for name in ("BL2SPA.BNS", "bl2spa_fresh.state"):             # the Spanish voice, when its firmware is here
+        if os.path.isfile(os.path.join(FW, "blazie", "spanish", name)):
+            _copy(os.path.join(FW, "blazie", "spanish", name), os.path.join(eng, name))
+
+
 def _src(dest):
     """REV's research tree (hosts, chip package), for the INIT snapshot"""
     _tree("src/hosts", os.path.join(dest, "hosts"))
@@ -111,7 +131,7 @@ def _src(dest):
 
 
 def synth_drivers(addon):
-    """0.7.0's synthDrivers folder for "speakout" or "accent", made on first use"""
+    """0.7.0's synthDrivers folder for "speakout", "accent" or "blazie", made on first use"""
     final = os.path.join(OUT, "%s-build" % addon)
     if not os.path.isdir(final):
         os.makedirs(OUT, exist_ok=True)
@@ -120,7 +140,7 @@ def synth_drivers(addon):
             build = os.path.join(tmp, "%s-build" % addon)
             if addon == "accent":
                 _src(os.path.join(tmp, "src"))
-            {"speakout": _speakout, "accent": _accent}[addon](build)
+            {"speakout": _speakout, "accent": _accent, "blazie": _blazie}[addon](build)
             try:
                 os.rename(build, final)
             except OSError:
@@ -132,5 +152,5 @@ def synth_drivers(addon):
 
 
 if __name__ == "__main__":
-    for a in sys.argv[1:] or ("speakout", "accent"):
+    for a in sys.argv[1:] or ("speakout", "accent", "blazie"):
         print(synth_drivers(a))

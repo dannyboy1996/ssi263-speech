@@ -11,7 +11,9 @@ afterwards), so this user's settings and the installed engine are never touched.
 Microsoft voice's token -- so a development build reaches SAPI only through machine-wide tokens.  test_sapi.ps1 and
 test_sapi_settings.ps1 go through SAPI and System.Speech for an installed build.)
 
-The checks, each case's audio against sapi/ssi_serve.py (the 0.7.0 engine) with the same settings:
+The checks, each case's audio against sapi/ssi_serve.py (the 0.7.0 engine) with the same settings, on 0.7.0's Python
+drivers (nvda/tools/legacy_drivers.py; nvda/dist's are the native ones since 0.7.5), which sapi/reference_drivers.py
+checks first -- SSI263_SAPI_REF_BREAK=dist, the reference on nvda/dist's drivers, must fail that:
   - each voice at SAPI's rates and pitches, texts with numbers and money: byte for byte, then the engine's 150 ms of
     silence, at the rate GetOutputFormat declared;
   - the dialog's settings (inflection off, the whine, the Accent's intonation, run ahead) and each sample rate: the same;
@@ -32,6 +34,8 @@ import subprocess
 import sys
 import tempfile
 import winreg
+
+import reference_drivers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -85,9 +89,9 @@ def cases(voices):
 
 
 # ---- the reference: the Python server with the same settings ---------------------------------------------------------
-def reference(opts, requests):
+def reference(opts, requests, env):
     p = subprocess.Popen([sys.executable, os.path.join(HERE, "ssi_serve.py"), "--serve"] + opts, stdin=subprocess.PIPE,
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
 
     def exact(n):
         b = b""
@@ -177,6 +181,10 @@ def main():
         for f in ("ssi263_sapi.dll", "sapi_harness.exe", "ssi263speech.dll"):
             if not os.path.isfile(os.path.join(STAGE, arch, f)):
                 sys.exit("FAILED: %s is missing: powershell -File sapi\\build.ps1 -Dev" % os.path.join(STAGE, arch, f))
+    # the reference is 0.7.0's Python drivers, never nvda/dist's native ones: one environment for every reference
+    # server (not the harness), checked first (reference_drivers.py; SSI263_SAPI_REF_BREAK=dist must fail here)
+    ref_env = reference_drivers.env()
+    reference_drivers.guard(sys.executable, os.path.join(HERE, "ssi_serve.py"), ref_env, "sapi engine")
     voices = [ln.split("\t") for ln in open(os.path.join(STAGE, "voices.txt"), encoding="utf-8").read().splitlines()
               if "\t" in ln]
     todo = cases(voices)
@@ -194,7 +202,7 @@ def main():
     bad = 0
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            refs_f = {g: pool.submit(reference, opts_for(todo[items[0][0]][4]), [q for _k, q in items])
+            refs_f = {g: pool.submit(reference, opts_for(todo[items[0][0]][4]), [q for _k, q in items], ref_env)
                       for g, items in groups.items()}
             got_f = {name: pool.submit(harness, a, [todo[k] for k in idx], tmp, name) for a, name, idx in runs}
             refs = {}

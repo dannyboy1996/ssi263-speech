@@ -1,7 +1,8 @@
 """The SAPI engine's native voices against the Python server they replace, byte for byte, over the same wire.
 
 The reference is sapi/ssi_serve.py --serve, the server the SAPI engine ran up to 0.7.0: the three NVDA add-ons' own
-drivers (nvda/dist/*-build) under NVDA stand-ins.  The native side is ssi263_serve.exe (sapi/ssi_serve.c), which loads
+drivers under NVDA stand-ins -- 0.7.0's Python drivers (nvda/tools/legacy_drivers.py), not nvda/dist's, which since
+0.7.5 are the native ones; sapi/reference_drivers.py checks that first and fails the run if not.  The native side is ssi263_serve.exe (sapi/ssi_serve.c), which loads
 ssi263speech.dll the way the SAPI DLL does and maps every setting with the DLL's own code (sapi/ssi_native.c) -- as
 outspoken-nvda holds its osp_host to osp_serve.py.  Both get the same requests -- texts with numbers, money, currencies,
 accents; SAPI's rates and pitches; the voices one after another, and back; the settings dialog's values on the command
@@ -20,8 +21,10 @@ skipped; every voice it does have must match.
     SSI263_SERVE_BREAK=voice       control: the native host swaps English/Spanish and mini/SA -- FAILS
     SSI263_SERVE_BREAK=numbers     control: the native host turns the drivers' number words off -- the texts with
                                    digits FAIL, in English and in Spanish
+    SSI263_SAPI_REF_BREAK=dist     control: the reference on nvda/dist's (native) drivers -- the reference check FAILS
 
-Build first: python src/csrc/build_ssi263speech.py (and the add-ons, for the reference: nvda/build_*.py).
+Build first: python src/csrc/build_ssi263speech.py (and the add-ons' libraries, which legacy_drivers.py puts under
+0.7.0's drivers for the reference: nvda/build_*.py).
 """
 import concurrent.futures
 import hashlib
@@ -30,6 +33,8 @@ import struct
 import subprocess
 import sys
 import threading
+
+import reference_drivers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -86,8 +91,8 @@ def lang_of(voice):
 
 
 class Client(object):
-    def __init__(self, cmd):
-        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    def __init__(self, cmd, env=None):
+        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
         self.seq = 0
 
     def exact(self, n):
@@ -133,14 +138,14 @@ class Client(object):
             self.p.kill()
 
 
-def listing(cmd):
-    out = subprocess.run(cmd + ["--list"], capture_output=True, timeout=180).stdout.decode("utf-8")
+def listing(cmd, env=None):
+    out = subprocess.run(cmd + ["--list"], capture_output=True, timeout=180, env=env).stdout.decode("utf-8")
     return [ln.split("\t")[0] for ln in out.splitlines() if "\t" in ln]
 
 
-def play(cmd, requests):
+def play(cmd, requests, env=None):
     """Every request's (status, pcm), in order; a cancel case gives two: the cut one and the one after."""
-    c = Client(cmd)
+    c = Client(cmd, env)
     out = []
     try:
         for r in requests:
@@ -204,7 +209,11 @@ def main():
     for a, cmd in nat_cmd.items():
         if not os.path.isfile(cmd[0]):
             sys.exit("FAILED: %s is missing: python src/csrc/build_ssi263speech.py" % os.path.relpath(cmd[0], REPO))
-    ref_voices = listing([sys.executable, os.path.join(HERE, "ssi_serve.py")])
+    # the reference is 0.7.0's Python drivers, never nvda/dist's native ones: one environment for every reference
+    # server, checked first (reference_drivers.py; SSI263_SAPI_REF_BREAK=dist must fail here)
+    ref_env = reference_drivers.env()
+    reference_drivers.guard(sys.executable, os.path.join(HERE, "ssi_serve.py"), ref_env, "native")
+    ref_voices = listing([sys.executable, os.path.join(HERE, "ssi_serve.py")], ref_env)
     nat_voices = {a: listing(nat_cmd[a][:1] + ["--firmware", FIRMWARE]) for a in ARCHES}
     common = [v for v in ref_voices if all(v in nat_voices[a] for a in ARCHES)]
     missing = [v for v in ref_voices if v not in common]
@@ -218,7 +227,7 @@ def main():
                 continue
             reqs = [r for r in reqs if (r[1] if r[0] == "cancel" else r[0]) in common]
             jobs.append((name, opts, reqs))
-            results[name, "ref"] = pool.submit(play, ref_cmd + opts, reqs)
+            results[name, "ref"] = pool.submit(play, ref_cmd + opts, reqs, ref_env)
             for a in ARCHES:
                 results[name, a] = pool.submit(play, nat_cmd[a] + opts, reqs)
         bad, total = 0, 0

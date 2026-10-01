@@ -10,6 +10,7 @@ loads `ssi263speech.dll` (the native voices, `src/csrc/voices.h`) from its own f
 | `ssi_native.c`, `.h` | Loads `ssi263speech.dll` and maps the dialog's settings and SAPI's rate and pitch onto the voice table. Shared by the DLL and `ssi_serve.c`. |
 | `ssi_serve.c` | `ssi263_serve.exe`: the old pipe protocol over the native voices, a test and build tool (`--list` and `--files` make the stage's `voices.txt` and firmware). Never installed. |
 | `ssi_serve.py` | 0.7.0's Python server over the NVDA drivers. It is no longer shipped and stays as the reference the native voices are held to. |
+| `reference_drivers.py` | The tests' reference: `ssi_serve.py` on 0.7.0's Python drivers (`nvda/tools/legacy_drivers.py`, by `SSI263_SAPI_DRIVERS`), never `nvda/dist`'s native ones, checked by `ssi_serve.py --drivers` before each test (control: `SSI263_SAPI_REF_BREAK=dist`). |
 | `sapi_harness.cpp` | Drives the development DLL through `ISpTTSEngine` with nothing registered (`build.ps1 -Dev`). |
 | `build.ps1` | The stage, `nvda\dist\sapi` (`-Dev`: `nvda\dist\sapi-dev`). Build `python src\csrc\build_ssi263speech.py` first. |
 | `installer.iss` | The Inno Setup installer: DLLs, firmware, licences, `voices.txt`, settings. |

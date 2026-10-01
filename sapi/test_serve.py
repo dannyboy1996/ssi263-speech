@@ -5,7 +5,11 @@ Lite's "Run the unit ahead" on (--run-ahead 1), against it off: the same phoneme
 the server's write log (SSI263_SAPI_WRITE_LOG), nothing of a cancelled line at the next one's head, and the setting
 reaching the unit.
 
-    python sapi/test_serve.py [python.exe] [--run-ahead-only]   # default: this interpreter, nvda/dist's add-ons
+The server runs 0.7.0's Python drivers (nvda/tools/legacy_drivers.py), the ones it ran when it was the engine, not
+nvda/dist's, which since 0.7.5 are the native ones; sapi/reference_drivers.py checks that first and fails the run if not.
+
+    python sapi/test_serve.py [python.exe] [--run-ahead-only]   # default: this interpreter
+    SSI263_SAPI_REF_BREAK=dist     control: the server on nvda/dist's (native) drivers -- the reference check FAILS
 """
 import os
 import struct
@@ -14,23 +18,26 @@ import sys
 import threading
 import time
 
+import reference_drivers
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 ONLY_RUN_AHEAD = "--run-ahead-only" in sys.argv[1:]     # run_tests.py's must-fail control runs only that part
 PY = ARGS[0] if ARGS else sys.executable
 SERVE = os.environ.get("SSI_SERVE", os.path.join(HERE, "ssi_serve.py"))   # a staged copy: nvda/dist/sapi/ssi_serve.py
+REF_ENV = reference_drivers.env()                       # every server this test starts: 0.7.0's drivers
 RATE = 22050
 REQ, RSP, CANCEL = 0x4F535034, 0x4F535052, 0x4F535043
 
 
 def voices():
-    out = subprocess.run([PY, SERVE, "--list"], capture_output=True, timeout=120).stdout.decode("utf-8")
+    out = subprocess.run([PY, SERVE, "--list"], capture_output=True, timeout=120, env=REF_ENV).stdout.decode("utf-8")
     return [ln.split("\t") for ln in out.splitlines() if "\t" in ln]
 
 
 class Client:
     def __init__(self, extra=(), write_log=None):
-        env = dict(os.environ)
+        env = dict(REF_ENV)
         if write_log:
             env["SSI263_SAPI_WRITE_LOG"] = write_log      # the server's test hook: the Braille Lite's writes
         self.p = subprocess.Popen([PY, SERVE, "--serve"] + list(extra), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -211,6 +218,9 @@ def run_ahead_checks():
 
 
 bad = 0
+# the server on 0.7.0's Python drivers, never nvda/dist's native ones: every server here gets REF_ENV, checked first
+# (reference_drivers.py; SSI263_SAPI_REF_BREAK=dist must fail here)
+reference_drivers.guard(PY, SERVE, REF_ENV, "serve")
 vs = voices()
 print("voices: %s" % ", ".join(v[0] for v in vs))
 if any(v[0].startswith("blazie:") for v in vs):

@@ -5,7 +5,7 @@ A fork of outspoken-nvda's sapi/osp_serve.py (itself Panthera's): the SAPI engin
 embeddable Python installed beside it, and every decision about how speech sounds -- the firmware, the emulators,
 the chip, number reading, cancel -- runs in the same driver files NVDA users run, byte for byte.  There is no port
 to drift, because there is no port.  The three add-ons' synthDrivers folders sit beside this script (staged by
-sapi/build.ps1), or come from nvda/dist/*-build in the repository.
+sapi/build.ps1 up to 0.7.0), or come from nvda/dist/*-build in the repository (since 0.7.5 the native drivers there).
 
 Requests arrive on stdin, framed:
 
@@ -20,6 +20,9 @@ prints it.  The response is 'OSPR' | status, then PCM in chunks as the driver pr
 frames*2 bytes of 16-bit mono at the --rate (default 22050 Hz) -- and a zero frame count to finish.
 
 `--list` prints one voice per line: "id<TAB>name<TAB>language".
+`--drivers` makes every driver as a request would, then prints where they came from: "path<TAB>folder" for each
+synthDrivers folder, "module<TAB>name<TAB>file" for every synthDrivers.* module loaded, "dll<TAB>file" for every DLL
+loaded outside Windows and Python (sapi/reference_drivers.py checks the tests' reference is 0.7.0's drivers by it).
 `--inflection 1|0` and `--whine off|hiss|whine`: the Braille Lite's voice inflection and hiss/whine (the dialog's).
 `--rate 11025|22050|44100`: the output sample rate of every voice (the dialog's; the DLL declares the same rate).
 `--accent-inflection 0..100`: the Accent's intonation, as its NVDA slider (five steps; 100, full, by default).
@@ -27,7 +30,9 @@ frames*2 bytes of 16-bit mono at the --rate (default 22050 Hz) -- and a zero fra
 unit writes the whole utterance flat out and the chip plays the script (src/csrc/blazie/run_ahead.c).  Both Braille
 Lite voices; the driver decides where it applies (short pauses on, the in-process unit, the voices it was tested on).
 
-Test hooks, never set by the engine DLL: SSI263_SAPI_WRITE_LOG=<file> appends every Braille Lite unit's say, cancel
+Test hooks, never set by the engine DLL: SSI263_SAPI_DRIVERS=<folder> takes the drivers from <folder>/<add-on>-build/
+synthDrivers instead (the SAPI tests point it at nvda/tools/legacy_drivers.py's 0.7.0 drivers: since 0.7.5 nvda/dist
+holds the native drivers, and the reference must not be what it is compared with); SSI263_SAPI_WRITE_LOG=<file> appends every Braille Lite unit's say, cancel
 and SSI-263 write there (sapi/test_serve.py reads the phonemes from it), and with it SSI263_SAPI_NO_UNIT_CANCEL=1
 never cancels the unit; SSI263_SAPI_IGNORE_RUN_AHEAD=1 drops the run-ahead setting on its way to the driver.  The two
 1s are test_serve.py's must-fail controls (nvda/tools/run_tests.py).
@@ -49,13 +54,41 @@ DRIVERS = (("blazie", "blazie"), ("speakout", "speakout"), ("accent", "accentmin
 
 
 def _driver_dirs():
-    """The synthDrivers folders: staged beside this script, or the repository's built add-ons."""
+    """The synthDrivers folders: SSI263_SAPI_DRIVERS's (a test hook: a folder of <add-on>-build/synthDrivers, as
+    nvda/tools/legacy_drivers.py makes 0.7.0's), staged beside this script, or the repository's built add-ons."""
+    root = os.environ.get("SSI263_SAPI_DRIVERS")
     staged = os.path.join(HERE, "synthDrivers")
-    if os.path.isdir(staged):
+    if not root and os.path.isdir(staged):
         return [staged]
-    dist = os.path.join(os.path.dirname(HERE), "nvda", "dist")
+    dist = root or os.path.join(os.path.dirname(HERE), "nvda", "dist")
     return [os.path.join(dist, "%s-build" % a, "synthDrivers") for a, _m in DRIVERS
             if os.path.isdir(os.path.join(dist, "%s-build" % a, "synthDrivers"))]
+
+
+def _loaded_dlls():
+    """Every DLL in this process outside Windows and this Python's own folders (the --drivers report)."""
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.K32EnumProcessModules.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE), wintypes.DWORD,
+                                          ctypes.POINTER(wintypes.DWORD)]
+    k32.GetModuleFileNameW.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+    mods, need = (wintypes.HMODULE * 4096)(), wintypes.DWORD()
+    if not k32.K32EnumProcessModules(k32.GetCurrentProcess(), mods, ctypes.sizeof(mods), ctypes.byref(need)):
+        return ["?"]
+    skip = [os.path.normcase(os.path.abspath(p)) + os.sep
+            for p in (os.environ.get("SystemRoot") or os.environ.get("windir"), sys.base_prefix, sys.prefix) if p]
+    out = []
+    for h in mods[:min(len(mods), need.value // ctypes.sizeof(wintypes.HMODULE))]:
+        buf = ctypes.create_unicode_buffer(32768)
+        k32.GetModuleFileNameW(h, buf, len(buf))
+        path = os.path.normcase(os.path.abspath(buf.value))
+        if buf.value and not any(path.startswith(s) for s in skip):
+            out.append(buf.value)
+    return out
 
 
 class _StreamPlayer(object):
@@ -293,6 +326,20 @@ def main():
         elif args[k] == "--run-ahead":
             OPTIONS["run_ahead"] = args[k + 1] in ("1", "on", "true")
     done_evt = _install_fakes()
+    if "--drivers" in args:
+        ds = [driver(m) for m in modules_present()]      # each made as a request makes it (its unit booted)
+        try:
+            for p in sys.modules["synthDrivers"].__path__:
+                print("path\t%s" % p)
+            for name, mod in sorted(sys.modules.items()):
+                if name.startswith("synthDrivers.") and getattr(mod, "__file__", None):
+                    print("module\t%s\t%s" % (name, mod.__file__))
+            for p in _loaded_dlls():
+                print("dll\t%s" % p)
+        finally:
+            for d in ds:
+                d.terminate()
+        return 0
     if "--list" in args:
         try:
             sys.stdout.reconfigure(encoding="utf-8")       # "español" must reach the token registration intact

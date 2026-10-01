@@ -169,6 +169,13 @@ CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_RE
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
 SAPI_SERVE_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_serve.py")
 CHECKS.append(check("SAPI pipe server", [PY, SAPI_SERVE_TEST]))
+# The three SAPI tests' reference server runs 0.7.0's Python drivers (legacy_drivers.py), not nvda/dist's, which since
+# 0.7.5 are the native ones (Astra, Reply 141); each test checks that first (sapi/reference_drivers.py).  Pointed at
+# nvda/dist, each must fail there, on the modules and the native library it then loads.
+REF_MARK = r"^FAIL reference: NOT 0\.7\.0's Python drivers: .*modules not from the legacy folder.*ssi263speech\.dll"
+CHECKS.append(check("SAPI pipe server CONTROL (on nvda/dist's native drivers, must fail)",
+                    [PY, SAPI_SERVE_TEST, "--run-ahead-only"], env={"SSI263_SAPI_REF_BREAK": "dist"}, expect_fail=True,
+                    fail_marks=[REF_MARK, r"^serve: 1 FAILED$"]))
 # its run-ahead checks (the dialog's "Run the unit ahead"): the setting dropped on its way to the driver must fail the
 # "reaches the unit" and "changes the audio" checks; the unit never cancelled must fail the cancel checks (the
 # cancelled text runs on into the next line)
@@ -196,6 +203,9 @@ if os.path.isdir(os.path.join(os.path.dirname(HERE), "dist", "blazie-build")):
 SAPI_NATIVE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_native.py")
 if os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(HERE)), "build", "win", "x86", "ssi263_serve.exe")):
     CHECKS.append(check("SAPI native voices = the Python server, byte for byte", [PY, SAPI_NATIVE]))
+    CHECKS.append(check("SAPI native voices CONTROL (the reference on nvda/dist's native drivers, must fail)",
+                        [PY, SAPI_NATIVE, "--only", "rate11", "--arch", "x64"], env={"SSI263_SAPI_REF_BREAK": "dist"},
+                        expect_fail=True, fail_marks=[REF_MARK, r"^native: 1 FAILED$"]))
     CHECKS.append(check("SAPI native voices CONTROL (the dialog's settings dropped, must fail)",
                         [PY, SAPI_NATIVE, "--only", "dialog", "--arch", "x64"], env={"SSI263_SERVE_BREAK": "setting"},
                         expect_fail=True,
@@ -225,6 +235,9 @@ if os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(HERE)), "build", 
 SAPI_ENGINE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_sapi_engine.py")
 if os.path.isfile(os.path.join(os.path.dirname(HERE), "dist", "sapi-dev", "x86", "sapi_harness.exe")):
     CHECKS.append(check("SAPI engine DLL = the Python server, through SAPI's interface", [PY, SAPI_ENGINE]))
+    CHECKS.append(check("SAPI engine DLL CONTROL (the reference on nvda/dist's native drivers, must fail)",
+                        [PY, SAPI_ENGINE, "--arch", "x64"], env={"SSI263_SAPI_REF_BREAK": "dist"},
+                        expect_fail=True, fail_marks=[REF_MARK, r"^sapi engine: 1 FAILED$"]))
 # the golden vectors: every SSI-263 write with its time, the serial output and the audio hash of a fixed scenario, on
 # MAME's Z180 (0.7).  Two hosts, two baselines: the in-process host (bl.dll, the add-on's) has the lockstep cancel
 # protection on by default (blazie_{en,es}.txt, Astra's Replies 124-128); the pipe host (bns_live.exe / bl_live.exe,
