@@ -6,9 +6,12 @@
  * used to reach into -- the ASCI's baud ticking and request level, /DCD0 -- so the golden vectors hold bit for bit.
  *
  * Memory: ROM image from file offset 3000h at physical 00000h (256 KB, FFh-padded); 40000h..FFFFFh RAM, except that
- * port E0h bit 3 maps the AMD 29F040-style file flash over 80000h..FFFFFh.  E0h bit 4 picks the program flash's
- * other bank (p-chord l: the firmware checks a program is there and restarts into it): the same image is in both
- * here, so the unit restarts in its own language.  SSI-263 at ports C0h..C4h, its A/R
+ * port E0h bit 3 maps the file flash over 80000h..FFFFFh: 512 KB of a 2 MB 29F016-style chip, bits 0-1 picking which
+ * (measured: the firmware's file system is 2 MB -- its file list says "2045 k flash" free -- and a file moved to flash
+ * is programmed with E0h = 0Bh at window offset 7FE00h, the top of the fourth 512 KB).
+ * E0h bit 4 picks the program flash's other bank (p-chord l: the firmware checks a program is there and
+ * restarts into it): the same image is in both here, so the unit restarts in its own language.  SSI-263 at
+ * ports C0h..C4h, its A/R
  * request on /INT1.  Braille keyboard on port 40h, /INT2.  Serial on ASCI0 (9600 bit/s at 6.144 MHz), with the
  * host honouring the unit's XON/XOFF.  Port A0h bit 0 switches the serial port's line drivers on (bl_serial.h).
  * An 8255 at 80h-83h: its control word at 83h sets and clears port C's bits (bits 0-2 clock the braille display;
@@ -40,6 +43,8 @@ int bh_trace_on;
 #define FILE_ROM_OFFSET 0x3000
 #define SLICE_DEFAULT 10000
 #define FLASH_BASE 0x80000
+#define FFLASH_SIZE 0x200000UL               /* the file flash: a 29F016 */
+#define FFLASH_OLD 0x80000UL                 /* a state saved before the 2 MB chip: its first 512 KB */
 #define MAX_KEYS 64
 #define FIFO 0x10000
 
@@ -109,13 +114,22 @@ static int flash_window(const bl_unit *u)
     return (u->port_e0 & 0x08) != 0;
 }
 
+static unsigned long flash_off(const bl_unit *u, uint32_t A)   /* the chip address behind the window */
+{
+#ifdef BLAZIE_FLASH_BREAK                    /* test_emu_unit's must-fail control: the old 512 KB, every bank on it */
+    return A - FLASH_BASE;
+#else
+    return ((unsigned long)(u->port_e0 & 0x03) << 19) | (A - FLASH_BASE);
+#endif
+}
+
 /* ---- the bus the CPU sees (cpu.h) -------------------------------------------------------------------------------- */
 static uint8_t mem_read(void *ctx, uint32_t A)
 {
     bl_unit *u = (bl_unit *)ctx;
     A &= 0xFFFFF;
     if (A < ROM_SIZE) return u->flash[A];
-    if (A >= FLASH_BASE && flash_window(u)) return flash29_read(&u->ff, A - FLASH_BASE);
+    if (A >= FLASH_BASE && flash_window(u)) return flash29_read(&u->ff, flash_off(u, A), z180_cycles(u->cpu));
     return u->ram[A];
 }
 
@@ -126,7 +140,7 @@ static void mem_write(void *ctx, uint32_t A, uint8_t V)
     if (A < ROM_SIZE)
         return;                              /* ROM: bns.c counts and logs these; after a hard reset there are none */
     if (A >= FLASH_BASE && flash_window(u)) {
-        flash29_write(&u->ff, A - FLASH_BASE, V);
+        flash29_write(&u->ff, flash_off(u, A), V, z180_cycles(u->cpu));
         return;
     }
 #ifdef BH_TRACE
@@ -336,13 +350,13 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
     if (!u) { snprintf(err, errlen, "out of memory"); return NULL; }
     u->flash = (unsigned char *)malloc(ROM_SIZE);
     u->ram = (unsigned char *)calloc(1, 0x100000);
-    u->fflash = (unsigned char *)malloc(0x80000);
+    u->fflash = (unsigned char *)malloc(FFLASH_SIZE);
     u->lfifo = (unsigned char *)malloc(FIFO);
     if (!u->flash || !u->ram || !u->fflash || !u->lfifo) { snprintf(err, errlen, "out of memory"); bl_destroy(u); return NULL; }
-    u->ff.data = u->fflash;                  /* an Am29F040 */
-    u->ff.size = 0x80000;
+    u->ff.data = u->fflash;                  /* an Am29F016 (the firmware never reads its ID) */
+    u->ff.size = FFLASH_SIZE;
     u->ff.maker = 0x01;
-    u->ff.device = 0xA4;
+    u->ff.device = 0xAD;
     u->clock_hz = 6144000.0;
     u->phon_ms = phon_ms;
     u->irq_line = Z180_INT1;
@@ -359,16 +373,32 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
     }
     u->n_keys = n_keys < MAX_KEYS ? n_keys : MAX_KEYS;
     memset(u->flash, 0xFF, ROM_SIZE);
-    memset(u->fflash, 0xFF, 0x80000);
-    if (state) {                             /* battery-backed RAM + file flash, as a real unit keeps them */
+    memset(u->fflash, 0xFF, FFLASH_SIZE);
+    if (state) {                             /* battery-backed RAM + file flash, as a real unit keeps them: the whole
+                                                2 MB, or its first 512 KB (bl_save_state's format while the rest is
+                                                erased, and every state saved before the 2 MB chip) */
+        /* by its size: RAM, then the flash (512 KB or 2 MB), then the clock controller's tail when it was on
+           (bl_clock_on) -- four sizes in all; the tail is never read as flash */
         FILE *s = fopen(state, "rb");
-        if (!s || fread(u->ram + 0x40000, 1, 0x40000, s) != 0x40000 || fread(u->fflash, 1, 0x80000, s) != 0x80000) {
+        long size = -1, rest;
+        unsigned long fl = 0;
+        int tail = 0;
+        if (s && fseek(s, 0, SEEK_END) == 0)
+            size = ftell(s);
+        rest = size - 0x40000L;
+        if (rest == (long)(FFLASH_OLD + BLC_SAVE_SIZE) || rest == (long)(FFLASH_SIZE + BLC_SAVE_SIZE)) {
+            tail = 1;
+            fl = (unsigned long)rest - BLC_SAVE_SIZE;
+        } else if (rest == (long)FFLASH_OLD || rest == (long)FFLASH_SIZE)
+            fl = (unsigned long)rest;
+        if (!s || !fl || fseek(s, 0, SEEK_SET) != 0 || fread(u->ram + 0x40000, 1, 0x40000, s) != 0x40000
+            || fread(u->fflash, 1, fl, s) != fl) {
             if (s) fclose(s);
             snprintf(err, errlen, "cannot read state %s", state);
             bl_destroy(u);
             return NULL;
         }
-        u->has_clk_tail = blc_read_tail(s, u->clk_tail);   /* the clock controller, when it was on (bl_clock_on) */
+        u->has_clk_tail = tail && blc_read_tail(s, u->clk_tail);
         fclose(s);
     }
     f = fopen(firmware, "rb");
@@ -491,12 +521,29 @@ int bl_save_state(const bl_unit *u, const char *path)
 {
     FILE *s = fopen(path, "wb");
     int ok;
+    unsigned long n = FFLASH_SIZE, i;
     if (!s)
         return 0;
-    ok = fwrite(u->ram + 0x40000, 1, 0x40000, s) == 0x40000 && fwrite(u->fflash, 1, 0x80000, s) == 0x80000;
+    for (i = FFLASH_OLD; i < FFLASH_SIZE && u->fflash[i] == 0xFF; i++)
+        ;
+    if (i == FFLASH_SIZE)
+        n = FFLASH_OLD;                      /* the rest erased: the 786432-byte format every reader knows */
+    ok = fwrite(u->ram + 0x40000, 1, 0x40000, s) == 0x40000 && fwrite(u->fflash, 1, n, s) == n;
     if (ok && u->clk)
         ok = blc_write_tail(s, u->clk, u->clk_wall);
     return fclose(s) == 0 && ok;
+}
+
+void bl_flash_timed(bl_unit *u, int on)
+{
+    u->ff.hz = on ? u->clock_hz : 0.0;
+}
+
+int bl_flash_busy(const bl_unit *u, unsigned long *chip_erases, unsigned long *sector_erases)
+{
+    if (chip_erases) *chip_erases = u->ff.n_chip_erase;
+    if (sector_erases) *sector_erases = u->ff.n_sector_erase;
+    return flash29_busy(&u->ff, z180_cycles(u->cpu));
 }
 
 void bl_battery(bl_unit *u, int level)
@@ -654,7 +701,7 @@ void bl_probe_get(const bl_unit *u, bl_probe *p)
 int bl_memory(const bl_unit *u, int which, const unsigned char **bytes)
 {
     *bytes = which ? u->fflash : u->ram;
-    return which ? 0x80000 : 0x100000;
+    return which ? (int)FFLASH_SIZE : 0x100000;
 }
 
 int bl_events(const bl_unit *u, const bl_event **events)

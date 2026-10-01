@@ -263,7 +263,7 @@ def build_desktop():
     asa = os.path.join(SRC, "accentsa")
     units = [(chip, os.path.join(SRC, "ssi263.c")), (chip, os.path.join(SRC, "ssi263dsp.c")),
              (z180, os.path.join(SRC, "cpu", "z180_mame.cpp")), (z180, os.path.join(SRC, "cpu", "z180_asci.cpp"))] + \
-            [(board, os.path.join(SRC, "blazie", n + ".c")) for n in ("bl_board", "flash29", "bl_serial", "bl_idle",
+            [(board, os.path.join(SRC, "blazie", n + ".c")) for n in ("bl_board", "flash29", "bl_serial", "bl_idle", "bl_clock",
                                                                      "bl_host", "bl_voice")] + [
              (mame, os.path.join(SRC, "cpu", "i8085_mame.cpp")), (accent, os.path.join(asa, "as_board.c")),
              (accent, os.path.join(asa, "as_usart.c")), (accent, os.path.join(asa, "as_host.c")),

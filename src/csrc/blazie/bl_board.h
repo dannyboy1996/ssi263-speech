@@ -25,7 +25,7 @@ typedef struct {
 } bl_event;
 
 /* firmware: a .BNS update file (the ROM image from file offset 3000h); state: battery-backed RAM (256 KB) + the file
-   flash (512 KB), as make_states.sh saves them; phon_ms: the stand-in A/R timing before live mode (bns --phon-ms);
+   flash (512 KB or 2 MB: bl_save_state), as make_states.sh saves them; phon_ms: the stand-in A/R timing before live mode (bns --phon-ms);
    keys: braille chords pressed at those instruction counts during the boot (bns --key INSTR=CHORD).
    NULL on failure, with a reason in err. */
 bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
@@ -66,8 +66,17 @@ extern int bl_keys_break;   /* the tests' control (an app never sets it): nonzer
 /* how many times the firmware has run from its reset vector (power-on, and each restart: p-chord l) */
 int  bl_starts(const bl_unit *u);
 /* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
-   with the clock controller on (bl_clock_on), the controller follows them (bl_clock.h); 1 on success */
+   1 on success.  The file flash is 2 MB; while all but its first 512 KB is erased the state keeps the 786432-byte
+   format (256 KB + 512 KB) every earlier state has, otherwise it is 256 KB + 2 MB; with the clock controller on
+   (bl_clock_on) its 64-byte tail follows (bl_clock.h).  bl_create reads all four sizes. */
 int  bl_save_state(const bl_unit *u, const char *path);
+/* The file flash's busy time (flash29.h): off (the default) every erase and program is done at once, as the
+   screen-reader drivers and their state recipes need; on (the emulator), an erase takes the chip's typical time and the
+   firmware chirps through the speech chip while it waits (an initialisation's chip erase: 32 s).  bl_flash_busy: 1
+   while an erase runs, 2 while a byte programs, 0 idle; the counts of chip and sector erases so far (NULL: not
+   wanted). */
+void bl_flash_timed(bl_unit *u, int on);
+int  bl_flash_busy(const bl_unit *u, unsigned long *chip_erases, unsigned long *sector_erases);
 
 /* The clock controller on the Z180's CSI/O (bl_clock.h): the time and date the firmware reads and sets.  Off by
    default (the screen-reader drivers' path: the firmware then finds no clock, as it always did).  bl_clock_on
@@ -102,7 +111,7 @@ typedef struct {
     int asci_cntla, asci_cntlb, asci_stat, asci_asext, asci_astc;
 } bl_probe;
 void bl_probe_get(const bl_unit *u, bl_probe *p);
-/* which 0: the 1 MB address space's RAM (00000-3FFFF unused: the ROM), which 1: the 512 KB file flash; the size */
+/* which 0: the 1 MB address space's RAM (00000-3FFFF unused: the ROM), which 1: the 2 MB file flash; the size */
 int bl_memory(const bl_unit *u, int which, const unsigned char **bytes);
 
 /* the events since the last bl_clear_events, in order */

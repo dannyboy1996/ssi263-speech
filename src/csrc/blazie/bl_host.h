@@ -89,6 +89,8 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    the lockstep's bh_cancel lets the unit run on, A/R not requesting and its chip writes dropped, to a wait for an
    interrupt before its ^X (bit 0), and holds A/R not requesting over the first ^X slice (bit 1); read-only
    "cancel_settled" (1 idle, 0 the cap, -1 not run) and "cancel_dropped" (its writes) for the last cancel.
+   "flash_timed" (write only; 0 = off, the default): the file flash's busy time (bl_board.h bl_flash_timed), which the
+   emulator turns on; read-only "flash_busy" and "flash_chip_erases" (bl_flash_busy).
    Tests only: "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead
    segments' openings, reg 9 + how, in the write log), and one failure each, as memory running out would cause it:
    "fail_alloc_size" (run_ahead.c's next allocation of that many bytes), "fail_event" / "fail_tx" / "fail_log" (the

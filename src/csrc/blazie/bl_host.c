@@ -874,6 +874,12 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "held")) return h->n_held;
     if (!strcmp(name, "log_ar")) return h->log_ar;
     if (!strcmp(name, "port_a0")) return bl_port_a0(h->unit);
+    if (!strcmp(name, "flash_busy")) return bl_flash_busy(h->unit, NULL, NULL);
+    if (!strcmp(name, "flash_chip_erases")) {
+        unsigned long n;
+        bl_flash_busy(h->unit, &n, NULL);
+        return (int)n;
+    }
     return 0;
 }
 
@@ -892,6 +898,7 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
     else if (!strcmp(name, "tx_lost")) h->tx_lost = v;         /* the caller has reported them */
     else if (!strcmp(name, "writes_lost")) h->wl_lost = v;
     else if (!strcmp(name, "cancel_settle")) h->cancel_settle = v & 3;   /* tests can restore the old race */
+    else if (!strcmp(name, "flash_timed")) bl_flash_timed(h->unit, v);   /* the emulator: bl_board.h */
     /* tests only (run_ahead_fault.py): one allocation or store made to fail, as memory running out would */
     else if (!strcmp(name, "fail_alloc_size")) h->fail_size = v > 0 ? (size_t)v : 0;
     else if (!strcmp(name, "fail_event")) bl_fail_event(h->unit, v);

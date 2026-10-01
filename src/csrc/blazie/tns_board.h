@@ -8,8 +8,8 @@
  *   Keyboard: one byte per key event on port D0h, with /INT2: bit 7 = 1 key down, 0 key up; the low 7 bits are the
  *   key's position (tns_keys.h).  E0h (read): status -- bit 0 = 0 a key is waiting, bit 1 = 0 battery low,
  *   bit 2 = 0 power switch off; FFh when idle.  80h (read): watchdog.  B0h (write): power/control latch.
- *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the 4 MB 29F016, the low 5 bits pick
- *   the page.
+ *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the file flash, the low 5 bits pick
+ *   the page (a 29F016: the firmware uses 2 MB; the board keeps the 4 MB the five bits reach).
  *   C3h (write): the 8255's control word; port C bit 4 calls the clock controller, which the firmware talks to over
  *   the Z180's CSI/O (bl_clock.h; on with tns_clock_on).
  *   Memory: the firmware image from physical 00000h; RAM everywhere else, including 0-3FFFFh past the image's end
@@ -55,6 +55,10 @@ int  tns_serial_read(tns_unit *u, unsigned char *out, int cap, bl_serial_status 
 /* the RAM (1 MB) and the file flash (4 MB), as a switched-off unit keeps them (and the clock controller when it is
    on); 1 on success */
 int  tns_save_state(const tns_unit *u, const char *path);
+/* the file flash's busy time, as bl_board.h's bl_flash_timed / bl_flash_busy (off by default; the emulator turns it
+   on: initialising the flash then takes the chip erase's 32 s, the unit chirping while it waits) */
+void tns_flash_timed(tns_unit *u, int on);
+int  tns_flash_busy(const tns_unit *u, unsigned long *chip_erases, unsigned long *sector_erases);
 
 /* The clock controller on the CSI/O (bl_clock.h), called through the 8255 at C3h: as bl_board.h's bl_clock_on,
    bl_clock_time and bl_clock_wall. */

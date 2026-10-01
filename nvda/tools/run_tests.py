@@ -123,19 +123,22 @@ CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
 CHECKS.append(check("SAPI pipe server", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_serve.py")]))
-# the golden vectors: every SSI-263 write with its time, the serial output and the audio hash of a fixed scenario,
-# as today's Braille Lite host and emulator make them (the gate for the native library, 0.7)
+# the golden vectors: every SSI-263 write with its time, the serial output and the audio hash of a fixed scenario, on
+# MAME's Z180 (0.7).  Two hosts, two baselines: the in-process host (bl.dll, the add-on's) has the lockstep cancel
+# protection on by default (blazie_{en,es}.txt, Astra's Replies 124-128); the pipe host (bns_live.exe / bl_live.exe,
+# the fallback) has its own cancel path without it (blazie_{en,es}_pipe.txt, Astra's Reply 123).  The z180emu
+# signatures are kept as blazie_{en,es}_legacy.txt, a reference only.
 BNS = os.path.join(os.path.dirname(HERE), "dist", "blazie-build", "synthDrivers", "_ssi263_blazie", "bns_live.exe")
 for lang in ("en", "es"):
-    CHECKS.append(check("golden Braille Lite (%s)" % lang, [PY, "bns_equiv.py", BNS,
-                        "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+    CHECKS.append(check("golden Braille Lite, pipe host (%s)" % lang, [PY, "bns_equiv.py", BNS,
+                        "--against=" + os.path.join(HERE, "golden", "blazie_%s_pipe.txt" % lang)] + (["--es"] if lang == "es" else [])))
 # 0.7's library board (src/csrc/blazie): the same golden vectors through bl_live.exe, and two units in one process
 LIB = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib")
 ENG = os.path.dirname(BNS)
 if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
     for lang in ("en", "es"):
-        CHECKS.append(check("library board golden (%s)" % lang, [PY, "bns_equiv.py", os.path.join(LIB, "bl_live.exe"),
-                            "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+        CHECKS.append(check("library board golden, pipe host (%s)" % lang, [PY, "bns_equiv.py", os.path.join(LIB, "bl_live.exe"),
+                            "--against=" + os.path.join(HERE, "golden", "blazie_%s_pipe.txt" % lang)] + (["--es"] if lang == "es" else [])))
     # the in-process host (bl.dll + hosts/native_blazie.py): the golden vectors bit for bit, 64-bit and 32-bit
     for arch, py in (("x64", PY), ("x86", PY37)):
         dll = os.path.join(LIB, arch, "bl.dll")
@@ -218,6 +221,40 @@ if os.path.isfile(CLOCK):
     CHECKS.append(check("Blazie emulator: clock controller CONTROL (never moves, must fail)", [CLOCK, "unit"],
                         env={"TEST_CLOCK_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAIL time passes \(a leap day\) ", r"^ok +set and read over its bytes "]))
+    # the file flash (src/apps/blazie/test_flash.c; Jayson, Timothy): the Type 'n Speak's ID check passes and its flash
+    # is initialised, the erase takes a 29F016's 32 s with the firmware's chirps through the chip, the initialised flash
+    # kept across a save and restart; the Braille Lite's reset erases with the same chirps, and a file moved to flash
+    # lands in the 2 MB chip the firmware manages and survives a restart.  Controls: each must fail on its checks.
+    FLASH = os.path.join(EMU, "test_flash.exe")
+    if os.path.isfile(FLASH):
+        BL_FLASH = ["bl", os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]
+        CHECKS.append(check("Blazie emulator: file flash, Braille Lite", [FLASH] + BL_FLASH))
+        CHECKS.append(check("Blazie emulator: file flash CONTROL (Braille Lite, erase at once, must fail)",
+                            [FLASH] + BL_FLASH + ["--break=instant"], expect_fail=True,
+                            fail_marks=[r"^FAIL Braille Lite reset: erase and chirps .* ran 0\.0 s.* 0 chirps",
+                                        r"^ok +a flash file in the fourth 512 KB", r"^FAILED$"]))
+        CHECKS.append(check("Blazie emulator: file flash CONTROL (Braille Lite, banks on 512 KB, must fail)",
+                            [os.path.join(EMU, "test_flash_break.exe")] + BL_FLASH, expect_fail=True,
+                            fail_marks=[r"^ok +Braille Lite reset: erase and chirps",
+                                        r"^FAIL a flash file in the fourth 512 KB +top of the 2 MB: FF FF",
+                                        r"^FAIL the flash file kept across a restart +saved 786432 bytes", r"^FAILED$"]))
+        for name in ("TNSENG.TNS", "TNSSPA.TNS"):
+            if os.path.isfile(os.path.join(TNS_DIR, name)):
+                CHECKS.append(check("Blazie emulator: file flash, Type 'n Speak %s" % name[3:6],
+                                    [FLASH, "tns", os.path.join(TNS_DIR, name)]))
+        TNS_FLASH = ["tns", os.path.join(TNS_DIR, "TNSENG.TNS")]
+        if os.path.isfile(TNS_FLASH[1]):
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, erase at once, must fail)",
+                                [FLASH] + TNS_FLASH + ["--break=instant"], expect_fail=True,
+                                fail_marks=[r"^ok +flash ID accepted", r"^FAIL erase takes the chip's time +the erase ran 0\.0",
+                                            r"^FAIL erase chirps +0 sounds", r"^FAILED$"]))
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, saved before initialising, must fail)",
+                                [FLASH] + TNS_FLASH + ["--break=persist"], expect_fail=True,
+                                fail_marks=[r"^ok +erase chirps", r"^FAIL flash kept across save and restart .* 1 chip erases",
+                                            r"^FAILED$"]))
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, a 29F040's ID, must fail)",
+                                [os.path.join(EMU, "test_flash_break.exe")] + TNS_FLASH, expect_fail=True,
+                                fail_marks=[r"^FAIL flash ID accepted, flash initialised +0 chip erase", r"^FAILED$"]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
 # storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
 # paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end
@@ -427,8 +464,9 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
 if os.path.isfile(MAME_LIVE):
     for lang in ("en", "es"):
-        CHECKS.append(check("MAME Z180 core: spoken values (%s)" % lang, [PY, "bns_equiv.py", MAME_LIVE, "--values-only",
-                            "--against=" + os.path.join(HERE, "golden", "blazie_%s.txt" % lang)] + (["--es"] if lang == "es" else [])))
+        CHECKS.append(check("MAME Z180 core: spoken values, pipe host (%s)" % lang, [PY, "bns_equiv.py", MAME_LIVE,
+                            "--values-only", "--against=" + os.path.join(HERE, "golden", "blazie_%s_pipe.txt" % lang)]
+                            + (["--es"] if lang == "es" else [])))
     CHECKS.append(check("MAME Z180 core: spoken values CONTROL (one value flipped, must fail)",
                         [PY, "bns_equiv.py", MAME_LIVE, "--values-only",
                          "--against=" + os.path.join(HERE, "golden", "blazie_en.txt")],
