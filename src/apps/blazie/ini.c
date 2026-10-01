@@ -141,11 +141,13 @@ static int find(const ini *f, const char *section, const char *key, int *end)
 
 const char *ini_get(const ini *f, const char *section, const char *key, const char *dflt)
 {
-    static char value[1024];
-    char k[128];
+    static char values[8][1024];               /* the last eight values stay good: get(a) ... get(b) ... use a */
+    static int next;
+    char k[128], *value = values[next];
     int end, i = find(f, section, key, &end);
-    if (i < 0 || !setting_of(f->lines[i], k, sizeof k, value, sizeof value))
+    if (i < 0 || !setting_of(f->lines[i], k, sizeof k, value, sizeof values[0]))
         return dflt;
+    next = (next + 1) % 8;
     return value;
 }
 

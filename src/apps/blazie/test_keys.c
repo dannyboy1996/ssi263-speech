@@ -271,6 +271,12 @@ static void name_checks(const char *dir)
                  && ini_entry(f, "keys", 2, kk, sizeof kk, vv, sizeof vv) && !strcmp(kk, "mode");
         check("settings file: read, changed, kept", ok, d);
     }
+    {   /* two values held at once (main_linux.c reads the evdev setting, then grab, then uses the first) */
+        const char *a = ini_get(f, "keys", "advance", ""), *b = ini_get(f, "keys", "mode", "");
+        int r = ini_get_int(f, "sound", "rate", 0);
+        snprintf(d, sizeof d, "advance [%s] after reading mode [%s] and rate %d", a, b, r);
+        check("settings file: two values at once", !strcmp(a, "a ;") && !strcmp(b, "letters") && r == 44100, d);
+    }
     ini_free(f);
     remove(path);
 }
