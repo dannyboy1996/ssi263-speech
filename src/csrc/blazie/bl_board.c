@@ -1,4 +1,5 @@
-/* bl_board.c -- the Blazie Braille Lite 2000 board around a Z180, per instance (see bl_board.h).
+/* bl_board.c -- the Blazie Braille Lite 2000 board around a Z180, per instance (see bl_board.h); the Braille 'n
+ * Speak 2000's too, which is the same board without the braille display (bl_model).
  *
  * z180emu/bns.c's --live path, line for line, with the tracing and logging left out.  The board drives its CPU only
  * through ../cpu/cpu.h: every callback gets its bl_unit as ctx, so there is no shared or thread-local state here.
@@ -82,6 +83,7 @@ struct bl_unit {
     unsigned char clk_tail[BLC_SAVE_SIZE];   /* the state's saved controller, until bl_clock_on */
     int has_clk_tail;
     long long clk_wall;                      /* bl_clock_wall: the host's time for the next save */
+    int model;                               /* bl_model */
 };
 
 static void event(bl_unit *u, unsigned char type, unsigned char a, unsigned char b)
@@ -411,6 +413,12 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
         unsigned prime = find_sig(u, "F6 E0 D3 C4 CD ?? ?? 3E C0 D3 C0", 9, n);
         unsigned fetch = find_sig(u, "2A 17 D6 7E 23 22 17 D6", 3, n);
         unsigned halt = find_sig(u, "21 ?? ?? 7E B7 20 06 76 CD", 7, n);
+        if (!halt) {                         /* the idle loop of Blazie's other units: with the sites above, only the
+                                                Braille 'n Speak 2000's images on Tomi's disks have it (the Braille
+                                                Lite 18 and 40, the BNS 640 and the Type 'n Speak lack the others) */
+            halt = find_sig(u, "21 ?? ?? 7E B7 20 09 3A ?? ?? 76 CD", 10, n);
+            u->model = BL_MODEL_BNS2000;
+        }
         u->site_release = find_sig(u, "DB 40 D3 20 E6 7F 20 F8", 0, n);
         if (!(send && prime && fetch && halt && u->site_release)) {
             snprintf(err, errlen, "could not locate the firmware sites in %s", firmware);
@@ -575,6 +583,11 @@ int bl_keys_break;
 int bl_starts(const bl_unit *u)
 {
     return u->starts;
+}
+
+int bl_model(const bl_unit *u)
+{
+    return u->model;
 }
 
 void bl_keys_down(bl_unit *u, int bits)

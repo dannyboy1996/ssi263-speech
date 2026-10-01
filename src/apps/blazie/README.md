@@ -1,6 +1,7 @@
 # The Blazie emulator
 
-A Braille Lite 2000 or a Type 'n Speak you can use from a PC keyboard: Blazie's own firmware on the emulated board
+A Braille Lite 2000, a Braille 'n Speak 2000 or a Type 'n Speak you can use from a PC keyboard: Blazie's own firmware
+on the emulated board
 (`../../csrc/blazie`: `bl_board.c`, `tns_board.c`), with the emulated SSI-263 (`../../csrc/ssi263.c`) as its
 voice. Unlike the screen-reader
 drivers, the unit is not put into speech-box mode: it boots to its own main menu and behaves as the unit does,
@@ -26,7 +27,9 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `tns_rescue.h`, `.c` | A saved Type 'n Speak that was never set up (the previews' first start missed the cold reset), told apart and set up anew with its RAM files; the old state kept beside it. Portable. |
 | `test_rescue.c` | A unit made as the previews made it, told apart, rescued (its first file without the character it never stored, the flash file it lost named), and then moving a file to flash with its own command; `TEST_RESCUE_BREAK=1` must fail. |
 | `blazie_files.c` | The command line for a saved unit's files (Windows, Linux, the BTSpeak): list, export to a disk image, import from one, extract to a folder, pack and unpack an image. The portable half is `../../csrc/blazie/bl_files*.c` and `fat_img.c`. |
-| `test_files.c` | Files in and out against the units' own commands, on all four units: the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; the Type 'n Speak from its factory start (its cold reset's questions answered), its first file moved to flash whole; `--break=1..5` put one bug back each, `--break=cold` the old cold start, for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
+| `make_state.c` | A unit's factory state from its firmware alone (`../../csrc/blazie/bl_state.c`'s recipe): the Braille 'n Speak 2000's, kept in `firmware/blazie/bns2000/`. |
+| `test_bns.c` | The Braille 'n Speak 2000 on the Braille Lite's board: the units told apart (the voice's import still refuses it), and its words read from the chip's register writes -- Slovak at power-on and for the time -- against what the unit said; asking the English unit for the Slovak words is run_tests' must-fail control. |
+| `test_files.c` | Files in and out against the units' own commands, on all four units (and the Braille 'n Speak 2000's two): the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; the Type 'n Speak from its factory start (its cold reset's questions answered), its first file moved to flash whole; `--break=1..5` put one bug back each, `--break=cold` the old cold start, for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
 
 The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
 
@@ -50,6 +53,9 @@ The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
 bar. There are no cursor-routing keys and no dots 7 and 8: the Braille Lite 2000 has none. Every other key goes to
 Windows (Alt opens the menu). The keys can be changed in `blazie_emu.ini` beside the program, section `[keys]`
 (`dot1=F`, ..., `space=space`, `advance=A ;`).
+
+**Braille 'n Speak 2000**: the Braille Lite's keys, the same six dots and space bar. It has no braille display and no
+advance bar (its firmware never reads that bit).
 
 **Type 'n Speak**: the whole keyboard is the unit's, Alt and the function keys included. **Alt+Shift+F** (or F11)
 always opens this program's menu, whichever unit is running (the unit's held keys are let go first). A key goes to the unit as it goes down and again as it comes up (bit 7 = down), as the unit's own keyboard
@@ -141,6 +147,24 @@ Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.
 `spanish\BL2SPA.BNS` + `spanish\bl2spa_fresh.state`, the state the Spanish driver uses; the "warm" one has
 speech off). Run from the source tree, the program finds
 `firmware/blazie/` itself; `firmware_dir=` in `[unit]` overrides both.
+
+The Braille 'n Speak 2000 is in the Firmware menu when `bns2000\BS03ENG.BNS` (English, June 24, 2003) or
+`bns2000\BS2SLL.BNS` (Slovak) is there (Linux: menu numbers 15 and 16, `--unit bns-en`, `bns-sk`), each with its
+factory state beside it, made from the firmware by `make_state.exe` (the three power-ons that made the English Braille
+Lite's state, three seconds; `firmware/blazie/README.txt` has the commands and hashes):
+
+    make_state bns2000\BS2SLL.BNS english bns2000\bs2sll_fresh.state
+
+## The Braille 'n Speak 2000
+
+The Braille Lite 2000 without its braille display, on the same board (`../../csrc/blazie/bl_board.h`, `bl_model`).
+Run side by side through the same keys at the same instruction counts, its firmware and the Braille Lite's use the
+same ports with the same values -- the keyboard, the SSI-263, the memory and flash banks, the power bits, the battery
+gauge, the clock controller -- run the same memory test, keep the same file system in the same 2 MB flash, and ask
+the same questions at the same points; only the display's traffic on the 8255 is missing.  The board tells the two
+apart by the firmware's idle loop.  The Slovak unit speaks Slovak through the same chip (its own letter-to-sound
+rules: a key's answer takes ~443 ms of chip time, the English ~247); it takes the date in another order than the
+English unit's month, day, year (those digits set October 9).
 
 ## The clock
 

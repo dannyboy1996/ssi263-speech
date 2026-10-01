@@ -14,7 +14,8 @@ BL_API int blv_firmware_break = 0;
    `length` bytes), with the sha256 of the state blv_make_state makes from it (bl_state.c, the language's recipe).
    Each was found on Tomi's disks, booted through its recipe and made to speak (test_import_native.py makes the state
    and checks it against the hash here, then speaks with it) before it was listed.  Every other image on those disks
-   is another unit's (Braille 'n Speak, Type 'n Speak, Braille Lite 18 and 40), refused by bl_create's sites.
+   is another unit's: the Type 'n Speak, the Braille Lite 18 and 40 and the older Braille 'n Speaks are refused by
+   bl_create's sites; the Braille 'n Speak 2000, which bl_create runs (bl_model: the emulator's), by its model.
      June 5, 2003 English: "FS june2003" -- blt2000.exe (a zip behind its code) and its BL2ENG.BNS; the NVDA add-on's.
      September 20, 2000 English: ONCE's "braillehablado" disk, blite2000/BL2ENG.BNS.  The English recipe fits it: its
        prompts during the recipe are June 2003's but for one power-on sentence, the keys land on the same prompts,
@@ -169,9 +170,11 @@ BL_API int blv_import_firmware(const unsigned char *data, long n, const char *ou
         snprintf(msg, msglen, "cannot write %s", out_bns);
         return BLV_FW_WRITE;
     }
-    /* the voice's own check: bl_create refuses an image whose sites it cannot find (another Blazie unit) */
+    /* the voice's own check: bl_create refuses an image whose sites it cannot find (another Blazie unit); the Braille
+       'n Speak 2000's, which the board runs (the emulator's), is not a voice yet */
     u = bl_create(out_bns, NULL, 20.0, NULL, NULL, 0, msg, msglen);
-    if (!u) {
+    if (!u || bl_model(u) != BL_MODEL_BRAILLE_LITE) {
+        bl_destroy(u);
         remove(out_bns);
         snprintf(msg, msglen, "Braille Lite firmware, but not a release this voice can run");
         return BLV_FW_REFUSED;

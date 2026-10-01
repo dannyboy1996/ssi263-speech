@@ -33,7 +33,12 @@ typedef struct {
       in file area?", "are you sure?", the flash and its "are you sure?", the folder system.
    2. o-chord (55h), f (0Bh), c (09h): "file to create?"; a (01h); e-chord (51h): RAM file "a", open.
    3. Warm reset: all seven keys (7Fh) held at power-on -- "ready", "help is open" -- and n (1Dh), which the help
-      file answers with "file is write protected". */
+      file answers with "file is write protected".
+   The Braille 'n Speak 2000 takes the same keys at the same points, in English (BS03ENG.BNS, June 24 2003) and in
+   Slovak (BS2SLL.BNS): its prompts through these runs are the Braille Lite's (but "Braille 'n Speak" for "Braille
+   Lite"), and in Slovak the same questions in the same order, each answered by the same key (its own words: "vlozte
+   y alebo n"; run 2 names its new file "a" and opens it, run 3's n is answered "subor je chraneny proti zapisu"),
+   read from the phonemes it spoke. */
 static const run ENGLISH[] = {
     {0x4A, 20.0, 60 * M, 5, {{12 * M, 0x3D}, {20 * M, 0x3D}, {28 * M, 0x3D}, {36 * M, 0x3D}, {44 * M, 0x3D}}},
     {-1, 20.0, 60 * M, 5, {{8 * M, 0x55}, {16 * M, 0x0B}, {24 * M, 0x09}, {32 * M, 0x01}, {40 * M, 0x51}}},

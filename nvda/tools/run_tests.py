@@ -6,6 +6,7 @@ pushing it).  Each check is its own process with a hard time limit; one line per
 A control check must FAIL: complete_fuzz with 0.5.0's cancel put back proves the fuzz can still see a cut-off
 utterance (a fix claimed without a test that fails on the bug is how 0.6.0 shipped one).
 """
+import hashlib
 import os
 import re
 import shutil
@@ -334,6 +335,57 @@ if os.path.isfile(FILES):
                             env={"TEST_FILES_FAT_BREAK": "1"}, expect_fail=True,
                             fail_marks=[r"^FAIL 7-Zip extracts a packed image exactly .*extra .*~1",
                                         r"^FAIL 7-Zip reads a unit's export as the unit holds it", r"^FAILED$"]))
+# the Braille 'n Speak 2000 (Tomi: the Slovak firmware, a Braille 'n Speak 2000), when firmware/blazie/bns2000/ has
+# its English and Slovak firmware and their factory states (src/apps/blazie/make_state.c): the Braille Lite's board
+# with no braille display (bl_board.h bl_model).  The units told apart, the voice's import still refusing it; its
+# words through the chip's register writes (Slovak at power-on and o-chord t, read in Slovak), with the control (the
+# Slovak words asked of the English unit, must fail); the factory states remade by the recipe, byte for byte; and
+# the emulator's own checks on both: boot and a chord answered, the clock and keys held through a restart, files in
+# and out, the file flash's 2 MB, the serial port.  Model control: the two units swapped must fail.
+BNS_DIR = os.path.join(FW_BLAZIE, "bns2000")
+BNS_UNITS = (("English", "BS03ENG.BNS", "bs03eng_fresh.state", "en"),
+             ("Slovak", "BS2SLL.BNS", "bs2sll_fresh.state", "sk"))
+TEST_BNS = os.path.join(EMU, "test_bns.exe")
+if os.path.isfile(TEST_BNS) and all(os.path.isfile(os.path.join(BNS_DIR, fw)) and
+                                    os.path.isfile(os.path.join(BNS_DIR, st)) for _, fw, st, _ in BNS_UNITS):
+    BL_FW =os.path.join(FW_BLAZIE, "BL2ENG.BNS")
+    BNS_FWS = [os.path.join(BNS_DIR, fw) for fw in ("BS03ENG.BNS", "BS2SLL.BNS", "BS2ENG.BNS", "BS2ENG99.BNS")
+               if os.path.isfile(os.path.join(BNS_DIR, fw))]
+    OTHER = [p for p in (os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS"),) if os.path.isfile(p)]
+    CHECKS.append(check("Braille 'n Speak 2000: the units told apart", [TEST_BNS, "models", BL_FW] + BNS_FWS
+                        + ["--"] + OTHER))
+    CHECKS.append(check("Braille 'n Speak 2000: the units told apart CONTROL (swapped, must fail)",
+                        [TEST_BNS, "models", BNS_FWS[0], BL_FW], expect_fail=True,
+                        fail_marks=[r"^FAIL a Braille Lite 2000 +.*BS03ENG\.BNS: Braille 'n Speak 2000$",
+                                    r"^FAIL a Braille 'n Speak 2000 +.*BL2ENG\.BNS: Braille Lite 2000$", r"^FAILED$"]))
+    for label, fw, st, lang in BNS_UNITS:
+        FW, ST = os.path.join(BNS_DIR, fw), os.path.join(BNS_DIR, st)
+        CHECKS.append(check("Braille 'n Speak 2000 %s: its words through the chip" % label,
+                            [TEST_BNS, "speech", FW, ST, lang]))
+        with open(ST, "rb") as f:
+            want = hashlib.sha256(f.read()).hexdigest()
+        CHECKS.append(check("Braille 'n Speak 2000 %s: the factory state is the recipe's" % label,
+                            [os.path.join(EMU, "make_state.exe"), FW, "english",
+                             os.path.join(HERE, "out", "bns_recipe_%s.state" % lang)],
+                            ok=lambda out, want=want: (" sha256 %s" % want) in out))
+        # the Slovak unit's key-to-sound is its own (~443 ms: its letter-to-sound rules are slower)
+        CHECKS.append(check("Braille 'n Speak 2000 %s: the unit, headless" % label,
+                            [os.path.join(EMU, "test_emu_unit.exe"), "bl", FW, ST] + (["480"] if lang == "sk" else [])))
+        # the Slovak unit takes the date in its own order (the English digits set another date) and says it in
+        # Slovak: only the clock read at the start, as for the Spanish Braille Lite
+        CHECKS.append(check("Braille 'n Speak 2000 %s: clock%s" % (label, " and held keys" if lang == "en" else ""),
+                            [CLOCK, "bl", FW, ST] + (["start"] if lang == "sk" else [])))
+        CHECKS.append(check("Braille 'n Speak 2000 %s: files in and out" % label, [FILES, "bl", FW, ST]))
+        CHECKS.append(check("Braille 'n Speak 2000 %s: serial port" % label,
+                            [os.path.join(EMU, "test_serial.exe"), "bl", FW, ST]))
+    CHECKS.append(check("Braille 'n Speak 2000: the Slovak words CONTROL (asked of the English unit, must fail)",
+                        [TEST_BNS, "speech", os.path.join(BNS_DIR, "BS03ENG.BNS"),
+                         os.path.join(BNS_DIR, "bs03eng_fresh.state"), "sk"], expect_fail=True,
+                        fail_marks=[r"^ok +the unit +Braille 'n Speak 2000$",
+                                    r"^FAIL Slovak words at power-on +\[B R A E L EH N S P E K T U U TH",
+                                    r"^FAIL o-chord t answered in Slovak +\[AH P SCH UH2 N R E S EH T", r"^FAILED$"]))
+    CHECKS.append(check("Braille 'n Speak 2000 English: file flash", [os.path.join(EMU, "test_flash.exe"), "bl",
+                        os.path.join(BNS_DIR, "BS03ENG.BNS"), os.path.join(BNS_DIR, "bs03eng_fresh.state")]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
 # storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
 # paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end

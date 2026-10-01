@@ -32,7 +32,8 @@ some version -- build it on the machine itself (the three commands above), which
 ## Run
 
     blazie_emu                    the unit you used last (the first time: the English Braille Lite)
-    blazie_emu --unit tns-en      bl-en, bl-es (the Spanish Braille Lite), tns-en, tns-es (the Type 'n Speak)
+    blazie_emu --unit tns-en      bl-en, bl-es (the Spanish Braille Lite), tns-en, tns-es (the Type 'n Speak),
+                                  bns-en, bns-sk (the Braille 'n Speak 2000, English and Slovak)
     blazie_emu --show-keys        what this keyboard sends: the terminal's bytes and the keys they are, and the
                                   input devices' keys going down and up (for the key settings; q q stops it)
     blazie_emu --no-sound         no sound card: the unit runs on silent, paced by the system clock
@@ -40,8 +41,8 @@ some version -- build it on the machine itself (the three commands above), which
 
 The firmware is looked for in `firmware_dir` in the settings, else beside the program: the package's
 `../share/ssi263-speech`, a `firmware` folder, or the source tree's `firmware/blazie` (run from `build/linux`); or
-give it: `--firmware DIR`. Either layout works: the repository's (`BL2ENG.BNS`, `spanish/`, `tns/`) or all in one
-folder.
+give it: `--firmware DIR`. Either layout works: the repository's (`BL2ENG.BNS`, `spanish/`, `tns/`, `bns2000/`) or
+all in one folder.
 
 **F11 opens the menu** (and Ctrl+O for the Braille Lite; Alt+Shift+F always, as on Windows). Type a number and
 Enter; Enter alone goes back to the unit:
@@ -56,6 +57,7 @@ Enter; Enter alone goes back to the unit:
 | 12 | The serial port (below) |
 | 13 | The Braille Lite's keyboard: keys or letters (below) |
 | 14 | The keys, in short |
+| 15, 16 | The Braille 'n Speak 2000, English and Slovak (listed when its firmware is there: README.md, "Firmware"); the Braille Lite's keys |
 | 0 | Exit: the unit's memory is saved |
 
 After a choice the menu says one line; `?` lists it again.

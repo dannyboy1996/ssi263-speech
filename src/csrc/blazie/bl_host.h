@@ -83,8 +83,8 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    The pipe host has no such mode.  Read-only: "run_ahead_state" (RA_*), "run_ahead_end" (RA_END_*),
    "run_ahead_played" / "run_ahead_captured" (writes), "run_ahead_settled" / "run_ahead_dropped" (the last cancel's
    ra_settle), "run_ahead_held" (the last utterance ended at its bound, a spoken final load held), "held" (inputs
-   waiting), "port_a0", "fault" (BH_FAULT_*: 1 the run-ahead script, 2 a board event).  Read and reset by the caller:
-   "tx_lost", "writes_lost" (bytes of bh_tx, writes of bh_writes the host could not keep: records, not a fault).
+   waiting), "port_a0", "model" (bl_model: BL_MODEL_*), "fault" (BH_FAULT_*: 1 the run-ahead script, 2 a board
+   event).  Read and reset by the caller: "tx_lost", "writes_lost" (bytes of bh_tx, writes of bh_writes the host could not keep: records, not a fault).
    "cancel_settle" (3 = both bits, the release default; 0 restores the old race for tests):
    the lockstep's bh_cancel lets the unit run on, A/R not requesting and its chip writes dropped, to a wait for an
    interrupt before its ^X (bit 0), and holds A/R not requesting over the first ^X slice (bit 1); read-only

@@ -1,7 +1,8 @@
 /* test_files.c -- files in and out of the units (Tomi: files in and out; ../../csrc/blazie/bl_files.h,
  * bl_files_xfer.h), headless, against the units' own commands.
  *
- *   test_files bl FIRMWARE STATE [--break=N]   a Braille Lite (English or Spanish) from its shipped state
+ *   test_files bl FIRMWARE STATE [--break=N]   a Braille Lite (English or Spanish) from its shipped state, or a
+ *                                              Braille 'n Speak 2000 (English or Slovak) from its factory state
  *   test_files tns FIRMWARE [--break=N|cold]   the Type 'n Speak from its factory start: its cold reset, its own
  *                                              questions answered yes (tns_setup.h)
  *
@@ -110,6 +111,10 @@ enum { B_OCHORD = 0x55, B_F = 0x0B, B_C = 0x09, B_O = 0x15, B_ECHORD = 0x51, B_V
 #define AFTER_KEY 3.6
 /* the first key after power-on: once the unit has said it is ready (a key during the greeting only silences it) */
 #define SPOKEN_START 8.0
+/* ... after the import, the Slovak Braille 'n Speak 2000's first key comes at 12 s: with it at 8 s the q never
+   reached the open file (it stayed "abcxyz"), with it at 12 s it does -- its words at power-on take longer (its
+   letter-to-sound rules are slower: a key's answer takes it ~443 ms against the English unit's ~247) */
+static double g_spoken_start = SPOKEN_START;
 
 /* the files menu: the Braille Lite's o-chord, f; the Type 'n Speak's F1 */
 static void files_menu(script *sc)
@@ -265,18 +270,20 @@ static int same(const unsigned char *a, unsigned long na, const char *b, unsigne
     return a && na == nb && !memcmp(a, b, nb);
 }
 
-/* a file's bytes in an image ("folder/name"); NULL if absent */
+/* a file's bytes in an image ("folder/name", the folder as the unit names it: the image's name is its UTF-8, the
+   Slovak unit's "fles subory" with its own letters); NULL if absent */
 static unsigned char *image_file(const unsigned char *img, unsigned long size, const char *folder, const char *name,
                                  unsigned long *n)
 {
-    char err[200];
+    char err[200], f8[200];
     fat_volume *v = fat_read(img, size, err, sizeof err);
     unsigned char *d = NULL;
     int i;
     if (!v) return NULL;
+    blx_unit_to_utf8(folder, f8, sizeof f8);
     for (i = 0; i < fat_count(v); i++) {
         const fat_entry *e = fat_get(v, i);
-        if (!e->dir && !strcmp(e->name, name) && e->parent >= 0 && !strcmp(fat_get(v, e->parent)->name, folder)) {
+        if (!e->dir && !strcmp(e->name, name) && e->parent >= 0 && !strcmp(fat_get(v, e->parent)->name, f8)) {
             d = fat_data(v, i, n);
             break;
         }
@@ -556,7 +563,7 @@ static void all_checks(int tns, const char *fw, const char *state)
     }
     memset(&sc, 0, sizeof sc);
     sc.tns = tns;
-    sc.t = SPOKEN_START;
+    sc.t = g_spoken_start;
     type_text(&sc, "q");
     wait_s(&sc, 2.0);
     list_to_clipboard(&sc);
@@ -643,6 +650,8 @@ int main(int argc, char **argv)
     snprintf(g_tmp, sizeof g_tmp, "test_files.%d", (int)_getpid());
     if (strstr(argv[2], "SPA") || strstr(argv[2], "spa"))
         g_yes = 's';
+    if (strstr(argv[2], "SLL") || strstr(argv[2], "sll"))   /* the Slovak Braille 'n Speak 2000 (BS2SLL.BNS) */
+        g_spoken_start = 12.0;
     g_doc = strcmp(argv[1], "tns") ? "doc" : "doc.brl";
     g_imp = strcmp(argv[1], "tns") ? "imported" : "imported.txt";
     g_imp_image = strcmp(argv[1], "tns") ? "Imported" : "Imported.txt";

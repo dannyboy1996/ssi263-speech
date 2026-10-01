@@ -1,4 +1,5 @@
-/* bl_board.h -- the Blazie Braille Lite 2000 board around a Z180 core, as a library: one instance per unit.
+/* bl_board.h -- the Blazie Braille Lite 2000 board around a Z180 core, as a library: one instance per unit.  The
+ * Braille 'n Speak 2000 runs on it too (bl_model).
  *
  * The live path of z180emu/bns.c (the investigation tool, which keeps its tracing), per instance, so a program can
  * run an English and a Spanish unit side by side.  The unit's SSI-263 writes and serial bytes come back as events,
@@ -27,11 +28,24 @@ typedef struct {
 /* firmware: a .BNS update file (the ROM image from file offset 3000h); state: battery-backed RAM (256 KB) + the file
    flash (512 KB or 2 MB: bl_save_state), as make_states.sh saves them; phon_ms: the stand-in A/R timing before live mode (bns --phon-ms);
    keys: braille chords pressed at those instruction counts during the boot (bns --key INSTR=CHORD).
-   NULL on failure, with a reason in err. */
+   The firmware is a Braille Lite 2000's or a Braille 'n Speak 2000's (bl_model).  NULL on failure, with a reason in
+   err. */
 bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
                    const unsigned long long *key_at, const unsigned char *key_val, int n_keys,
                    char *err, int errlen);
 void bl_destroy(bl_unit *u);
+
+/* The unit the firmware was built for, told by its idle loop (bl_create's sites).  The Braille 'n Speak 2000 is the
+   Braille Lite 2000's board without the braille display, measured by running both on this board (BS03ENG.BNS and
+   BS2SLL.BNS against BL2ENG.BNS, the same keys at the same instruction counts): the same ports and port values --
+   keyboard at 40h, SSI-263 at C0h-C4h, E0h's memory and flash banks, A0h's power bits, the battery gauge on B0h/81h,
+   the clock controller on the CSI/O and the 8255's port C bit 4, the 2 MB file flash -- the same memory test and the
+   same prompts at the same points; only the display's traffic is missing (the Braille Lite clocks it through the
+   8255's port C bits 0-2, about 6000 control words in its first 30 million instructions; the Braille 'n Speak writes
+   six, its clock controller's bit alone).  Port 40h bit 7 (the advance bar on the Braille Lite) is never used. */
+#define BL_MODEL_BRAILLE_LITE 0      /* Braille Lite 2000 */
+#define BL_MODEL_BNS2000 1           /* Braille 'n Speak 2000 */
+int  bl_model(const bl_unit *u);
 
 void bl_boot(bl_unit *u, unsigned long long target_instr);   /* bns 'B': run until that instruction count */
 void bl_live(bl_unit *u);                                    /* bns 'LIVE': the host drives A/R from now on */
