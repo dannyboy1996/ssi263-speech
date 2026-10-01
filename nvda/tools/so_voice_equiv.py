@@ -9,7 +9,7 @@ again after it), the lead trim, volume, every sample rate (the box rebooted at e
     SO_VOICE_EQUIV_BREAK=currencies  # control: the driver's currencies() skipped -- the currency case must DIFFER
     SO_VOICE_EQUIV_BREAK=timing      # control: the C host's cpu_ips 1 % fast -- the first case must DIFFER
 
-The driver runs the add-on's own engine (nvda/dist/speakout-build) on its default core (mame-steps); the C side is
+The driver is 0.7.0's, the Python host's last (legacy_drivers.py), on its default core (mame-steps); the C side is
 nvda/dist/speakout-lib/<arch>/so_voice.dll (src/csrc/speakout/build_board.py).
 """
 import ctypes
@@ -24,6 +24,10 @@ if os.environ.get("SSI263_SPEAKOUT_CORE", "mame-steps") not in ("", "mame-steps"
     sys.exit("so_voice_equiv: SSI263_SPEAKOUT_CORE=%s; the C voice is the mame-steps host"
              % os.environ["SSI263_SPEAKOUT_CORE"])
 sys.argv = [sys.argv[0], "speakout"]
+# the reference is 0.7.0's Python driver (since 0.7.5 the add-on's driver is so_voice itself: native_driver_equiv.py)
+sys.path.insert(0, HERE)
+import legacy_drivers  # noqa: E402
+os.environ["SSI263_SYNTH_DRIVERS"] = legacy_drivers.synth_drivers("speakout")
 src = open(os.path.join(HERE, "fake_nvda_driver_test.py"), encoding="utf-8").read()
 exec(src.split("time.sleep(2.0)")[0])
 

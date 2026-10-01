@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """NVDA synthesizer driver: the Speak-Out (1995) talking through an emulated SSI-263.
 
-The box's own firmware runs under Unicorn inside NVDA's process: its letter-to-sound
-rules, number reading and settings are the originals, byte for byte.  Its phoneme
-frames go to a register-level model of the SSI-263 chip, whose A/R request drives
-the firmware exactly as the real chip's did.  Nothing is recorded or concatenated.
+The box's own firmware runs on MAME's V40 inside NVDA's process, in ssi263speech.dll (src/csrc/speakout: the board,
+the host's lockstep with the chip, and this driver's front end in C since 0.7.5 -- no Python host): its
+letter-to-sound rules, number reading and settings are the originals, byte for byte.  Its phoneme frames go to a
+register-level model of the SSI-263 chip, whose A/R request drives the firmware exactly as the real chip's did.
+Nothing is recorded or concatenated.  This file keeps NVDA's side: the worker thread, the player, index and done
+callbacks, cancel; nvda/tools/native_driver_equiv.py holds it to 0.7.0's Python driver byte for byte.
 
 This add-on carries the Speak-Out's firmware (GW Micro), which is not ours.
 """
 
 import os
 import queue
-import sys
 import threading
 
 import nvwave
@@ -25,47 +26,17 @@ _HERE = os.path.dirname(__file__)
 _ENGINE_DIR = os.path.join(_HERE, "_ssi263_speakout")
 
 # The engine is this add-on's own package, imported relatively and never through sys.path:
-# the Braille Lite add-on ships an `ssi263` too, and one process has one module per name.
-from ._ssi263_speakout.speakout_host import SpeakOut
+# the other add-ons ship modules of the same names, and one process has one module per name.
 from ._ssi263_speakout import ssi263_rates as rates
-from ._ssi263_speakout import ssi263_numwords as numwords
-from ._ssi263_speakout.ssi263.native import SSI263C    # the chip in C
+from ._ssi263_speakout.ssi263speech import SpeakOutC, dll_path
 
-BLOCK_S = 0.03
 FIRMWARE = os.path.join(_ENGINE_DIR, "SPEAKOUT.HEX")
+DLL = dll_path(_ENGINE_DIR)
 TONES = "abcdefghijklmnopqrstuvwxyz"
-
-
-def _clean(text):
-    """Latin-1 text with no control characters: ^E and ^X are the box's commands."""
-    out = []
-    for ch in text:
-        o = ord(ch)
-        if o < 32 or o == 127:
-            out.append(" ")
-        elif o < 256:
-            out.append(ch)
-        else:
-            out.append({"‘": "'", "’": "'", "“": '"', "”": '"',
-                        "–": "-", "—": "-", "…": "..."}.get(ch, " "))
-    return "".join(out)
-
-
-LEAD_THRESHOLD = 0.003      # chip output; the idle carrier is ~1e-4, speech ~0.1-0.7
-LEAD_PREROLL = 220          # samples (5 ms) kept before the first sound
 
 
 def _nothing():
     """onDone for the end-of-utterance flush: the call is what matters, not the callback."""
-
-
-def _trim_lead(y):
-    """Drop the silence at the head of an utterance: the unit reading its line and a stop's
-    closure are silent, and a listener hears them only as delay.  Returns (audio, found)."""
-    for k, v in enumerate(y):
-        if v > LEAD_THRESHOLD or v < -LEAD_THRESHOLD:
-            return y[max(0, k - LEAD_PREROLL):], True
-    return y[:0], False
 
 
 def _joined(items):
@@ -99,7 +70,7 @@ class SynthDriver(SynthDriver):
 
     @classmethod
     def check(cls):
-        return os.path.isfile(FIRMWARE)
+        return os.path.isfile(FIRMWARE) and os.path.isfile(DLL)
 
     def __init__(self):
         super().__init__()
@@ -108,10 +79,7 @@ class SynthDriver(SynthDriver):
         self._volume = 100
         self._join = True
         self._short = True
-        self._pitch_dirty = False        # a pitch command the box may not have read yet
-        self._snap_until_speech = False
         self._tone = "i"      # box tone i, its default
-        self._sent = None     # settings last sent to the box
         # Defaults only: NEVER read config.conf["speech"][<driver>] here.  NVDA registers this driver's settings
         # after __init__, and its config caches a failed lookup as missing, so an early read of a new key made
         # NVDA's own loadSettings fail ("setSynth failed ... KeyError: 'voiceInflection'", Tomi, 0.6.0 draft).
@@ -254,25 +222,14 @@ class SynthDriver(SynthDriver):
     def _set_voice(self, v):
         pass
 
-    @staticmethod
-    def _box_pitch(p):
-        p = max(0, min(100, p))
-        return int(p * 3 / 50 + 0.5) if p <= 50 else 3 + int((p - 50) * 6 / 50 + 0.5)   # 50 -> 3
-
-    def _box_settings(self):
-        rate = int(self._rate * 9 / 100 + 0.5)                       # 50 -> 5, the default
-        # word delay 0 when joining, sentence delay 0 when shortening; the box's factory is 1 and 1
-        return (rate, self._box_pitch(self._pitch), self._tone, 0 if self._join else 1,
-                0 if self._short else 1)
-
     # -- worker: the only thread that touches the emulated box -----------------
     def _boot(self):
-        box = SpeakOut(FIRMWARE, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
-        box.keep_writes = False
-        box.boot()
-        box.say("\x05Mn")        # punctuation: none -- NVDA speaks symbols itself
-        box.run(0.05)
-        return box
+        # power-on, the greeting flushed, punctuation none (NVDA speaks symbols itself): so_voice.c's boot
+        return SpeakOutC(DLL, FIRMWARE, self._out_rate)
+
+    def _apply(self, box):
+        """the settings as they are now; the box sends them at begin() when they changed"""
+        box.set(self._rate, self._pitch, TONES.index(self._tone), self._volume, self._join, self._short)
 
     def _run(self):
         try:
@@ -295,15 +252,12 @@ class SynthDriver(SynthDriver):
             except Exception:
                 log.error("Speak-Out speech failed; rebooting the emulated box", exc_info=True)
                 try:
-                    self._box = self._boot()
-                    self._sent = None
+                    self._reboot()
                 except Exception:
                     log.error("Speak-Out reboot failed", exc_info=True)
             if self._cancelFlag.is_set():
                 try:
-                    self._box.cancel()
-                    if self._pitch_dirty:
-                        self._resend_pitch()
+                    self._box.cancel()           # the box's flush, and the pitch said again if it was dropped
                 except Exception:
                     pass
                 # NVDA stopped the player on its own thread; a block this thread had
@@ -316,6 +270,10 @@ class SynthDriver(SynthDriver):
             else:
                 synthDoneSpeaking.notify(synth=self)
 
+    def _reboot(self):
+        old, self._box = self._box, self._boot()
+        old.close()
+
     def _switch_rate(self):
         """A new sample rate: the chip renders at the host rate, so a new player and a rebooted box."""
         self._out_rate = self._want_rate
@@ -324,32 +282,19 @@ class SynthDriver(SynthDriver):
             old.close()
         except Exception:
             pass
-        self._box = self._boot()
-        self._sent = None
-        self._pitch_dirty = False
+        self._reboot()
 
     def _speakJob(self, items):
         box = self._box
-        settings = self._box_settings()
-        if settings != self._sent:
-            box.say("\x05R%d\x05P%d\x05T%s\x05W%d\x05I%d" % settings)
-            self._sent = settings
-        self._cur_pitch = settings[1]
-        gain = self._volume / 100.0
-        cur_pitch = settings[1]
-        self._lead = True                # nothing audible fed yet in this utterance
+        self._apply(box)
+        box.begin()
         try:
-            self._speakItems(items, box, gain)
+            self._speakItems(items, box)
         finally:
             # restore the user's pitch only after the capital's audio exists
-            if self._cur_pitch != settings[1]:
-                box.chip.snap_pitch = True
-                box.say("\x05P%d" % settings[1])
-                self._cur_pitch = settings[1]
-                self._pitch_dirty = True
+            box.end()
 
-    def _speakItems(self, items, box, gain):
-        cur_pitch = self._cur_pitch
+    def _speakItems(self, items, box):
         for kind, value in items:
             if self._cancelFlag.is_set():
                 return
@@ -357,32 +302,20 @@ class SynthDriver(SynthDriver):
                 self._notifyIndex(value)
                 continue
             if kind == "pitch":
-                want = self._box_pitch(self._pitch + (value or 0))
-                if want != cur_pitch:
-                    box.chip.snap_pitch = True
-                    box.say("\x05P%d" % want)
-                    cur_pitch = self._cur_pitch = want
-                    self._pitch_dirty = True
+                self._apply(box)                 # the user's pitch now, the offset on it
+                box.pitch(value or 0)
                 continue
-            text = _clean(numwords.currencies(value)).strip()   # "£2.63": the firmware reads only "$"
+            text = box.prepare(value)            # currencies ("£2.63": the firmware reads only "$"), clean, strip
             if not text:
                 continue
-            t_start = box.chip.time
             box.say(text + "\r")
             while not self._cancelFlag.is_set():
-                y = box.run(BLOCK_S)
-                if self._lead:
-                    y, found = _trim_lead(y)     # the box's reading time is only delay
-                    self._lead = not found
-                if len(y) and not self._cancelFlag.is_set():
-                    pcm = box.chip.dsp.pcm16(y, gain)
+                pcm, done = box.render()         # 30 ms of the box; its reading time trimmed at the head
+                if pcm and not self._cancelFlag.is_set():
                     self._player.feed(pcm)
-                if self._snap_until_speech and box.last_speech >= t_start:
-                    # the first phoneme is set up; a leftover snap would flatten a glide later
-                    box.chip.snap_pitch = False
-                    self._snap_until_speech = False
-                if not box.busy():
-                    self._pitch_dirty = False    # the box has read everything sent so far
+                if done:
+                    if box.fault:
+                        raise RuntimeError("the emulated V40 faulted")
                     break
         if self._cancelFlag.is_set():
             return
@@ -396,19 +329,6 @@ class SynthDriver(SynthDriver):
                 self._player.feed(b"", onDone=_nothing)
         except Exception:
             pass
-
-    def _resend_pitch(self):
-        """A cancel drops whatever the box has not read yet, pitch commands with it: a
-        capital cut off mid-word left every later word high, because the driver thought
-        the pitch was back (Tomi, 0.2.0).  Say the user's pitch again, and have it land
-        at once on the next utterance's first phoneme instead of gliding down into it."""
-        if self._sent is None:
-            return                       # rebooted: the next job sends every setting anyway
-        base = self._sent[1]
-        self._box.chip.snap_pitch = True
-        self._snap_until_speech = True
-        self._box.say("\x05P%d" % base)
-        self._cur_pitch = base
 
     def _notifyIndex(self, index):
         cb = lambda: synthIndexReached.notify(synth=self, index=index)   # noqa: E731

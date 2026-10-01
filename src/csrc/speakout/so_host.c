@@ -24,6 +24,9 @@ struct so_host {
     double say_time;
     double *buf;
     int n_buf, cap_buf;
+    int log_on;                            /* "log_writes" */
+    soh_write *wl;
+    int n_wl, cap_wl;
 };
 
 static void set_err(char *err, int errlen, const char *msg)
@@ -109,6 +112,7 @@ SO_API void soh_destroy(so_host *h)
     if (h->own_chip)
         ssi263_free(h->chip);
     free(h->buf);
+    free(h->wl);
     free(h);
 }
 
@@ -119,9 +123,27 @@ SO_API ssi263 *soh_chip(so_host *h)
 
 /* ---- _chip_write, _cpu (SpeakOutV40's) ------------------------------------------------------------------------- */
 
+static void log_write(so_host *h, int reg, int v)
+{
+    if (h->n_wl == h->cap_wl) {
+        int cap = h->cap_wl ? h->cap_wl * 2 : 256;
+        soh_write *w = (soh_write *)realloc(h->wl, (size_t)cap * sizeof *w);
+        if (!w)
+            return;
+        h->wl = w;
+        h->cap_wl = cap;
+    }
+    h->wl[h->n_wl].t = ssi263_time(h->chip);
+    h->wl[h->n_wl].reg = reg;
+    h->wl[h->n_wl].val = v;
+    h->n_wl++;
+}
+
 static void chip_write(so_host *h, int reg, int v)
 {
     ssi263_write(h->chip, reg, v);
+    if (h->log_on)
+        log_write(h, reg, v);
     /* Idle = the start-of-utterance routine (0x4318): PA/3 with R2 forced to rate F.  Speech never uses rate F, and
        every frame first primes R0 with 00. */
     if (reg == 0 && v != 0x00 && !(v == 0xC0 && (ssi263_reg(h->chip, 2) >> 4) == 0xF)) {
@@ -303,6 +325,7 @@ SO_API int soh_get_int(const so_host *h, const char *name)
     if (!strcmp(name, "preparing")) return h->preparing;
     if (!strcmp(name, "request")) return ssi263_request(h->chip) ? 1 : 0;
     if (!strcmp(name, "steps")) return (int)so_steps(h->b);
+    if (!strcmp(name, "log_writes")) return h->log_on;
     return -1;
 }
 
@@ -310,4 +333,14 @@ SO_API void soh_set_int(so_host *h, const char *name, int v)
 {
     if (!strcmp(name, "preparing"))
         h->preparing = v != 0;
+    else if (!strcmp(name, "log_writes"))
+        h->log_on = v != 0;
 }
+
+SO_API int soh_writes(const so_host *h, const soh_write **writes)
+{
+    *writes = h->wl;
+    return h->n_wl;
+}
+
+SO_API void soh_clear_writes(so_host *h) { h->n_wl = 0; }

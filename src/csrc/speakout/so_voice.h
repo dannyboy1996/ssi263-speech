@@ -63,6 +63,26 @@ SO_API void sov_cancel(so_voice *v);
    the next sov_speak, as the driver reboots it when speech fails. */
 SO_API int sov_fault(const so_voice *v);
 
+/* A job: NVDA's whole speech sequence as the NVDA driver (nvda/speakout/synthDrivers/speakout.py, since 0.7.5 on
+   this library) speaks it -- several texts, PitchCommands and IndexCommands in one utterance, which sov_speak cannot
+   say byte for byte: the lead trim is armed once per job (the second text's head is not trimmed), and a capital's
+   pitch stays until the next PitchCommand or the job's end.
+     sov_begin            _speakJob's start: a faulted box rebooted, the settings (sov_set) sent if they changed, the
+                          lead trim armed.
+     sov_pitch(offset)    a PitchCommand item (offset 0 included: back to the user's pitch); the pitch is sov_set's
+                          at the call, the restore at sov_end the one sov_begin sent.
+     sov_text(bytes, n)   a text item, as the box is sent it: sov_say_bytes' bytes, the carriage return included;
+                          then sov_render until *done before the next item.  0 when n is 0.
+     sov_end              _speakJob's finally: the user's pitch said again (snapped) if a capital left it changed.
+     sov_flush            after sov_end when the job was cancelled (_run's box.cancel() and _resend_pitch); called
+                          whether or not a text was still sounding, as the driver does.
+   IndexCommands are the caller's (the driver's player callbacks).  sov_speak and sov_cancel are a one-text job. */
+SO_API void sov_begin(so_voice *v);
+SO_API void sov_pitch(so_voice *v, int pitch_offset);
+SO_API int sov_text(so_voice *v, const unsigned char *bytes, int n);
+SO_API void sov_end(so_voice *v);
+SO_API void sov_flush(so_voice *v);
+
 /* The driver's _box_pitch: NVDA's pitch 0-100 on the box's 0-9 (50 -> 3). */
 SO_API int sov_pitch_step(int pitch);
 /* The bytes the driver would send for this utterance's text (currencies, _clean, strip, Latin-1, the carriage

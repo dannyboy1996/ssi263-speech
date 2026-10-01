@@ -63,6 +63,28 @@ if os.path.isfile(AM_LIB):
                         fail_marks=[r"^DIFF  numbers ", r"^DIFF  numbers-off ", r"^same  hello ",
                                     r"^DIFF  (?!4000 )\d+ of 4000 random texts give the driver's text$",
                                     r"^2 of 15 utterances byte-identical to the NVDA driver$"]))
+# 0.7.5's native Speak-Out and Accent drivers (ssi263speech.dll: no Python host or front end) against 0.7.0's Python
+# drivers (legacy_drivers.py), byte for byte with the index and done order: NVDA's sequences (texts with indexes between,
+# pieces, capitals alone, inside a sequence and over an index), numbers, money, punctuation, the settings' extremes,
+# every sample rate, both Accents with their variants, inflection and numbers, cancels after a block and at an index.
+# Controls: the job re-begun before every text (the voices' one-text API) must fail the multi-text cases and pass the
+# first one-text case; the native cancels one block late must fail the block cuts.
+NATIVE_EQ_SUM = r"^(?!99 )\d+ of 99 sequences byte-identical to 0\.7\.0's drivers"
+# Only when the built add-ons are the native ones (nvda/dist/<addon>-build with ssi263speech.py, built by
+# build_speakout.py / build_accent.py once they package ssi263speech.dll).
+NATIVE_BUILT = all(os.path.isfile(os.path.join(os.path.dirname(HERE), "dist", "%s-build" % a, "synthDrivers",
+                                               "_ssi263_%s" % a, "ssi263speech.py")) for a in ("speakout", "accent"))
+if NATIVE_BUILT:
+    CHECKS.append(check("native drivers = 0.7.0's Python drivers, byte for byte", [PY, "native_driver_equiv.py"]))
+    CHECKS.append(check("native drivers CONTROL (the job re-begun per text, must fail)", [PY, "native_driver_equiv.py"],
+                        env={"NATIVE_EQUIV_BREAK": "per-text"}, expect_fail=True,
+                        fail_marks=[r"^same  speakout plain ", r"^DIFF  speakout indexes ", r"^DIFF  mini indexes ",
+                                    r"^DIFF  sa indexes ", r"^DIFF  speakout capital over an index ", NATIVE_EQ_SUM]))
+    CHECKS.append(check("native drivers CONTROL (cancel one block late, must fail)", [PY, "native_driver_equiv.py"],
+                        env={"NATIVE_EQUIV_BREAK": "cancel"}, expect_fail=True,
+                        fail_marks=[r"^same  speakout plain ", r"^DIFF  speakout cancel in a sequence .*cut after",
+                                    r"^DIFF  mini cancel in a sequence .*cut after",
+                                    r"^DIFF  sa cancel in a sequence .*cut after", NATIVE_EQ_SUM]))
 for seed in (1, 2, 3, 4):
     CHECKS.append(check("complete_fuzz seed %d" % seed, [PY, "complete_fuzz.py", "150", str(seed)], env={"SIM_SPEED": "10"}))
 for synth in ("speakout", "accent"):
@@ -1064,9 +1086,11 @@ CHECKS.append(check("bl_voice text CONTROL (no currencies, must fail)", [PY, "vo
 CHECKS.append(check("currency rule", [PY, "currency_test.py", "rules"]))
 for w in ("blazie", "speakout", "accent"):
     CHECKS.append(check("currency %s: the unit is sent pounds and pence" % w, [PY, "currency_test.py", w]))
-CHECKS.append(check("currency CONTROL (rule off, must fail)", [PY, "currency_test.py", "speakout"],
+# (on the Braille Lite: its driver's front end is still Python; since 0.7.5 the Speak-Out's and the Accents' are C, their
+# rule held to 0.7.0's Python one by so_voice_text_equiv.py, am_voice_equiv.py and native_driver_equiv.py)
+CHECKS.append(check("currency CONTROL (rule off, must fail)", [PY, "currency_test.py", "blazie"],
                     env={"CURRENCY_OFF": "1"}, expect_fail=True,
-                    fail_marks=[r"^speakout: the unit was sent .*: FAILED$"]))
+                    fail_marks=[r"^blazie: the unit was sent .*: FAILED$"]))
 CHECKS.append(check("idle channel table (bl_idle_table.h = blazie_idle.py)",
                     [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "csrc", "blazie", "gen_idle.py"),
                      "--check"]))

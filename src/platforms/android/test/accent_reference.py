@@ -1,5 +1,5 @@
-"""The Accent SA's reference for test_android_native.py: the NVDA Accent add-on's own driver (the built
-nvda/dist/accent-build, its "sa" voice, on the desktop's C host: accent_sa.dll, SSI263_ACCENT_SA_CORE=c), under the
+"""The Accent SA's reference for test_android_native.py: the NVDA Accent add-on's driver as 0.7.0 shipped it, in Python
+(nvda/tools/legacy_drivers.py; its "sa" voice on the desktop's C host: accent_sa.dll, SSI263_ACCENT_SA_CORE=c), under the
 stand-in NVDA of nvda/tools/fake_nvda_driver_test.py, speaks each case on a freshly booted unit -- as the Android
 engine gives each utterance a unit of its own -- and every PCM byte it feeds its player is hashed.
 
@@ -33,6 +33,11 @@ def fnv(data):
 def main():
     cases = json.load(open(sys.argv[1], encoding="utf-8"))
     os.environ.setdefault("SSI263_ACCENT_SA_CORE", "c")
+    # 0.7.0's Python driver: since 0.7.5 the add-on's driver speaks through as_voice itself, the code under test here
+    # (nvda/tools/native_driver_equiv.py holds the two byte for byte), so the reference stays the Python one
+    sys.path.insert(0, os.path.dirname(HARNESS))
+    import legacy_drivers
+    os.environ["SSI263_SYNTH_DRIVERS"] = legacy_drivers.synth_drivers("accent")
     sys.argv = [HARNESS, "accent"]
     src = open(HARNESS, encoding="utf-8").read().split("time.sleep(2.0)")[0]
     g = {"__file__": HARNESS, "__name__": "accent_reference_harness"}

@@ -24,6 +24,10 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.argv = [sys.argv[0], "accent"]
+# the reference is 0.7.0's Python driver (since 0.7.5 the add-on's driver is am_voice itself: native_driver_equiv.py)
+sys.path.insert(0, HERE)
+import legacy_drivers  # noqa: E402
+os.environ["SSI263_SYNTH_DRIVERS"] = legacy_drivers.synth_drivers("accent")
 src = open(os.path.join(HERE, "fake_nvda_driver_test.py"), encoding="utf-8").read()
 exec(src.split("time.sleep(2.0)")[0])
 
