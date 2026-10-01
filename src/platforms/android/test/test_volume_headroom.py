@@ -1,15 +1,23 @@
-"""The Android engine's default volume leaves headroom: no clipped sample, the loudest peak under HEADROOM_DBFS.
+"""The Android engine's default volume leaves headroom: no clipped sample, the loudest peak under HEADROOM_DBFS, for
+each voice.
 
 Tomi (0.7, on the phone): the Blazie voice sat under TalkBack's own sounds.  At the desktop level (volume 100: bl_voice's
 MAKEUP x 1) the voice peaks near -5 dBFS at most with its voiced RMS near -22.5 dBFS, so Android's engine volume now
 runs 0-200 with a default of SsiSettings.DEFAULT_VOLUME (read from the app's source, one place): louder, still short
 of clipping on these English and Spanish lines (some of them the loudest found in a 67-line sweep).
 
-    python test_volume_headroom.py        SSI263_VOLUME_TEST_BREAK=1: volume 250 -- the test must fail (it clips)
+The Aicom Accent SA (the built-in voice, 2026-09-30) shares that slider: at the NVDA driver's full volume (the gain 1,
+ssa_engine.h's SSA_ACCENT_LEVEL 100) it peaks at -6.0 dBFS on these lines with its speech RMS at -21.5 dBFS, within a
+decibel of the Braille Lite's (-5.5, -22.5), so the default puts both beside TalkBack at the same level.  It is
+measured through the app's own path (test_android_native.c --level: ssa_engine, the fresh unit, the gain).
+
+    python test_volume_headroom.py        SSI263_VOLUME_TEST_BREAK=1: volume 250 for both voices -- must fail (both clip)
+                                          SSI263_VOLUME_TEST_BREAK=accent: 250 for the Accent SA alone -- must fail
 """
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -27,6 +35,9 @@ EN = ["Hello there. This is the Braille Lite, speaking on a phone.",
       "The quick brown fox jumps over the lazy dog, again and again."]
 ES = ["La lluvia en Sevilla es una maravilla.", "Hola, ¿qué tal? Él está aquí, mañana a las tres y media.",
       "¡Atención! El número es 1.234.567.", "Buenos días, señoras y señores."]
+# the Accent SA: the English lines, and what TalkBack says most
+ACCENT = EN + ["Battery 85 percent. 3 notifications.", "Double-tap to activate. Button.", "Capital B.",
+               "Settings. Network and internet. Wi-Fi, connected to Home."]
 
 
 def default_volume():
@@ -36,12 +47,18 @@ def default_volume():
     return int(m.group(1))
 
 
-def main():
+def verdict(label, volume, lines, db, worst, clipped):
+    ok = clipped == 0 and db <= HEADROOM_DBFS
+    print("%s volume %d: %d lines, loudest peak %.2f dBFS (%r), %d clipped samples -- %s" % (
+        label, volume, lines, db, worst[:40], clipped, "ok" if ok else "FAILED (limit %.1f dBFS, no clipping)"
+        % HEADROOM_DBFS))
+    return ok
+
+
+def blazie(volume, firmware):
     arch = "x64" if sys.maxsize > 2 ** 32 else "x86"
     lib_path = os.path.join(T.REPO, "nvda", "dist", "blazie-lib", arch, "bl.dll")
     chip = os.path.join(T.REPO, "src", "ssi263", "_bin", arch, "ssi263.dll")
-    firmware = os.environ.get("SSI263_FIRMWARE") or os.path.join(T.REPO, "firmware", "blazie")
-    volume = 250 if os.environ.get("SSI263_VOLUME_TEST_BREAK") == "1" else default_volume()
     lib = T.load_reference(lib_path, chip)
     worst, clipped, lines = (0.0, ""), 0, 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -63,9 +80,33 @@ def main():
                     worst = (peak / 32768.0, text)
             lib.blv_destroy(ref.v)
     db = 20 * math.log10(worst[0]) if worst[0] else -120.0
-    ok = clipped == 0 and db <= HEADROOM_DBFS
-    print("volume %d: %d lines, loudest peak %.2f dBFS (%r), %d clipped samples -- %s" % (
-        volume, lines, db, worst[1][:40], clipped, "ok" if ok else "FAILED (limit %.1f dBFS, no clipping)" % HEADROOM_DBFS))
+    return verdict("braille lite", volume, lines, db, worst[1], clipped)
+
+
+def accent(volume):
+    """Through the app's own path: test_android_native --level, the Accent SA (voice 2) at the app's defaults."""
+    brk = os.environ.get("SSI263_VOLUME_TEST_BREAK")       # each run its own program: run_tests runs them together
+    T.OUT = os.path.join(T.REPO, "build", "android-host-volume" + ("-control-" + brk if brk else ""))
+    exe = T.build_desktop()
+    r = subprocess.run([exe, "--level", ".", T.AICOM, "2", str(volume)],
+                       input="".join(t.encode("utf-8").hex() + "\n" for t in ACCENT), capture_output=True, text=True)
+    if r.returncode:
+        sys.exit("test_android_native --level failed: %s" % r.stderr.strip())
+    peak, clipped, worst = 0, 0, ""
+    for k, p, c in re.findall(r"^level (\d+) (\d+) (\d+) ", r.stdout, re.M):
+        clipped += int(c)
+        if int(p) > peak:
+            peak, worst = int(p), ACCENT[int(k)]
+    db = 20 * math.log10(peak / 32768.0) if peak else -120.0
+    return verdict("accent sa", volume, len(ACCENT), db, worst, clipped)
+
+
+def main():
+    brk = os.environ.get("SSI263_VOLUME_TEST_BREAK", "")
+    firmware = os.environ.get("SSI263_FIRMWARE") or os.path.join(T.REPO, "firmware", "blazie")
+    default = default_volume()
+    ok = blazie(250 if brk == "1" else default, firmware)
+    ok = accent(250 if brk in ("1", "accent") else default) and ok
     print("volume headroom: %s" % ("PASS" if ok else "FAILED"))
     sys.exit(0 if ok else 1)
 

@@ -11,6 +11,7 @@ read from a folder or given in memory (`firmware/aicom-accent-sa`, in the reposi
 | `as_board.h`, `as_board.c` | The machine: u2's lower half at 0000-77FF, 2 KB of RAM at 7800-7FFF, the 32 KB window at 8000-FFFF banked by port 40h (u2's upper half, u3, u4, nothing); the SSI-263 at ports 03-07, reversed, A/R in bit 7 of port 07; port 40h's latch (bank, and bit 4 gating A/R onto TRAP) and switches; the 8085 through `../cpu/cpu.h`; the TRAP gate, RxRDY on RST 6.5, RST 7.5's edge; and `as_board_run`, which counts T-states as the Python host does (below). The chip is the caller's, through two callbacks, so a write lands inside the slice and IN 07h reads A/R then. |
 | `as_usart.h`, `as_usart.c` | The 8251 as the firmware uses it: a mode word after reset, commands (RTS, internal reset), status 85h + RxRDY, the host's bytes queued and loaded one at a time while RTS is up. |
 | `as_host.h`, `as_host.c` | The host: `accent_sa.py`'s `AccentSA` in C (say, run, skip, busy, boot, cancel, speaking), around the board and an SSI-263 (`../ssi263.h`): the caller's, or one made from the built-in defaults. ROMs from a folder (`ash_create_dir`) or memory (`ash_create`). The API of `accent_sa.dll` / `libaccent_sa.so`. |
+| `as_voice.h`, `as_voice.c` | The Accent SA as a voice, for front ends without Python (Android's built-in voice): the NVDA Accent driver's "sa" front end in C, as `../blazie/bl_voice.c` is the Braille Lite's -- boot, settings commands sent when they change, currencies, `_clean` and number words (`../numwords.c`), a capital's pitch with snap_pitch, the 30 ms speak loop with the lead trim and the gain, cancel. Held to the driver byte for byte by `src/platforms/android/test/test_android_native.py`. |
 | `as_render.c` | The C API alone: the ROMs from a folder and a text into a WAV, no Python (`as_render <folder> "text" out.wav`). |
 | `test_as_board.c` | The board's rules on small programs in a synthetic u2 (no firmware): 11 tests. |
 | `as_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (17). Run by hand, as `so_controls.py`: seventeen builds. |
@@ -67,8 +68,8 @@ prints the shortest command-and-text sessions that hold one on the C host; put o
 
 ## Open questions
 
-- Android (the next step): `build_android.sh` compiles no C++ yet, and the 8085 core is C++17 (no exceptions, no RTTI).
-  It needs the NDK's clang++ and a choice of C++ runtime (libc++ static, so the one `.so` stays self-contained).
+- Android (2026-09-30): the built-in default voice. `build_android.sh` builds the core with the NDK's clang++ and
+  libc++ static inside the one `.so`; the board, host and `as_voice` as here. On the A024 a unit boots in 2.4 ms.
 - Linux: `libaccent_sa.so` takes the chip's functions from the `libssi263speech.so` that `ssi263/native.py` loaded
   (made global by `accent_sa_c.py` first). Built by `build_linux.sh`, not yet run on Linux.
 - Accepting it: the add-on keeps the Python 8085 until Tomi and Astra accept this one.

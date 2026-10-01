@@ -1,24 +1,35 @@
-/* ssa_engine.c -- see ssa_engine.h.  The flow is sd_ssi263.c's speak(): blv_set, blv_speak, blv_render until done,
- * a stop between blocks and blv_cancel after it. */
+/* ssa_engine.c -- see ssa_engine.h.  The Braille Lite's flow is sd_ssi263.c's speak(): blv_set, blv_speak,
+ * blv_render until done, a stop between blocks and blv_cancel after it.  The Accent SA's is the NVDA driver's _speakJob
+ * (as_voice.h) on a unit of the utterance's own. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "blazie/bl_voice.h"
+#include "accentsa/as_voice.h"
 #include "ssa_engine.h"
 #include "ssa_map.h"
 
-static const char *voice_files[SSA_VOICES][2] = {
+#define BLAZIE_VOICES 2
+#define ACCENT_PITCH 50                /* the settings' pitch the Accent SA's units keep: the rest goes as a capital's */
+
+int ssa_accent_break = 0;
+
+static const char *voice_files[BLAZIE_VOICES][2] = {
     {"BL2ENG.BNS", "bl2_2003_warm.state"},
     {"BL2SPA.BNS", "bl2spa_fresh.state"},
 };
+static const size_t ROM_SIZES[3] = {0x10000, 0x8000, 0x8000};
 
 struct ssa_engine {
     char *datadir;
     int sample_rate, inflection, whine;
-    bl_voice *voices[SSA_VOICES];
-    bl_voice *cur;                     /* the utterance's voice; NULL when none is running */
-    const short *block;                /* the last block blv_render gave, valid until the next render */
+    bl_voice *voices[BLAZIE_VOICES];
+    unsigned char *rom[3];             /* the Accent SA's u2, u3, u4 */
+    as_voice *spare;                   /* the Accent SA's next unit: booted, not yet spoken on */
+    as_voice *accent;                  /* the unit speaking the current utterance */
+    int cur;                           /* the utterance's voice; -1 when none is running */
+    const short *block;                /* the last block rendered, valid until the next render */
     int block_n, block_at, done, blocks;
     int stop;                          /* ssa_stop's flag: set from any thread, read with __atomic */
 };
@@ -46,17 +57,22 @@ ssa_engine *ssa_new(const char *datadir)
     e->sample_rate = 22050;
     e->inflection = 1;
     e->whine = 0;
+    e->cur = -1;
+    e->done = 1;
     return e;
 }
 
 static void shut_down(ssa_engine *e)
 {
     int i;
-    for (i = 0; i < SSA_VOICES; i++) {
+    for (i = 0; i < BLAZIE_VOICES; i++) {
         blv_destroy(e->voices[i]);
         e->voices[i] = NULL;
     }
-    e->cur = NULL;                     /* nothing may point into a unit that is gone */
+    asv_destroy(e->spare);
+    asv_destroy(e->accent);
+    e->spare = e->accent = NULL;
+    e->cur = -1;                       /* nothing may point into a unit that is gone */
     e->block = NULL;
     e->block_n = e->block_at = 0;
     e->done = 1;
@@ -64,16 +80,39 @@ static void shut_down(ssa_engine *e)
 
 void ssa_free(ssa_engine *e)
 {
+    int i;
     if (!e) return;
     shut_down(e);
+    for (i = 0; i < 3; i++) free(e->rom[i]);
     free(e->datadir);
     free(e);
+}
+
+int ssa_set_accent_roms(ssa_engine *e, const unsigned char *u2, size_t n2, const unsigned char *u3, size_t n3,
+                        const unsigned char *u4, size_t n4)
+{
+    const unsigned char *src[3] = {u2, u3, u4};
+    size_t n[3] = {n2, n3, n4};
+    int i;
+    for (i = 0; i < 3; i++)
+        if (!src[i] || n[i] != ROM_SIZES[i]) return 0;
+    asv_destroy(e->spare);             /* a unit made from other ROMs is not this voice any more */
+    e->spare = NULL;
+    for (i = 0; i < 3; i++) {
+        unsigned char *p = (unsigned char *)malloc(n[i]);
+        if (!p) return 0;
+        memcpy(p, src[i], n[i]);
+        free(e->rom[i]);
+        e->rom[i] = p;
+    }
+    return 1;
 }
 
 int ssa_has_voice(const ssa_engine *e, int voice)
 {
     char p[1200];
-    if (voice < 0 || voice >= SSA_VOICES) return 0;
+    if (voice == SSA_ACCENT_SA) return e->rom[0] && e->rom[1] && e->rom[2];
+    if (voice < 0 || voice >= BLAZIE_VOICES) return 0;
     path(e, voice_files[voice][0], p, sizeof p);
     if (!readable(p)) return 0;
     path(e, voice_files[voice][1], p, sizeof p);
@@ -99,7 +138,14 @@ int ssa_sample_rate(const ssa_engine *e) { return e->sample_rate; }
 int ssa_load(ssa_engine *e, int voice, char *err, int errlen)
 {
     char fw[1200], st[1200];
-    if (voice < 0 || voice >= SSA_VOICES) { snprintf(err, errlen, "no voice %d", voice); return -1; }
+    if (voice == SSA_ACCENT_SA) {
+        if (e->spare) return 0;
+        if (!ssa_has_voice(e, voice)) { snprintf(err, errlen, "the Accent SA's ROMs are not set"); return -1; }
+        e->spare = asv_create(e->rom[0], ROM_SIZES[0], e->rom[1], ROM_SIZES[1], e->rom[2], ROM_SIZES[2],
+                              (double)e->sample_rate, err, errlen);
+        return e->spare ? 0 : -1;
+    }
+    if (voice < 0 || voice >= BLAZIE_VOICES) { snprintf(err, errlen, "no voice %d", voice); return -1; }
     if (e->voices[voice]) return 0;
     path(e, voice_files[voice][0], fw, sizeof fw);
     path(e, voice_files[voice][1], st, sizeof st);
@@ -108,13 +154,74 @@ int ssa_load(ssa_engine *e, int voice, char *err, int errlen)
     return e->voices[voice] ? 0 : -1;
 }
 
+/* The Accent SA's unit is done with: let go, and the next one booted now, so the next utterance need not wait for
+   it (under the test's control 3, kept instead: its state carries into the next utterance). */
+static void accent_release(ssa_engine *e)
+{
+    char err[256];
+    if (!e->accent) return;
+    if (ssa_accent_break == 3) {
+        asv_destroy(e->spare);
+        e->spare = e->accent;
+    } else {
+        asv_destroy(e->accent);
+    }
+    e->accent = NULL;
+    if (!e->spare)
+        ssa_load(e, SSA_ACCENT_SA, err, sizeof err);
+}
+
 void ssa_cancel(ssa_engine *e)
 {
-    if (e->cur && !e->done)
-        blv_cancel(e->cur);
-    e->cur = NULL;
+    if (e->cur == SSA_ACCENT_SA) {
+        if (ssa_accent_break == 3 && e->accent && !e->done)
+            asv_cancel(e->accent);     /* a kept unit must drop what it has not spoken */
+        accent_release(e);
+    } else if (e->cur >= 0 && !e->done) {
+        blv_cancel(e->voices[e->cur]);
+    }
+    e->cur = -1;
     e->done = 1;
     e->block_n = e->block_at = 0;
+}
+
+int ssa_accent_pitch(int slider, int request)
+{
+    int p = ssa_pitch(slider, request), base = asv_pitch_step(slider);
+    if (ssa_accent_break == 4)         /* the control: the plain mapping */
+        return p;
+    if (request > 100)
+        while (p < 100 && asv_pitch_step(p) == base) p++;
+    else if (request > 0 && request < 100)
+        while (p > 0 && asv_pitch_step(p) == base) p--;
+    return p;
+}
+
+static int start_accent(ssa_engine *e, const char *utf8, const ssa_settings *s, int request_rate, int request_pitch)
+{
+    char err[256];
+    int pitch = ssa_accent_pitch(s->pitch, ssa_accent_break == 1 ? 100 : request_pitch);
+    if (ssa_load(e, SSA_ACCENT_SA, err, sizeof err) != 0)
+        return -1;
+    e->accent = e->spare;
+    e->spare = NULL;
+    if (ssa_accent_break == 2)         /* the control: the pitch as a setting, glided to */
+        asv_set(e->accent, ssa_rate(s->rate, request_rate), pitch, e->inflection ? 100 : 0,
+                s->volume * SSA_ACCENT_LEVEL / 100, 1);
+    else
+        asv_set(e->accent, ssa_rate(s->rate, request_rate), ACCENT_PITCH, e->inflection ? 100 : 0,
+                s->volume * SSA_ACCENT_LEVEL / 100, 1);
+    e->blocks = 0;
+    if (!asv_speak(e->accent, utf8, ssa_accent_break == 2 ? 0 : pitch - ACCENT_PITCH)) {
+        e->cur = SSA_ACCENT_SA;        /* released at once: nothing to say */
+        e->done = 1;
+        accent_release(e);
+        e->cur = -1;
+        return 1;
+    }
+    e->cur = SSA_ACCENT_SA;
+    e->done = 0;
+    return 0;
 }
 
 int ssa_start(ssa_engine *e, int voice, const char *utf8, const ssa_settings *s, int request_rate,
@@ -123,6 +230,8 @@ int ssa_start(ssa_engine *e, int voice, const char *utf8, const ssa_settings *s,
     char err[256];
     ssa_cancel(e);                     /* an utterance still running is abandoned: its leftovers must not follow */
     __atomic_store_n(&e->stop, 0, __ATOMIC_SEQ_CST);
+    if (voice == SSA_ACCENT_SA)
+        return start_accent(e, utf8, s, request_rate, request_pitch);
     if (ssa_load(e, voice, err, sizeof err) != 0)
         return -1;
     blv_set(e->voices[voice], ssa_rate(s->rate, request_rate), ssa_pitch(s->pitch, request_pitch), s->tone,
@@ -130,9 +239,16 @@ int ssa_start(ssa_engine *e, int voice, const char *utf8, const ssa_settings *s,
     e->blocks = 0;
     if (!blv_speak(e->voices[voice], utf8))
         return 1;
-    e->cur = e->voices[voice];
+    e->cur = voice;
     e->done = 0;
     return 0;
+}
+
+static int render(ssa_engine *e)
+{
+    if (e->cur == SSA_ACCENT_SA)
+        return asv_render(e->accent, &e->block, &e->done);
+    return blv_render(e->voices[e->cur], &e->block, &e->done);
 }
 
 int ssa_pull(ssa_engine *e, short *out, int cap)
@@ -149,16 +265,20 @@ int ssa_pull(ssa_engine *e, short *out, int cap)
         }
         if (n)                         /* hand over what there is; the next block comes on the next pull */
             break;
-        if (!e->cur || e->done)
+        if (e->cur < 0)
             return 0;
+        if (e->done) {                 /* finished, and all of it handed over */
+            if (e->cur == SSA_ACCENT_SA)
+                accent_release(e);
+            e->cur = -1;
+            return 0;
+        }
         if (__atomic_load_n(&e->stop, __ATOMIC_SEQ_CST))
             return -2;
-        e->block_n = blv_render(e->cur, &e->block, &e->done);
+        e->block_n = render(e);
         e->block_at = 0;
         if (e->block_n > 0)
             e->blocks++;
-        if (e->done && e->block_n <= 0)
-            e->cur = NULL;
     }
     return n;
 }

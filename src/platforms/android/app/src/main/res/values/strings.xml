@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SSI-263 Speech</string>
-    <string name="engine_name">Braille Lite (SSI-263)</string>
+    <string name="engine_name">SSI-263 Speech</string>
 </resources>

@@ -1,9 +1,11 @@
 #!/bin/sh
 # Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (z180emu's
-# Z180 core), the Braille Lite host and voice -- the same sources and flags as build_linux.sh -- plus the app's
-# front end (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle
-# packages prebuilt libraries.  Then it stages what the APK carries besides code: the licences, and for z180emu's GPL
-# the complete corresponding source.  Not the unit's firmware: the app's users import their own.
+# Z180 core), the Braille Lite host and voice, the Aicom Accent SA's board, host and voice on MAME's 8085 core (C++17,
+# with a static libc++ inside the one .so) -- the same sources and flags as build_linux.sh -- plus the app's front end
+# (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle packages
+# prebuilt libraries.  Then it stages what the APK carries besides code: the Accent SA's ROMs (Aicom's, the one
+# firmware the app ships: Tomi, 2026-09-30), the licences, and for z180emu's GPL the complete corresponding source.
+# Not the Braille Lite's firmware: the app's users import their own.
 #
 #   sh build_android.sh                  arm64-v8a, armeabi-v7a and x86_64
 #   sh build_android.sh arm64-v8a        one ABI
@@ -60,7 +62,12 @@ echo "NDK: $NDK"
 CHIP="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter"
 BOARD="-O3 -fcommon -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -w -I$Z180 -I$Z180/z180 -fmacro-prefix-map=$Z180=."
 FRONT="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -Wno-unused-parameter -I$SRC"
+# The Accent SA, as build_linux.sh builds it: MAME's 8085 core in C++17 without exceptions or RTTI, the board and host
+# in gnu89.  libc++ is linked statically into the one .so (-static-libstdc++) and its symbols kept inside it.
+MAME="-O2 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wno-sign-compare -I$SRC/cpu -I$SRC"
+ACCENT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/accentsa -I$SRC"
 CPP="$APP/cpp"
+AICOM="$ROOT/firmware/aicom-accent-sa"
 
 target() {
     case "$1" in
@@ -73,6 +80,7 @@ target() {
 
 # MSYS would rewrite --target's argument as a path; nothing here is one.
 cc() { MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1 "$BIN/clang$EXE" "$@"; }
+cxx() { MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1 "$BIN/clang++$EXE" "$@"; }
 
 objects() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
@@ -84,9 +92,16 @@ objects() {
     cc --target="$TARGET" $BOARD -c -o "$O/bl_voice.o" "$SRC/blazie/bl_voice.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_firmware.o" "$SRC/blazie/bl_firmware.c"
     cc --target="$TARGET" $BOARD -c -o "$O/bl_state.o" "$SRC/blazie/bl_state.c"
+    cxx --target="$TARGET" $MAME -c -o "$O/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
+    for f in as_board as_usart as_host; do
+        cc --target="$TARGET" $ACCENT -c -o "$O/$f.o" "$SRC/accentsa/$f.c"
+    done
+    cc --target="$TARGET" $FRONT -c -o "$O/as_voice.o" "$SRC/accentsa/as_voice.c"
+    cc --target="$TARGET" $FRONT -c -o "$O/numwords.o" "$SRC/numwords.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
 }
+ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o"
 
 build_abi() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
@@ -94,8 +109,15 @@ build_abi() {
     objects "$ABI"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_jni.o" "$CPP/ssa_jni.c"
     mkdir -p "$APP/jniLibs/$ABI"
-    # only the API and the JNI entry points are exported; the Z180 core's globals stay inside
-    cc --target="$TARGET" -shared -Wl,-z,max-page-size=16384 -o "$OUT/$ABI/libssi263speech.so" "$O"/*.o -lm -llog
+    rm -f "$O/test_android_native.o"
+    # only the API and the JNI entry points are exported; the Z180 core's globals and libc++ stay inside
+    cxx --target="$TARGET" -shared -static-libstdc++ -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384 \
+        -o "$OUT/$ABI/libssi263speech.so" "$O"/*.o -lm -llog
+    # self-contained: nothing beyond Bionic's own libraries (no libc++_shared.so: the C++ runtime is inside)
+    if "$BIN/llvm-readelf$EXE" -d "$OUT/$ABI/libssi263speech.so" | grep NEEDED | grep -v -E 'lib(c|m|dl|log)[.]so'; then
+        echo "libssi263speech.so needs a library the APK does not carry"
+        exit 1
+    fi
     "$BIN/llvm-strip$EXE" --strip-unneeded -o "$APP/jniLibs/$ABI/libssi263speech.so" "$OUT/$ABI/libssi263speech.so"
     ls -l "$APP/jniLibs/$ABI/libssi263speech.so"
 }
@@ -105,10 +127,12 @@ build_abi() {
 build_test() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
     objects "$ABI"
-    cc --target="$TARGET" $FRONT -I"$CPP" -o "$OUT/$ABI/test_android_native" \
-        "$ROOT/src/platforms/android/test/test_android_native.c" \
+    cc --target="$TARGET" $FRONT -I"$CPP" -c -o "$O/test_android_native.o" \
+        "$ROOT/src/platforms/android/test/test_android_native.c"
+    cxx --target="$TARGET" -static-libstdc++ -o "$OUT/$ABI/test_android_native" "$O/test_android_native.o" \
         "$O/ssa_engine.o" "$O/ssa_map.o" "$O/bl_voice.o" "$O/bl_host.o" "$O/bl_unity.o" "$O/ssi263.o" \
-        "$O/ssi263dsp.o" -lm
+        "$O/ssi263dsp.o" $(for f in $ACCENT_OBJS; do echo "$O/$f"; done) -lm
+    rm -f "$O/test_android_native.o"
     echo "  -> build/android/$ABI/test_android_native"
 }
 
@@ -116,7 +140,13 @@ build_test() {
 stage_assets() {
     A="$OUT/assets"
     rm -rf "$A"
-    mkdir -p "$A/licenses" "$A/source"
+    mkdir -p "$A/licenses" "$A/source" "$A/aicom"
+    # The Accent SA's ROMs, the built-in voice: Aicom's, in the repository with their notice (firmware/AICOM.txt).
+    # check_apk_no_firmware.py lets exactly these three through, by their sha256.
+    for f in u2.BIN u3.BIN u4.BIN; do
+        [ -f "$AICOM/$f" ] || { echo "missing $AICOM/$f"; exit 1; }
+        cp "$AICOM/$f" "$A/aicom/"
+    done
     # No firmware: the app is where it can NOT ship, so its users import their own (SettingsActivity).  A developer
     # build may carry it, by asking: SSI263_ANDROID_BUNDLE_FIRMWARE=1 (never a release).
     if [ "${SSI263_ANDROID_BUNDLE_FIRMWARE:-0}" = 1 ]; then
@@ -137,6 +167,8 @@ stage_assets() {
     cp "$ROOT/src/platforms/android/licenses/"*.txt "$A/licenses/"
     cp "$ROOT/LICENSE" "$A/licenses/ssi263-speech-MIT.txt"
     cp "$Z180/COPYING" "$A/licenses/z180emu-GPL-2.0.txt"
+    cp "$ROOT/firmware/AICOM.txt" "$A/licenses/Aicom-Accent-SA-notice.txt"
+    cp "$SRC/cpu/mame_i8085/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-8085-core-BSD-3-Clause.txt"
     # GPLv2 (z180emu): the complete source this library was built from, and how, as tools/package_linux.sh does
     Z180_PARENT="$(dirname "$Z180")"; Z180_NAME="$(basename "$Z180")"
     # --force-local: on Windows the archive's "C:" is a drive, not a remote host
@@ -144,12 +176,15 @@ stage_assets() {
         --exclude=local.properties --exclude=signing.properties \
         -czf "$A/source/ssi263-speech-source.tgz" build_android.sh build_linux.sh LICENSE \
         src/csrc/ssi263.c src/csrc/ssi263dsp.c src/csrc/ssi263.h src/csrc/ssi263_defaults.h src/csrc/blazie \
+        src/csrc/numwords.c src/csrc/numwords.h src/csrc/accentsa \
         src/csrc/cpu src/platforms/android src/platforms/speechd \
         -C "$Z180_PARENT" "$Z180_NAME/z180" "$Z180_NAME/COPYING")
     cat > "$A/source/BUILD.txt" <<EOF
 libssi263speech.so was built with the Android NDK $(basename "$NDK") (clang, --target=<abi>-linux-android$API).
-Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, then: sh build_android.sh, and
-in src/platforms/android: ./gradlew assembleDebug.  The firmware is not part of it: the app imports it.
+Unpack ssi263-speech-source.tgz, move its $Z180_NAME folder to third_party/z180emu, put the Accent SA's ROMs (this
+APK's assets/aicom, or the repository's firmware/aicom-accent-sa) in firmware/aicom-accent-sa, then: sh
+build_android.sh, and in src/platforms/android: ./gradlew assembleDebug.  The Braille Lite firmware is not part of
+it: the app imports it.
 EOF
     ls -R "$A" | head -20
 }

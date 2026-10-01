@@ -1,6 +1,7 @@
-// Raw JNI binding to libssi263speech.so (cpp/ssa_jni.c): the Braille Lite voices -- the unit's firmware on an
-// emulated Z180 driving the SSI-263 model -- the same C the speech-dispatcher module and the NVDA add-on's library are
-// built from.  Not thread-safe: SsiEngine serialises every call except nativeStop, which only sets a flag.
+// Raw JNI binding to libssi263speech.so (cpp/ssa_jni.c): the Aicom Accent SA -- its own 8085 firmware on MAME's 8085
+// core -- and the Braille Lite voices -- the unit's firmware on an emulated Z180 -- each driving the SSI-263 model; the
+// same C the speech-dispatcher module and the NVDA add-ons' libraries are built from.  Not thread-safe: SsiEngine
+// serialises every call except nativeStop, which only sets a flag.
 package com.ssi263speech.tts
 
 object SsiNative {
@@ -8,11 +9,15 @@ object SsiNative {
         System.loadLibrary("ssi263speech")
     }
 
-    const val ENGLISH = 0
-    const val SPANISH = 1
+    const val ENGLISH = 0                   // the Braille Lite, English (imported)
+    const val SPANISH = 1                   // the Braille Lite, Spanish (imported)
+    const val ACCENT_SA = 2                 // the Aicom Accent SA (built in)
 
     /** Open the engine on the folder holding the unit's files (once per process; later calls keep it). */
     external fun nativeOpen(dataDir: String): Boolean
+
+    /** The Accent SA's ROMs (u2 64 KB, u3 and u4 32 KB each), copied into the open engine.  False on the wrong sizes. */
+    external fun nativeAccentRoms(u2: ByteArray, u3: ByteArray, u4: ByteArray): Boolean
 
     /** Both of the voice's files are in the data folder. */
     external fun nativeHasVoice(voice: Int): Boolean

@@ -1,13 +1,24 @@
-/* ssa_engine.h -- the Android front end in plain C: the Braille Lite voices (English, and Spanish when its files are
- * there) around bl_voice.h, the way the speech-dispatcher module (src/platforms/speechd/sd_ssi263.c) drives them --
- * a unit booted on first use, settings sent before each utterance, the audio pulled block by block, a stop between
- * blocks, and a cancel so the next utterance starts clean.
+/* ssa_engine.h -- the Android front end in plain C: the voices, their settings, start, pull, stop and cancel.
+ *
+ * The Aicom Accent SA (the built-in voice, Tomi 2026-09-30: Aicom's ROMs ship in the APK, handed over in memory) runs
+ * through as_voice.h, the NVDA Accent driver's front end in C.  Each utterance gets a unit of its own, booted as the
+ * driver boots one and let go afterwards: so an utterance sounds the same whatever came before it (a capital's raised
+ * pitch cannot linger, and a stop needs no flush), and every pitch -- the app's slider and the request's together --
+ * is said the way the driver says a capital's, with snap_pitch, so it jumps rather than glides from the unit's
+ * power-up pitch.  The next unit is booted as soon as one is let go.
+ *
+ * The Braille Lite voices (English, and Spanish when its files are there; the user imports their firmware) run through
+ * bl_voice.h, the way the speech-dispatcher module (src/platforms/speechd/sd_ssi263.c) drives them -- a unit booted on
+ * first use, settings sent before each utterance, the audio pulled block by block, a stop between blocks, and a cancel
+ * so the next utterance starts clean.
  *
  * No JNI here (ssa_jni.c is the thin bridge), so the host-side test (src/platforms/android/test) runs this same code
  * on the desktop and over adb.  Not thread-safe: one caller at a time (the app holds a lock), except ssa_stop.
  */
 #ifndef SSA_ENGINE_H
 #define SSA_ENGINE_H
+
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,10 +28,16 @@ typedef struct ssa_engine ssa_engine;
 
 #define SSA_ENGLISH 0                  /* BL2ENG.BNS + bl2_2003_warm.state */
 #define SSA_SPANISH 1                  /* BL2SPA.BNS + bl2spa_fresh.state */
-#define SSA_VOICES 2
+#define SSA_ACCENT_SA 2                /* Aicom's u2, u3, u4, from ssa_set_accent_roms */
+#define SSA_VOICES 3
+
+/* The Accent SA's level at the app's volume 100, in the driver's percent (as_voice.h's asv_set): the engine volume
+   times this over 100.  test_volume_headroom.py measures it against the Braille Lite's. */
+#define SSA_ACCENT_LEVEL 100
 
 /* The app's own settings, on the NVDA driver's scales (bl_voice.h's blv_set): rate, pitch 0-100 (50 = the unit's
-   factory rate and pitch), tone 0-26 (7), volume 0-100, pack = short pauses. */
+   factory rate and pitch), tone 0-26 (7), volume 0-200 (100 = the desktop voices' level), pack = short pauses.  The
+   Accent SA takes rate, pitch and volume; tone and pack are the Braille Lite's. */
 typedef struct {
     int rate, pitch, tone, volume, pack;
 } ssa_settings;
@@ -29,12 +46,16 @@ typedef struct {
 ssa_engine *ssa_new(const char *datadir);
 void ssa_free(ssa_engine *e);
 
-/* Both of the voice's files are in the data folder. */
+/* The Accent SA's ROMs (u2 64 KB, u3 and u4 32 KB each), copied.  1, or 0 (wrong sizes, out of memory). */
+int ssa_set_accent_roms(ssa_engine *e, const unsigned char *u2, size_t n2, const unsigned char *u3, size_t n3,
+                        const unsigned char *u4, size_t n4);
+
+/* The voice can speak: both of a Braille Lite voice's files are in the data folder; the Accent SA's ROMs are set. */
 int ssa_has_voice(const ssa_engine *e, int voice);
 
 /* The settings a unit is booted with: sample rate (11025, 22050 or 44100; anything else is 22050, as sd_ssi263),
-   inflection 0/1, whine 0 off / 1 hiss / 2 whine.  A change shuts the booted units down; the next use boots them
-   again with the new settings. */
+   inflection 0/1 (the Accent SA: full intonation or monotone, ESC M0 / M1), whine 0 off / 1 hiss / 2 whine (the
+   Braille Lite's).  A change shuts the booted units down; the next use boots them again with the new settings. */
 void ssa_configure(ssa_engine *e, int sample_rate, int inflection, int whine);
 int ssa_sample_rate(const ssa_engine *e);
 
@@ -64,6 +85,18 @@ int ssa_blocks(const ssa_engine *e);
    samples it made -- 0 when the unit stays silent -- with the FNV-1a 64 of their little-endian bytes in *fnv when
    fnv is not NULL; or -1 with the reason in err. */
 long ssa_probe(const char *datadir, int voice, const char *utf8, unsigned long long *fnv, char *err, int errlen);
+
+/* The Accent SA's pitch for a request, on NVDA's scale: ssa_pitch's, except that a request's pitch other than 100 %
+   always moves the Accent at least one of its ten steps (ESC P 0-9) from the slider's -- the nearest pitch that does,
+   in the request's direction.  A capital's raise of 110-120 % (a screen reader's) would otherwise land on the
+   slider's own step and go unheard. */
+int ssa_accent_pitch(int slider, int request);
+
+/* The tests' controls (test_android_native.c sets them; the app never does): each puts back one bug the Accent SA's
+   cases must catch.  1: the request's pitch dropped; 2: the pitch sent as a setting, so it glides instead of jumping
+   (no snap_pitch); 3: one unit kept from utterance to utterance, so what came before is heard in what follows; 4: the
+   plain mapping for the pitch (ssa_accent_pitch's step rule gone), so a 120 % request sounds like 100 %. */
+extern int ssa_accent_break;
 
 #ifdef __cplusplus
 }
