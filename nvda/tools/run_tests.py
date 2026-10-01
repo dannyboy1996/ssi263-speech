@@ -384,6 +384,12 @@ if os.path.isfile(TEST_BNS) and all(os.path.isfile(os.path.join(BNS_DIR, fw)) an
                         fail_marks=[r"^ok +the unit +Braille 'n Speak 2000$",
                                     r"^FAIL Slovak words at power-on +\[B R A E L EH N S P E K T U U TH",
                                     r"^FAIL o-chord t answered in Slovak +\[AH P SCH UH2 N R E S EH T", r"^FAILED$"]))
+    # the Slovak unit's names are code page 852 (its "fles subory" folder): put back as 850, they must fail
+    CHECKS.append(check("Braille 'n Speak 2000: Slovak names CONTROL (code page 850, must fail)",
+                        [FILES, "bl", os.path.join(BNS_DIR, "BS2SLL.BNS"), os.path.join(BNS_DIR, "bs2sll_fresh.state"),
+                         "--break=cp"], expect_fail=True,
+                        fail_marks=[r"^ok +export: a file the unit made",
+                                    r"^FAIL export: the Slovak unit's folder names +.*: no$", r"^FAILED$"]))
     CHECKS.append(check("Braille 'n Speak 2000 English: file flash", [os.path.join(EMU, "test_flash.exe"), "bl",
                         os.path.join(BNS_DIR, "BS03ENG.BNS"), os.path.join(BNS_DIR, "bs03eng_fresh.state")]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the

@@ -45,21 +45,24 @@ enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_BNS_EN, ID_BNS_SK, ID_FACTOR
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
 
-/* state NULL: a cold start (the Type 'n Speak's cold reset asks how to set itself up: TNS_FIRST_START) */
-typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; } unit_kind;
+/* state NULL: a cold start (the Type 'n Speak's cold reset asks how to set itself up: TNS_FIRST_START); codepage:
+   its file names' code page (bl_files_xfer.h) */
+typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; int codepage; } unit_kind;
 static const unit_kind KINDS[] = {
     {"Braille Lite 2000 (English)", EMU_BRAILLE_LITE, "BL2ENG.BNS", "bl2_2003_warm.state", "english.state",
-     "english"},
+     "english", BLX_CP850},
     {"Braille Lite 2000 (Spanish)", EMU_BRAILLE_LITE, "spanish\\BL2SPA.BNS", "spanish\\bl2spa_fresh.state",
-     "spanish.state", "spanish"},
-    {"Type 'n Speak (English)", EMU_TYPE_N_SPEAK, "tns\\TNSENG.TNS", NULL, "tns_english.state", "tns_english"},
-    {"Type 'n Speak (Spanish)", EMU_TYPE_N_SPEAK, "tns\\TNSSPA.TNS", NULL, "tns_spanish.state", "tns_spanish"},
+     "spanish.state", "spanish", BLX_CP850},
+    {"Type 'n Speak (English)", EMU_TYPE_N_SPEAK, "tns\\TNSENG.TNS", NULL, "tns_english.state", "tns_english",
+     BLX_CP850},
+    {"Type 'n Speak (Spanish)", EMU_TYPE_N_SPEAK, "tns\\TNSSPA.TNS", NULL, "tns_spanish.state", "tns_spanish",
+     BLX_CP850},
     /* the Braille 'n Speak 2000 on the Braille Lite's board (emu_unit.h emu_model), in the menu when its firmware is
        there; its factory states made from the firmware by make_state.exe (make_state.c) */
     {"Braille 'n Speak 2000 (English)", EMU_BRAILLE_LITE, "bns2000\\BS03ENG.BNS", "bns2000\\bs03eng_fresh.state",
-     "bns_english.state", "bns_english"},
+     "bns_english.state", "bns_english", BLX_CP850},
     {"Braille 'n Speak 2000 (Slovak)", EMU_BRAILLE_LITE, "bns2000\\BS2SLL.BNS", "bns2000\\bs2sll_fresh.state",
-     "bns_slovak.state", "bns_slovak"},
+     "bns_slovak.state", "bns_slovak", BLX_CP852},
 };
 #define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
 
@@ -364,7 +367,7 @@ static void export_files(void)
     saved_path(g_kind, st, sizeof st);
     if (!open_saved(st, &u, &fs)) return;
     blx_report_init(&r);
-    img = blx_export(fs, u.model, &size, &r, err, sizeof err);
+    img = blx_export_cp(fs, u.model, KINDS[g_kind].codepage, &size, &r, err, sizeof err);
     if (!img || !write_bytes(path, img, size)) {
         snprintf(msg, sizeof msg, "Could not export the files: %s", img ? "the image could not be written" : err);
         MessageBoxA(g_wnd, msg, "Export files", MB_OK | MB_ICONERROR);
@@ -426,7 +429,8 @@ static void import_files(void)
     blx_report_init(&r);
     ok = open_saved(st, &u, &fs);
     if (ok) {
-        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err);
+        ok = blx_import_cp(fs, KINDS[g_kind].codepage, img, size, &r, err, sizeof err)
+             && blf_check(fs, err, sizeof err);
         if (ok && r.deleted) {              /* an image holding only new files would empty the unit: ask */
             char ask[3000];
             const char *line = r.log ? r.log : "";

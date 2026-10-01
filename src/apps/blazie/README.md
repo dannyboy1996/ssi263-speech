@@ -258,7 +258,9 @@ opens in 7-Zip (and mounts on Linux: `mount -o loop`). How the units keep their 
 firmware: `../../csrc/blazie/bl_files.h`.
 
 **The image.** One folder for each of the unit's folders, named as the unit names them: `ram startup` and `flash
-startup` (Spanish units: `RAM inicial`, `FLASH inicial`), and any you made in folder mode. Each file is under its unit
+startup` (Spanish units: `RAM inicial`, `FLASH inicial`; the Slovak Braille 'n Speak 2000: `ram súbory`, `fleš
+súbory`, its names read as code page 852 -- `blazie_files --codepage=852` on its saved state), and any you made in
+folder mode. Each file is under its unit
 name, with its exact bytes, its time and date, and read-only if you protected it. Text keeps the unit's line ends (a
 lone carriage return); a grade 2 file (on the Braille Lite: no extension, or `.brl`; on the Type 'n Speak `.brl`,
 `.brf`) holds its braille as ASCII braille, like a `.brf` file, not translated to print. The help file is not exported
