@@ -190,7 +190,11 @@ opened it.
   unit's names are one list across its folders: two files of the same name are not both imported).
 
 The unit must not be writing its flash (the import says so and waits for you); it is switched off, its files
-changed, and switched on again, so the firmware finds them as if it had written them itself.
+changed, and switched on again, so the firmware finds them as if it had written them itself. When the image lacks
+files the unit has, the emulator names them and asks before deleting them (No imports nothing). The unit as it was
+before an import is kept beside its saved state (`english.state.before-import`, ...): to undo, close the emulator and
+copy it over the `.state` file. The file the unit has open is rewritten too if the image changes it, its cursor put
+at its top (that case is not yet tried against the firmware; the tests rewrite and delete files around the open one).
 
 **Editing an image.** 7-Zip opens images but cannot change them, and Windows does not open them by itself. Either
 use a tool that mounts disk images (OSFMount, ImDisk), or take the image apart into a folder and put it back:
@@ -204,7 +208,8 @@ first: it saves its unit when it closes), for example on Linux or the BTSpeak:
 
     blazie_files list english.state
     blazie_files export english.state english.img
-    blazie_files import english.state changed.img      (--dry-run: say what would happen)
+    blazie_files import english.state changed.img      (--dry-run: say what would happen; it keeps the old
+                                                        state as english.state.before-import)
     blazie_files extract english.state myfiles --crlf  (each file as a PC text file, CR LF)
 
 **The Type 'n Speak's first start.** The emulator starts a new Type 'n Speak with its warm reset, which sets up the

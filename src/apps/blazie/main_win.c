@@ -318,7 +318,7 @@ static void export_files(void)
    and switched on again -- the firmware then finds them as if it had written them */
 static void import_files(void)
 {
-    char path[MAX_PATH] = "", st[MAX_PATH], err[300], summary[600], msg[4000];
+    char path[MAX_PATH] = "", st[MAX_PATH], err[300], summary[1200], msg[4000];
     unsigned char *img;
     unsigned long size;
     fat_volume *v;
@@ -326,7 +326,7 @@ static void import_files(void)
     bls_unit u;
     blf_fs *fs;
     blx_report r;
-    int busy, ok;
+    int busy, ok, cancelled = 0;
     if (!g_unit) return;
     tns_release_all();
     if (!image_dialog(0, path, sizeof path)) return;
@@ -359,22 +359,47 @@ static void import_files(void)
     blx_report_init(&r);
     ok = open_saved(st, &u, &fs);
     if (ok) {
-        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err)
-             && bls_save(st, &u, err, sizeof err);
+        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err);
+        if (ok && r.deleted) {              /* an image holding only new files would empty the unit: ask */
+            char ask[3000];
+            const char *line = r.log ? r.log : "";
+            size_t n = (size_t)snprintf(ask, sizeof ask, "The image does not have %d of the unit's files. Importing "
+                                        "it deletes them from the unit:\n", r.deleted);
+            while (*line && n + 80 < sizeof ask) {   /* the report's "deleted NAME" lines */
+                const char *e = strchr(line, '\n');
+                size_t len = e ? (size_t)(e - line) : strlen(line);
+                if (len > 8 && !strncmp(line, "deleted ", 8))
+                    n += (size_t)snprintf(ask + n, sizeof ask - n, "\n%.*s", (int)(len - 8), line + 8);
+                line = e ? e + 1 : line + len;
+            }
+            snprintf(ask + n, sizeof ask - n, "\n\nDelete them and import? No imports nothing.");
+            if (MessageBoxA(g_wnd, ask, "Import files", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+                ok = 0, cancelled = 1;
+        }
+        if (ok) {                           /* the unit as it was, kept beside it: undone by one file copy */
+            char before[MAX_PATH + 20];
+            snprintf(before, sizeof before, "%s.before-import", st);
+            CopyFileA(st, before, FALSE);
+            ok = bls_save(st, &u, err, sizeof err);
+        }
         blf_close(fs);
         bls_free(&u);
     }
     free(img);
     start_unit(g_kind);                     /* switched on again */
-    if (!ok) {
+    if (cancelled)
+        MessageBoxA(g_wnd, "Nothing was imported. The unit's files are as they were.", "Import files",
+                    MB_OK | MB_ICONINFORMATION);
+    else if (!ok) {
         snprintf(summary, sizeof summary, "Nothing was imported: %s\n\nThe unit was restarted with its files as "
                  "they were.", err);
         report_text(msg, sizeof msg, summary, &r);
         MessageBoxA(g_wnd, msg, "Import files", MB_OK | MB_ICONERROR);
     } else {
         snprintf(summary, sizeof summary, "Imported from %s: %d added, %d rewritten, %d moved, %d deleted, %d "
-                 "unchanged, %d kept, %d skipped%s. The unit was restarted.", path, r.added, r.replaced, r.moved,
-                 r.deleted, r.unchanged, r.kept, r.skipped, r.folders_added ? ", new folders made" : "");
+                 "unchanged, %d kept, %d skipped%s. The unit was restarted. (The unit as it was before is kept in "
+                 "%s.before-import.)", path, r.added, r.replaced, r.moved, r.deleted, r.unchanged, r.kept, r.skipped,
+                 r.folders_added ? ", new folders made" : "", st);
         report_text(msg, sizeof msg, summary, &r);
         MessageBoxA(g_wnd, msg, "Import files", MB_OK | (r.skipped || r.kept ? MB_ICONWARNING : MB_ICONINFORMATION));
     }

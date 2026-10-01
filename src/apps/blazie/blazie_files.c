@@ -419,9 +419,20 @@ int main(int argc, char **argv)
                 rc = 1;
             } else if (dry)
                 printf("dry run, nothing saved: ");
-            else if (!bls_save(argv[2], &u, err, sizeof err)) {
-                printf("NOT saved: %s\n", err);
-                rc = 1;
+            else {
+                char before[1200];                /* the unit as it was, kept beside it */
+                unsigned long bn;
+                unsigned char *old = read_file(argv[2], &bn);
+                snprintf(before, sizeof before, "%s.before-import", argv[2]);
+                if (!old || !write_file(before, old, bn)) {
+                    printf("NOT saved: could not keep the old state as %s\n", before);
+                    rc = 1;
+                } else if (!bls_save(argv[2], &u, err, sizeof err)) {
+                    printf("NOT saved: %s\n", err);
+                    rc = 1;
+                } else
+                    printf("(the unit as it was before is kept in %s)\n", before);
+                free(old);
             }
             if (!rc)
                 printf("%d added, %d rewritten, %d moved, %d deleted, %d unchanged, %d kept, %d skipped, %d new folders\n",

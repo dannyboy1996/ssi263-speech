@@ -323,7 +323,11 @@ static void make_texts(void)
     g_big[5000] = 0;
 }
 
-/* the unit's export as an image with the import test's changes: one file dropped, new ones added */
+#define NEW_NOTES "notes rewritten\r"   /* the Braille Lite's flash file, new bytes from the PC */
+#define GROWN 4500UL                    /* "grow" (one page, before the open file) rewritten to two pages */
+
+/* the unit's export as an image with the import test's changes: one file dropped, two rewritten (one in RAM
+   growing a page, before the open file; the Braille Lite's flash file), new ones added */
 static unsigned char *changed_image(const unit_t *x, const char *drop, const char *ram_folder,
                                     const char *flash_folder, int tns, unsigned long *size)
 {
@@ -344,6 +348,14 @@ static unsigned char *changed_image(const unit_t *x, const char *drop, const cha
         unsigned long n;
         const unsigned char *d = blf_data(x->fs, i, &n);
         if (!strcmp(fl->name, drop)) continue;
+        if (!strcmp(fl->name, "grow")) {
+            d = (const unsigned char *)g_big;
+            n = GROWN;
+        }
+        if (!strcmp(fl->name, "notes") && !tns) {
+            d = (const unsigned char *)NEW_NOTES;
+            n = strlen(NEW_NOTES);
+        }
         blx_unit_to_utf8(fl->name, f8, sizeof f8);
         fat_add_file(b, dir_of[fl->folder], f8, d, n, fl->dos_time, fl->dos_date, (fl->prot & 2) != 0);
     }
@@ -435,6 +447,9 @@ static void all_checks(int tns, const char *fw, const char *state)
         key(&sc, TNS_PRESS | T_ENTER, 0.4);
         type_text(&sc, "line two");
         wait_s(&sc, 2.0);
+        open_or_create(&sc, 1, "grow");   /* one page, before the open file: the import makes it two */
+        type_text(&sc, "g");
+        wait_s(&sc, 2.0);
         open_or_create(&sc, 1, g_doc);
         type_text(&sc, "abc");      /* left open: its directory entry still says empty */
         wait_s(&sc, 3.0);
@@ -448,6 +463,9 @@ static void all_checks(int tns, const char *fw, const char *state)
         wait_s(&sc, 2.0);
         open_or_create(&sc, 1, "temp");   /* a file before the one left open, for the import to drop */
         type_text(&sc, "t");
+        wait_s(&sc, 2.0);
+        open_or_create(&sc, 1, "grow");   /* one page, before the open file: the import makes it two */
+        type_text(&sc, "g");
         wait_s(&sc, 2.0);
         open_or_create(&sc, 1, g_doc);
         type_text(&sc, "abc");
@@ -496,10 +514,11 @@ static void all_checks(int tns, const char *fw, const char *state)
         exit(1);
     }
     ok = ok && blf_check(a.fs, err, sizeof err);
-    snprintf(d, sizeof d, "%d added, %d deleted, %d unchanged, %d kept, %d skipped, %d new folders%s%s", r.added,
-             r.deleted, r.unchanged, r.kept, r.skipped, r.folders_added, ok ? "" : ": ", ok ? "" : err);
-    check("import: done, the file system's rules hold", ok && r.added == 4 && r.deleted == 1 && r.skipped == 0
-          && r.folders_added == 1, d);
+    snprintf(d, sizeof d, "%d added, %d rewritten, %d deleted, %d unchanged, %d kept, %d skipped, %d new folders%s%s",
+             r.added, r.replaced, r.deleted, r.unchanged, r.kept, r.skipped, r.folders_added, ok ? "" : ": ",
+             ok ? "" : err);
+    check("import: done, the file system's rules hold", ok && r.added == 4 && r.replaced == (tns ? 1 : 2)
+          && r.deleted == 1 && r.skipped == 0 && r.folders_added == 1, d);
     if ((r.skipped || r.kept || getenv("TEST_FILES_KEEP")) && r.log)
         printf("%s", r.log);
     blx_report_free(&r);
@@ -552,9 +571,9 @@ static void all_checks(int tns, const char *fw, const char *state)
         const unsigned char *clip = unit_file(&b, "clipboard", &cn, NULL);
         static const struct { const char *name; long bytes; } want_bl[] = {
             {"doc", 7}, {"imported", 23}, {"big.brl", 5000}, {"book", 3000}, {"inwork.txt", 12},
-            {"notes", 20}, {NULL, 0}}, want_tns[] = {
+            {"notes", 16}, {"grow", 4500}, {NULL, 0}}, want_tns[] = {
             {"doc.brl", 4}, {"imported.txt", 23}, {"big.brl", 5000}, {"fbook.brl", 3000}, {"inwork.txt", 12},
-            {NULL, 0}};
+            {"grow", 4500}, {NULL, 0}};
         char text[8000], missing[600] = "";
         int i;
         size_t m = cn < sizeof text - 1 ? cn : sizeof text - 1;
