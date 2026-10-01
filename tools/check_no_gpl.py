@@ -42,8 +42,8 @@ BINARY_MARKS = [
 ]
 PY_MARK = ("Unicorn import", re.compile(rb"(?m)^[ \t]*(?:import[ \t]+unicorn\b|from[ \t]+unicorn\b)"))
 NOTICE_MARK = ("GPL notice", re.compile(rb"(?i)General Public License|\bGPL-?2\.0|\bGPLv2"))
-BAD_NAME = re.compile(r"(?i)(^|/)(lib)?unicorn(\.dll|\.so(\.[0-9.]+)?|\.dylib|/)|(^|/)ucmini\.py$|(^|/)i8085\.py$|"
-                      r"z180emu|(^|/)COPYING")
+BAD_NAME = re.compile(r"(?i)(^|/)(lib)?unicorn(\.dll|\.so(\.[0-9.]+)?|\.dylib|/)|"
+                      r"(^|/)(ucmini|i8085)(\.py|\.cpython[^/]*\.pyc)$|z180emu|(^|/)COPYING")
 NOTICE_NAME = re.compile(r"(?i)(^|/)(LICEN[CS]E|COPYING|NOTICE|DISTRIBUTION)[^/]*$|(^|/)licen[cs]es/|"
                          r"\.dist-info/METADATA$|(^|/)classes[0-9]*\.dex$")
 BINARY_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa", b"!<arch>\n",
@@ -145,6 +145,7 @@ def control_artifact(folder, clean=False):
             z.writestr("lib/x86/unicorn.dll", b"MZ" + b"\0" * 64)
             z.writestr("hosts/ucmini.py", "import unicorn\n")
             z.writestr("hosts/i8085.py", "# the Python 8085\n")
+            z.writestr("hosts/__pycache__/ucmini.cpython-37.pyc", b"\x42\x0d\x0d\x0a")
             z.writestr("assets/licenses/third-party.txt", "GNU GENERAL PUBLIC LICENSE\nVersion 2, June 1991\n")
     return apk
 
