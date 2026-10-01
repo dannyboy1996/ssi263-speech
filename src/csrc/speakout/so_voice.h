@@ -9,7 +9,9 @@
  *
  * Usage: sov_create (the firmware, the sample rate) -> sov_set (settings, any time between utterances) ->
  * sov_speak (one utterance) -> sov_render until *done (each call one 30 ms block of chip time; it may return 0
- * samples while the box is still reading) -> the next sov_speak; sov_cancel at any point stops the utterance.
+ * samples while the box is still reading) -> the next sov_speak; sov_cancel at any point stops the utterance (a
+ * sov_speak while one is still active cancels it first).  One text per utterance: NVDA's multi-item sequences
+ * (several texts, index commands, the driver's _joined) are the caller's, so `join` reaches only the box's word delay.
  *
  * The firmware (SPEAKOUT.HEX, GW Micro's) comes from the caller and is never built in.  Not thread-safe per voice.
  * Link: speakout/so_voice.c so_host.c so_board.c so_icu.c so_scu.c so_hex.c, cpu/v40_mame.cpp (C++17, no exceptions
