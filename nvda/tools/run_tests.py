@@ -44,6 +44,24 @@ if os.path.isfile(PY37):
             for w in ("speakout", "blazie", "accent"):
                 CHECKS.append(check("driver_sim %s (%s, 32-bit)" % (w, app), [PY37, "run37.py", "../driver_sim.py", w, app, "rt"],
                                     env={"NVDA_APP": app}, cwd=WIN7))
+# (early in the list: three ~20 s runs, started first so they overlap the rest)
+# am_voice (src/csrc/accentmini: the Accent-mini's SPKEMS.DVC on MAME's 8086, accent.py's host and the NVDA driver's
+# front end in C, for speech-dispatcher and Android): the real driver's "mini" voice, byte for byte -- numbers,
+# punctuation, a capital, the settings' extremes, every sample rate, a cancel mid-utterance and the next utterance.
+# Each control breaks the C side one way and must show exactly that: a cancel one block late, number processing
+# flipped.  Built by src/csrc/accentmini/build_am.py (the test refuses a DLL older than its sources).
+AM_LIB = os.path.join(os.path.dirname(HERE), "dist", "accentmini-lib", "x64", "accent_mini.dll")
+if os.path.isfile(AM_LIB):
+    CHECKS.append(check("am_voice = the NVDA driver's Accent-mini, byte for byte", [PY, "am_voice_equiv.py"]))
+    CHECKS.append(check("am_voice CONTROL (cancel one block late, must fail)", [PY, "am_voice_equiv.py"],
+                        env={"AM_EQUIV_BREAK": "cancel"}, expect_fail=True,
+                        fail_marks=[r"^DIFF  cancel ", r"^DIFF  after-cancel ", r"^DIFF  cancel-44k ", r"^same  hello ",
+                                    r"^same  rate-44k ", r"^16 of 24 utterances byte-identical to the NVDA driver$"]))
+    CHECKS.append(check("am_voice CONTROL (numbers flipped, must fail)", [PY, "am_voice_equiv.py"],
+                        env={"AM_EQUIV_BREAK": "numbers"}, expect_fail=True,
+                        fail_marks=[r"^DIFF  numbers ", r"^DIFF  numbers-off ", r"^same  hello ", r"^same  rate-44k ",
+                                    r"^DIFF  (?!4000 )\d+ of 4000 random texts give the driver's text$",
+                                    r"^7 of 24 utterances byte-identical to the NVDA driver$"]))
 for seed in (1, 2, 3, 4):
     CHECKS.append(check("complete_fuzz seed %d" % seed, [PY, "complete_fuzz.py", "150", str(seed)], env={"SIM_SPEED": "10"}))
 for synth in ("speakout", "accent"):

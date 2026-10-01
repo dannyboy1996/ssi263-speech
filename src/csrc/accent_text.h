@@ -1,0 +1,38 @@
+/* accent_text.h -- what the two Aicom voices share: nvda/accent/synthDrivers/accentmini.py's text preparation and
+ * settings mapping (one driver speaks both the Accent SA and the Accent-mini), and the Accent's ESC command syntax as
+ * the two Python hosts read it (src/hosts/accent.py and accent_sa.py, the same _ESC).  Used by accentsa/as_voice.c
+ * and accentmini/am_voice.c, am_host.c.  Each function names the Python it ports; change them together.  Needs
+ * numwords.c.  MIT.
+ */
+#ifndef SSI263_ACCENT_TEXT_H
+#define SSI263_ACCENT_TEXT_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* the driver's DEFAULTS = ("5", 5, 5, 0): rate, pitch, voice, intonation after power-up */
+#define AT_DEF_RATE '5'
+#define AT_DEF_PITCH 5
+#define AT_DEF_VOICE 5
+#define AT_DEF_INFL 0
+
+/* _accent_pitch: NVDA's pitch 0-100 on ESC P 0-9 (50 -> 5) */
+int at_pitch_step(int pitch);
+/* _accent_settings' rate: NVDA's rate 0-100 on ESC R 0-9, A-H (50 -> '5'), the character sent */
+char at_rate_char(int rate);
+/* _accent_settings' inflection: NVDA's 0-100 on ESC M (INFLECTION, the nearest; the first of a tie) */
+int at_inflection(int inflection);
+
+/* The text the driver sends for one text item, without its "\r": _clean(currencies(text)).strip(), then _numbers()
+   when numbers is on.  malloc'd; NULL when out of memory. */
+char *at_say_text(const char *utf8, int numbers);
+
+/* accent.py's / accent_sa.py's say(speech=None) on Latin-1 bytes: 1 if a letter or digit (str.isalnum) is left
+   outside the ESC commands (_ESC). */
+int at_is_speech(const unsigned char *bytes, int n);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

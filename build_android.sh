@@ -98,10 +98,18 @@ objects() {
     done
     cc --target="$TARGET" $FRONT -c -o "$O/as_voice.o" "$SRC/accentsa/as_voice.c"
     cc --target="$TARGET" $FRONT -c -o "$O/numwords.o" "$SRC/numwords.c"
+    cc --target="$TARGET" $FRONT -c -o "$O/accent_text.o" "$SRC/accent_text.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
+    # the Accent-mini (src/csrc/accentmini: am_voice on MAME's 8086), compiled only, in its own folder: not linked
+    # into the library yet (it needs accent_text.o and numwords.o above)
+    rm -rf "$OUT/$ABI/obj_am"; mkdir -p "$OUT/$ABI/obj_am"
+    cxx --target="$TARGET" $MAME -c -o "$OUT/$ABI/obj_am/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
+    for f in pc86/pc86 accentmini/am_host accentmini/am_voice; do
+        cc --target="$TARGET" $ACCENT -I$SRC/pc86 -c -o "$OUT/$ABI/obj_am/${f##*/}.o" "$SRC/$f.c"
+    done
 }
-ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o"
+ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o accent_text.o"
 BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_clock.o bl_host.o bl_voice.o"
 
 build_abi() {
