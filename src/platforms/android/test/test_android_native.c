@@ -11,8 +11,8 @@
  * test_android_native.py compares the hashes with bl_voice driven directly, the way the speech-dispatcher module
  * maps SSIP (the reference), and the Accent SA's with the NVDA Accent driver itself (accent_reference.py), on the
  * desktop and over adb.  SSI263_ANDROID_TEST_BREAK in the environment puts a bug back, the controls: 1 breaks the rate
- * mapping (ssa_map.h), so the "fast" cases must differ; accent-pitch, accent-glide and accent-reuse are
- * ssa_engine.h's ssa_accent_break 1, 2 and 3.
+ * mapping (ssa_map.h), so the "fast" cases must differ; accent-pitch, accent-glide, accent-reuse and accent-step are
+ * ssa_engine.h's ssa_accent_break 1, 2, 3 and 4.
  *
  * Built by the desktop compiler (test_android_native.py) and by build_android.sh --test (static, for a device).
  */
@@ -116,7 +116,7 @@ typedef struct {
 
 static const accent_case *accent_cases(int *n)
 {
-    static accent_case c[16];
+    static accent_case c[24];
     int k = 0;
 #define A(nm, tx, r, p, rr, rp, v, inf, sr, ch, st) \
     do { accent_case x = {nm, tx, r, p, rr, rp, v, inf, sr, ch, st}; c[k++] = x; } while (0)
@@ -130,6 +130,7 @@ static const accent_case *accent_cases(int *n)
     A("a-pitch-100", CAP_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 0);
     A("a-pitch-150", CAP_A, 50, 50, 100, 150, 100, 1, 22050, 4096, 0);
     A("a-pitch-75", CAP_A, 50, 50, 100, 75, 100, 1, 22050, 4096, 0);
+    A("a-pitch-120", CAP_A, 50, 50, 100, 120, 100, 1, 22050, 4096, 0);
     A("a-pitch-100-again", CAP_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 0);
     A("a-stopped", LONG_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 5);
     A("a-after-stop", "Next message.", 50, 50, 100, 100, 100, 1, 22050, 4096, 0);
@@ -248,7 +249,7 @@ int main(int argc, char **argv)
     if (argc < 2) { fprintf(stderr, "usage: test_android_native <data folder> [<aicom folder>] | --texts\n"); return 2; }
     ssa_map_break = brk && !strcmp(brk, "1");
     ssa_accent_break = !brk ? 0 : !strcmp(brk, "accent-pitch") ? 1 : !strcmp(brk, "accent-glide") ? 2
-                     : !strcmp(brk, "accent-reuse") ? 3 : 0;
+                     : !strcmp(brk, "accent-reuse") ? 3 : !strcmp(brk, "accent-step") ? 4 : 0;
     if (argc >= 3 && accent(argv[2])) return 1;
     e = ssa_new(argv[1]);
     if (!e || !ssa_has_voice(e, SSA_ENGLISH)) { fprintf(stderr, "no English unit in %s\n", argv[1]); return 2; }

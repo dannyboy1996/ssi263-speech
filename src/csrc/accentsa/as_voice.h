@@ -42,6 +42,9 @@ AS_API int asv_render(as_voice *v, const short **pcm, int *done);
 /* The driver's cancel: the Accent's flush (Ctrl-X), then the pitch said again if a capital's restore was pending. */
 AS_API void asv_cancel(as_voice *v);
 
+/* The driver's _accent_pitch: NVDA's pitch 0-100 on the Accent's ESC P 0-9 (50 -> 5). */
+AS_API int asv_pitch_step(int pitch);
+
 /* The text the driver would send for this utterance (currencies, _clean, strip, _numbers; the carriage return not
    included), for tests: returns the length, and copies it into out (NUL-terminated) when it fits in cap. */
 AS_API int asv_say_bytes(const char *utf8, int numbers, char *out, int cap);

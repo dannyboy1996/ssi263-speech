@@ -86,9 +86,16 @@ int ssa_blocks(const ssa_engine *e);
    fnv is not NULL; or -1 with the reason in err. */
 long ssa_probe(const char *datadir, int voice, const char *utf8, unsigned long long *fnv, char *err, int errlen);
 
+/* The Accent SA's pitch for a request, on NVDA's scale: ssa_pitch's, except that a request's pitch other than 100 %
+   always moves the Accent at least one of its ten steps (ESC P 0-9) from the slider's -- the nearest pitch that does,
+   in the request's direction.  A capital's raise of 110-120 % (a screen reader's) would otherwise land on the
+   slider's own step and go unheard. */
+int ssa_accent_pitch(int slider, int request);
+
 /* The tests' controls (test_android_native.c sets them; the app never does): each puts back one bug the Accent SA's
    cases must catch.  1: the request's pitch dropped; 2: the pitch sent as a setting, so it glides instead of jumping
-   (no snap_pitch); 3: one unit kept from utterance to utterance, so what came before is heard in what follows. */
+   (no snap_pitch); 3: one unit kept from utterance to utterance, so what came before is heard in what follows; 4: the
+   plain mapping for the pitch (ssa_accent_pitch's step rule gone), so a 120 % request sounds like 100 %. */
 extern int ssa_accent_break;
 
 #ifdef __cplusplus

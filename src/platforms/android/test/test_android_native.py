@@ -8,8 +8,9 @@ ssa_map.c, on the same chip, boards, hosts and voices), every case's PCM compare
   desktop's C host (accent_reference.py; the built nvda/dist/accent-build and accentsa-lib), a fresh unit per case as
   the app has; the request's rate and pitch put on the driver's scales as ssa_map.c does, the pitch as a capital's
   PitchCommand.  Its front end's text (currencies, _clean, number words) is compared on TEXTS as well.  And a capital:
-  a request's raised pitch (150 %) and lowered one (75 %) must sound different from 100 %, and the next request at
-  100 % must be byte-identical to the first.
+  a request's raised pitch (150 %, and 120 %, which ssa_accent_pitch moves to the next of the Accent's ten steps) and
+  lowered one (75 %) must sound different from 100 %, and the next request at 100 % must be byte-identical to the
+  first.
 
     python test_android_native.py                 build the desktop program, run it, compare
     python test_android_native.py --adb           also run build/android/<abi>/test_android_native on the attached
@@ -19,7 +20,8 @@ ssa_map.c, on the same chip, boards, hosts and voices), every case's PCM compare
                                                   the "fast" cases must differ -- this run must FAIL
     SSI263_ANDROID_TEST_BREAK=accent-pitch        the Accent SA's controls (ssa_engine.h's ssa_accent_break), each
                              accent-glide         must FAIL: the request's pitch dropped; the pitch sent as a setting,
-                             accent-reuse         glided to (no snap_pitch); one unit kept across utterances
+                             accent-reuse         glided to (no snap_pitch); one unit kept across utterances; the
+                             accent-step          plain pitch mapping (a 120 % request on the 100 % step)
 
 Options: --firmware <folder> (default $SSI263_FIRMWARE, else firmware/blazie; the Spanish unit there or in its
 spanish/ folder), --lib <reference library>, --chip <ssi263.dll bl.dll needs>, --abi <abi> (default arm64-v8a),
@@ -87,6 +89,7 @@ ACCENT_CASES = [
     ("a-pitch-100", CAP_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 0),
     ("a-pitch-150", CAP_A, 50, 50, 100, 150, 100, 1, 22050, 4096, 0),
     ("a-pitch-75", CAP_A, 50, 50, 100, 75, 100, 1, 22050, 4096, 0),
+    ("a-pitch-120", CAP_A, 50, 50, 100, 120, 100, 1, 22050, 4096, 0),     # a raise that would land on the same step
     ("a-pitch-100-again", CAP_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 0),
     ("a-stopped", LONG_A, 50, 50, 100, 100, 100, 1, 22050, 4096, 5),
     ("a-after-stop", "Next message.", 50, 50, 100, 100, 100, 1, 22050, 4096, 0),
@@ -125,6 +128,22 @@ def on_top(slider, percent):                        # ssa_map.c's ssa_rate / ssa
     return max(0, min(100, max(0, min(100, slider)) + to100(ssip_from_percent(percent)) - 50))
 
 
+def accent_step(p):                                 # as_voice.c's accent_pitch: the driver's _accent_pitch
+    p = max(0, min(100, p))
+    return int(p * 5 / 50 + 0.5) if p <= 50 else 5 + int((p - 50) * 4 / 50 + 0.5)
+
+
+def accent_pitch(slider, percent):                  # ssa_engine.c's ssa_accent_pitch: at least one step moved
+    p, base = on_top(slider, percent), accent_step(slider)
+    if percent > 100:
+        while p < 100 and accent_step(p) == base:
+            p += 1
+    elif 0 < percent < 100:
+        while p > 0 and accent_step(p) == base:
+            p -= 1
+    return p
+
+
 def accent_level():
     """SSA_ACCENT_LEVEL, from ssa_engine.h (one place)"""
     m = re.search(r"#define SSA_ACCENT_LEVEL (\d+)", open(os.path.join(CPP, "ssa_engine.h"), encoding="utf-8").read())
@@ -142,9 +161,9 @@ class Ref:
         if not self.v:
             sys.exit("reference boot failed: %s" % err.value)
 
-    def say(self, text, rate, pitch, blocks):
+    def say(self, text, rate, pitch, blocks, volume=100):
         lib = self.lib
-        lib.blv_set(self.v, to100(rate), to100(pitch), 7, to100(100), 1)
+        lib.blv_set(self.v, to100(rate), to100(pitch), 7, volume, 1)
         lib.blv_speak(self.v, text.encode("utf-8"))
         pcm, done, out, n_blocks = ctypes.POINTER(ctypes.c_short)(), ctypes.c_int(0), [], 0
         while not done.value:
@@ -194,7 +213,7 @@ def accent_reference():
     level = accent_level()
     speech = []
     for name, text, rate, pitch, req_rate, req_pitch, volume, inflection, sample_rate, chunk, stop in ACCENT_CASES:
-        speech.append(dict(name=name, text=text, rate=on_top(rate, req_rate), offset=on_top(pitch, req_pitch) - 50,
+        speech.append(dict(name=name, text=text, rate=on_top(rate, req_rate), offset=accent_pitch(pitch, req_pitch) - 50,
                            inflection=100 if inflection else 0, volume=volume * level // 100,
                            sample_rate=sample_rate, blocks=stop))
     tmp = tempfile.mkdtemp(prefix="ssi263-accent-ref-")
@@ -327,7 +346,8 @@ def capitals(label, got):
     """A capital's pitch (TalkBack raises the request's pitch for its own utterance): heard, and gone after it."""
     bad = 0
     base, again = got.get("a-pitch-100"), got.get("a-pitch-100-again")
-    for name, other in (("a-pitch-150", "a-pitch-100"), ("a-pitch-75", "a-pitch-100"), ("a-pitch-150", "a-pitch-75")):
+    for name, other in (("a-pitch-150", "a-pitch-100"), ("a-pitch-75", "a-pitch-100"), ("a-pitch-150", "a-pitch-75"),
+                        ("a-pitch-120", "a-pitch-100")):
         ok = got.get(name) is not None and got.get(name)[1] != (got.get(other) or (0, None))[1]
         print("%-5s %-8s %s sounds different from %s" % ("ok" if ok else "FAIL", label, name, other))
         bad += not ok

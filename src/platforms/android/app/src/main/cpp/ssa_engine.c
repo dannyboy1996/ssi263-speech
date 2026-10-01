@@ -185,10 +185,22 @@ void ssa_cancel(ssa_engine *e)
     e->block_n = e->block_at = 0;
 }
 
+int ssa_accent_pitch(int slider, int request)
+{
+    int p = ssa_pitch(slider, request), base = asv_pitch_step(slider);
+    if (ssa_accent_break == 4)         /* the control: the plain mapping */
+        return p;
+    if (request > 100)
+        while (p < 100 && asv_pitch_step(p) == base) p++;
+    else if (request > 0 && request < 100)
+        while (p > 0 && asv_pitch_step(p) == base) p--;
+    return p;
+}
+
 static int start_accent(ssa_engine *e, const char *utf8, const ssa_settings *s, int request_rate, int request_pitch)
 {
     char err[256];
-    int pitch = ssa_pitch(s->pitch, ssa_accent_break == 1 ? 100 : request_pitch);
+    int pitch = ssa_accent_pitch(s->pitch, ssa_accent_break == 1 ? 100 : request_pitch);
     if (ssa_load(e, SSA_ACCENT_SA, err, sizeof err) != 0)
         return -1;
     e->accent = e->spare;

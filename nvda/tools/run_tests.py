@@ -343,26 +343,68 @@ if os.path.isfile(MAME_LIVE):
     # CONTRACT.md's clauses (src/csrc/cpu/test_z180_contract.c; its must-fail controls: cpu/contract_controls.py)
     CHECKS.append(check("MAME Z180 core: CPU contract tests", [os.path.join(LIB, "test_z180_contract.exe")]))
     CHECKS.append(check("MAME Z180 core: white-box tests", [os.path.join(LIB, "test_z180_whitebox.exe")]))
-# the Android engine's native part (src/platforms/android): built for the desktop, it speaks as bl.dll does, byte
-# for byte; its control (the request's rate dropped) must differ
+# ---- the Android engine (src/platforms/android), one block --------------------------------------------------------
+# Its native part, built for the desktop: the Braille Lite as bl.dll speaks, and the Aicom Accent SA (the built-in
+# default voice, Tomi 2026-09-30) as the NVDA Accent driver itself speaks it on the desktop's C host
+# (accent_reference.py), byte for byte; a capital's 150/120/75 % differ from 100 % and 100 % again is byte-identical.
+# Each control puts one bug back and must show it: the request's rate dropped; the request's pitch dropped; the pitch
+# glided to (no snap_pitch); one Accent unit kept across utterances; the plain pitch mapping (120 % on 100 %'s step).
+# The default volume keeps headroom for both voices (Tomi: under TalkBack's sounds at the desktop level), with a
+# control per voice.  The APK's firmware check, on an APK-like zip made here: only Aicom's three ROMs pass, by sha256;
+# a Blazie image beside them, the Speak-Out's HEX and a changed Aicom ROM must each fail.
 ANDROID_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "platforms", "android", "test",
                             "test_android_native.py")
 if os.path.isfile(ANDROID_TEST):
-    CHECKS.append(check("Android engine: native part as bl.dll", [PY, ANDROID_TEST]))
-    CHECKS.append(check("Android engine CONTROL (rate dropped, must fail)", [PY, ANDROID_TEST],
-                        env={"SSI263_ANDROID_TEST_BREAK": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAILED: 4 case\(s\) differ$", r"^ok +desktop +spanish "]))
+    CHECKS.append(check("Android engine: native part as bl.dll and the NVDA Accent driver", [PY, ANDROID_TEST]))
+    for brk, what, marks in (
+            ("1", "rate dropped",
+             [r"^FAIL +desktop +fast ", r"^FAIL +desktop +a-fast ", r"^ok +desktop +spanish ",
+              r"^FAILED: 5 case\(s\) differ$"]),
+            ("accent-pitch", "Accent SA: the request's pitch dropped",
+             [r"^FAIL +desktop +a-pitch-150 sounds different from a-pitch-100$",
+              r"^ok +desktop +a-pitch-100-again = a-pitch-100, byte for byte", r"^FAILED: 8 case\(s\) differ$"]),
+            ("accent-glide", "Accent SA: the pitch glided to, no snap",
+             [r"^FAIL +desktop +a-pitch-150 +got ", r"^ok +desktop +a-pitch-150 sounds different from a-pitch-100$",
+              r"^FAILED: 5 case\(s\) differ$"]),
+            ("accent-reuse", "Accent SA: one unit kept across utterances",
+             [r"^FAIL +desktop +a-pitch-100-again = a-pitch-100, byte for byte", r"^ok +desktop +a-default ",
+              r"^FAILED: 15 case\(s\) differ$"]),
+            ("accent-step", "Accent SA: 120 % on the 100 % step",
+             [r"^FAIL +desktop +a-pitch-120 sounds different from a-pitch-100$", r"^ok +desktop +a-pitch-150 ",
+              r"^FAILED: 2 case\(s\) differ$"])):
+        CHECKS.append(check("Android engine CONTROL (%s, must fail)" % what, [PY, ANDROID_TEST],
+                            env={"SSI263_ANDROID_TEST_BREAK": brk}, expect_fail=True, fail_marks=marks))
+    VOLUME_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_volume_headroom.py")
+    CHECKS.append(check("Android engine: default volume, headroom kept (both voices)", [PY, VOLUME_TEST]))
+    CHECKS.append(check("Android engine: volume CONTROL (250 percent clips, must fail)", [PY, VOLUME_TEST],
+                        env={"SSI263_VOLUME_TEST_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^braille lite volume 250: .* clipped samples -- FAILED",
+                                    r"^accent sa volume 250: .* clipped samples -- FAILED", r"^volume headroom: FAILED$"]))
+    CHECKS.append(check("Android engine: volume CONTROL (the Accent SA at 250 percent, must fail)", [PY, VOLUME_TEST],
+                        env={"SSI263_VOLUME_TEST_BREAK": "accent"}, expect_fail=True,
+                        fail_marks=[r"^braille lite volume 150: .* -- ok$",
+                                    r"^accent sa volume 250: .* clipped samples -- FAILED", r"^volume headroom: FAILED$"]))
+    APK_CHECK = os.path.join(os.path.dirname(ANDROID_TEST), "check_apk_no_firmware.py")
+    CHECKS.append(check("Android APK check: only Aicom's ROMs pass", [PY, APK_CHECK, "--synthetic"],
+                        ok=lambda out: bool(re.search(r"^synthetic\.apk: \d+ entries, no firmware; Aicom ROMs allowed: 3 "
+                                                      r"\(u2\.BIN, u3\.BIN, u4\.BIN\)$", out, re.M))))
+    CHECKS.append(check("Android APK check CONTROL (an Aicom ROM changed, must fail)",
+                        [PY, APK_CHECK, "--control-aicom-flipped", "--synthetic"], expect_fail=True,
+                        fail_marks=[r"assets/aicom/u2\.BIN: in assets/aicom/ but not one of the Aicom ROMs",
+                                    r"Aicom ROMs allowed: 2 \(u3\.BIN, u4\.BIN\)$"]))
+    ROOT_FW = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware")
+    for fw, what, mark in ((os.path.join(ROOT_FW, "blazie", "BL2ENG.BNS"), "a Blazie image beside Aicom's ROMs",
+                            r"unit\.dat: a Braille Lite ROM image; Aicom ROMs allowed: 3 "),
+                           (os.path.join(ROOT_FW, "gw-micro-speakout", "SPEAKOUT.HEX"), "the Speak-Out's firmware",
+                            r"unit\.dat: the Speak-Out's SPEAKOUT\.HEX; .*unit\.dat: an Intel HEX image")):
+        if os.path.isfile(fw):
+            CHECKS.append(check("Android APK check CONTROL (%s, must fail)" % what,
+                                [PY, APK_CHECK, "--control", fw, "--synthetic"], expect_fail=True,
+                                fail_marks=[r"^synthetic\.apk: \d+ entries, FIRMWARE: ", mark]))
 # ... its firmware import (src/csrc/blazie/bl_firmware.c, bl_state.c): files found and refused by content, only the
 # releases on the list taken, and the states made from the firmware alone = the listed ones, byte for byte and in
 # speech; one control holds the wrong chord at the English warm reset and must differ in the state and in every
 # English case, the other drops the list and must take the unknown releases
-# the Android engine's default volume (Tomi: under TalkBack's sounds at the desktop level): louder, never clipping
-VOLUME_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_volume_headroom.py")
-if os.path.isfile(VOLUME_TEST):
-    CHECKS.append(check("Android engine: default volume, headroom kept", [PY, VOLUME_TEST]))
-    CHECKS.append(check("Android engine: volume CONTROL (250 percent clips, must fail)", [PY, VOLUME_TEST],
-                        env={"SSI263_VOLUME_TEST_BREAK": "1"}, expect_fail=True,
-                        fail_marks=[r"^volume 250: .* clipped samples -- FAILED", r"^volume headroom: FAILED$"]))
 IMPORT_TEST = os.path.join(os.path.dirname(ANDROID_TEST), "test_import_native.py")
 if os.path.isfile(IMPORT_TEST):
     CHECKS.append(check("Android import: known firmware only, states made on the device", [PY, IMPORT_TEST]))

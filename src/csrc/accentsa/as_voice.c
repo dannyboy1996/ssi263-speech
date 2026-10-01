@@ -78,6 +78,8 @@ static int accent_pitch(int p)
     return p <= 50 ? (int)(p * 5 / 50.0 + 0.5) : 5 + (int)((p - 50) * 4 / 50.0 + 0.5);
 }
 
+AS_API int asv_pitch_step(int pitch) { return accent_pitch(pitch); }
+
 static int accent_rate(int r)
 {
     r = clamp100(r);

@@ -85,8 +85,8 @@ def blazie(volume, firmware):
 
 def accent(volume):
     """Through the app's own path: test_android_native --level, the Accent SA (voice 2) at the app's defaults."""
-    T.OUT = os.path.join(T.REPO, "build", "android-host-volume" + ("-control" if os.environ.get(
-        "SSI263_VOLUME_TEST_BREAK") else ""))
+    brk = os.environ.get("SSI263_VOLUME_TEST_BREAK")       # each run its own program: run_tests runs them together
+    T.OUT = os.path.join(T.REPO, "build", "android-host-volume" + ("-control-" + brk if brk else ""))
     exe = T.build_desktop()
     r = subprocess.run([exe, "--level", ".", T.AICOM, "2", str(volume)],
                        input="".join(t.encode("utf-8").hex() + "\n" for t in ACCENT), capture_output=True, text=True)
