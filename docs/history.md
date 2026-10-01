@@ -268,6 +268,24 @@ with each release.
 | 0.5.0 | Tomi, and listeners | **The Accent SA** as a second Accent voice; engine v0.11 and v0.12; Windows on ARM fixed; the repository goes public |
 | 0.6.0 | Tomi, a listener, and a tester | Engine v0.13 (with a bounded T/P/K precharge on the Braille Lite); the Braille Lite's top rates fixed, its dollar amounts read, no utterance cut short after a cancel, and a "Sample rate" setting in all three (11, 22 or 44 kHz; 22 kHz by default); the Braille Lite's tones run 0-26 (tone 0 added), its voice inflection can be switched off, an optional hiss or whine generated from the chip's clock, and **a Spanish voice** with NVDA's automatic language switching |
 
+## 0.7 migration credits (2026-09-30, release preparation)
+
+Tomi asked for every shipping CPU to use MAME, without an opt-in or a GPL runtime.
+Claude implemented the extracted cores and portable boards and is integrating the
+Linux, Android and Python distributions. Astra (OpenAI Codex) reviewed the CPU and
+host contracts, reproduced the interrupt-slice and completion edges, and implemented:
+
+- the Accent SA fix that defers the vector instruction's effects across a host slice
+  boundary (`6f588c7`, originally `12806c7`), with regression and mutation checks;
+- the Windows MAME defaults, native builds and three 0.7.0 add-on packages
+  (`816aebc`), including the shared release builder and MIT/BSD notices;
+- independent package checks outside the research checkout, covering all four voices
+  on 64-bit Python 3.13 and 32-bit Python 3.7 with NVDA stand-ins.
+
+The checks establish packaged driver operation; they do not replace Tomi's listening
+or claim that release preparation is complete. Our own code is MIT; the extracted
+MAME components retain their BSD-3-Clause notices, and the firmware remains separate.
+
 ## Withdrawn along the way
 
 Being wrong in writing, and saying so, was part of the method. A few of each:
