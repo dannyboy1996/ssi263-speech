@@ -1,12 +1,19 @@
-# The Braille Lite 2000 voice for Linux
+# The SSI-263 voices for Linux
 
-A Blazie Braille Lite 2000 in speech-box mode, emulated: the unit's own June 2003 firmware runs on an emulated Z180
-(MAME's core) and drives a register-level model of the Silicon Systems SSI-263 speech chip. The rules, number reading and inflection
-are the firmware's own, live. Nothing is recorded or concatenated. English, and Spanish when its firmware is
-included.
+The NVDA add-ons' voices, for speech-dispatcher: each a real speech device emulated, its own firmware running on an
+emulated processor (MAME's cores) and driving a register-level model of the Silicon Systems SSI-263 speech chip. The
+rules, number reading and inflection are the firmware's own, live. Nothing is recorded or concatenated.
+
+| Voice | Language | The device |
+|---|---|---|
+| Braille Lite 2000 | English | Blazie's notetaker in speech-box mode, its June 2003 firmware on a Z180 |
+| Braille Lite 2000 (español) | Spanish | the same, its Spanish firmware (when included) |
+| Accent SA | English | Aicom's serial speech box, its own 8085 firmware and dictionary ROMs |
+| Accent-mini | English | Aicom's Accent-mini, its DOS driver on an emulated PC (when the package has it) |
+| Speak-Out | English | GW Micro's 1995 talking box, its V40 firmware (when the package has it) |
 
 This is a speech-dispatcher module, so Orca and anything else that speaks through speech-dispatcher can use it.
-It is the same voice as the NVDA add-on, byte for byte.
+Each voice is the same voice as in its NVDA add-on.
 
 ## Install
 
@@ -15,18 +22,20 @@ It is the same voice as the NVDA add-on, byte for byte.
     sudo ./install.sh
     killall speech-dispatcher
     spd-say -o ssi263 "Hello from the Braille Lite"
+    spd-say -o ssi263 -y "Accent SA" "Hello from the Accent"
 
-`install.sh` adds the voice and leaves your default synthesizer alone. `sudo ./install.sh --default` also makes it
-the default. In Orca: Preferences, Speech, Speech synthesizer: ssi263. `sudo ./uninstall.sh` removes everything
-it added.
+`install.sh` adds the voices and leaves your default synthesizer alone. `sudo ./install.sh --default` also makes it
+the default. In Orca: Preferences, Speech, Speech synthesizer: ssi263, then the voice (`spd-say -o ssi263 -L` lists them).
+`sudo ./uninstall.sh` removes everything it added.
 
 Settings are in `ssi263.conf` beside speech-dispatcher's other module settings (the installer prints where), each
-explained in the file: the sample rate (11, 22 or 44 kHz), voice inflection, the unit's hiss or whine, its tone,
-the "short pauses" line packing, and the experimental "run the unit ahead" (`SSI263RunAhead 1`; off by default, as
-in the NVDA add-on). For your own settings, without root and kept when you reinstall, copy any of
+explained in the file: the sample rate (11, 22 or 44 kHz) for every voice; the Braille Lite's voice inflection, hiss
+or whine, tone, "short pauses" line packing and the experimental "run the unit ahead" (`SSI263RunAhead 1`; off by
+default, as in the NVDA add-on); the Accents' inflection, number reading and (the Accent-mini's) voice; the
+Speak-Out's tone, "join phrases" and "shorten pauses". For your own settings, without root and kept when you reinstall, copy any of
 those lines into `~/.config/ssi263-speech/sd_ssi263.conf`: they win over the module's file. After a change,
 `killall speech-dispatcher` (Orca reconnects by itself). Rate, pitch and volume come from Orca or spd-say, mapped
-onto the unit's own: its factory rate 11 and pitch 16 at the middle.
+onto each device's own: the middle is its factory rate and pitch.
 
 Builds: x86_64 and aarch64 (a Raspberry Pi 4 or 5 is fine: the unit runs several times faster than real time on a
 Pi 5). No Python, no other packages: one program.
@@ -44,7 +53,16 @@ This package carries the Braille Lite's own firmware (and the Type 'n Speak's, f
 permission. It is not ours; it is here so the
 unit can speak again, and it will be removed if its rights holders ask.
 
+It carries Aicom's software for the Accents: the Accent SA's firmware and dictionary ROMs, and the Accent-mini's
+driver when the package has that voice. They are Aicom Corporation's work, not ours, and not covered by the licences
+below; `licenses/Aicom-notice.txt` says where they come from and why they are here.
+
+When the package has the Speak-Out, it carries the Speak-Out's own firmware (hardware Daniel Weirich, software Douglas
+Geoffray, GW Micro). It is not ours; it is here so the box can speak again, and it will be removed if its rights
+holders ask (`licenses/Speak-Out-firmware-notice.txt`).
+
 The program and library are MIT (`LICENSE`; the chip model draws on Casso's, also MIT:
-`licenses/Casso-MIT.txt`), except the Z180 CPU core, which is MAME's and keeps its BSD-3-Clause licence
-(`licenses/MAME-Z180-core-BSD-3-Clause.txt`). The source and how to build it:
+`licenses/Casso-MIT.txt`), except the CPU cores, which are MAME's and keep their BSD-3-Clause licences
+(`licenses/MAME-Z180-core-BSD-3-Clause.txt`, `licenses/MAME-8085-core-BSD-3-Clause.txt`, and the 8086's and V40's
+with those voices). The source and how to build it:
 https://github.com/tgeczy/ssi263-speech

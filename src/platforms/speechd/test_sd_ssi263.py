@@ -21,9 +21,26 @@ EXPERIMENTAL run ahead (SSI263RunAhead 1, blv_set_run_ahead), against a referenc
            nothing of the cancelled text
   ra_sys   the key in the module file runs ahead; ra_user0: this user's "SSI263RunAhead 0" wins over it
 
+The other voices (0.7.1, "every voice on Linux"), each against its own voice driven directly through the same calls
+(libsd_voices_ref.so, beside the module: the module's own engine objects, ctypes), in a session of their own:
+
+  voices   LIST VOICES: every voice built in whose files are there, by the add-ons' names, with its language --
+           the Accent SA always (Aicom's ROMs are in the repository)
+  <v>_speak, <v>_stop, <v>_after, <v>_set   as above, on that voice (SET synthesis_voice), its unit one for the session
+  <v>_bl   the Braille Lite again in the same session (SET synthesis_voice), and <v>_back: that voice once more,
+           its unit as it was left; <v>_lang: SET language=en keeps that voice (it speaks English)
+  <v>_44k  SSI263SampleRate 44100 reaches it
+  as_infl  SSI263AccentInflection 0 reaches the Accent SA (the reference at 0 must differ from the default's)
+where <v> is as (the Accent SA), am (the Accent-mini) and so (the Speak-Out) -- the last two when built in
+(build_linux.sh: their sources in the tree) and their files are there.  The data folder the module gets is a fresh
+one: the Braille Lite's files from <data folder>, and aicom-accent-sa/, aicom-accent-mini/ and gw-micro-speakout/ from
+<data folder> when they are there, else from the repository's firmware/ (SPEAKOUT.HEX also from
+<data folder>/../speakout-firmware: it is never in the repository).
+
     python3 test_sd_ssi263.py <sd_ssi263> <libssi263speech.so> <data folder>
     SD_SSI263_TEST_NO_CANCEL=1 in the environment: the module leaves the unit uncancelled -- "stop" must FAIL
     SD_SSI263_TEST_IGNORE_RUN_AHEAD=1: the module drops SSI263RunAhead -- the ra_ checks must FAIL
+    SD_SSI263_TEST_IGNORE_ACCENT_INFLECTION=1: the module drops SSI263AccentInflection -- as_infl must FAIL
 """
 import ctypes
 import os
@@ -32,6 +49,8 @@ import sys
 import tempfile
 
 MODULE, LIB, DATA = sys.argv[1:4]
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+REF_LIB = os.path.join(os.path.dirname(os.path.abspath(MODULE)), "libsd_voices_ref.so")
 LONG = ("This is a long message for the stop test, with a comma or two, that keeps going well past the moment "
         "the harness says stop. It has a second sentence as well.")
 lib = ctypes.CDLL(LIB)
@@ -107,13 +126,104 @@ class Ref:
         return b"".join(out)
 
 
+# ---- the other voices: the module's data folder, and each voice driven directly ------------------------------------
+TO100 = lambda s: max(0, min(100, (s + 100) // 2))      # noqa: E731  (sd_ssi263.c's to100)
+FW_DIRS = {"aicom-accent-sa": ("u2.BIN", "u3.BIN", "u4.BIN"), "aicom-accent-mini": ("SPKEMS.DVC",),
+           "gw-micro-speakout": ("SPEAKOUT.HEX",)}
+
+
+def voices_data():
+    """A fresh folder for the module: <data folder>'s files, and each firmware folder from the first place that has
+    all its files -- <data folder>/<sub>, the repository's firmware/<sub>, <data folder>/../speakout-firmware."""
+    out = tempfile.mkdtemp(prefix="sd_ssi263_data_")
+    for name in os.listdir(DATA):
+        if name not in FW_DIRS:
+            os.symlink(os.path.join(DATA, name), os.path.join(out, name))
+    for sub, files in FW_DIRS.items():
+        for cand in (os.path.join(DATA, sub), os.path.join(ROOT, "firmware", sub),
+                     os.path.join(DATA, "..", "speakout-firmware")):
+            if all(os.path.isfile(os.path.join(cand, f)) for f in files):
+                os.symlink(os.path.abspath(cand), os.path.join(out, sub))
+                break
+    return out
+
+
+VDATA = voices_data()
+ref_lib = ctypes.CDLL(REF_LIB)
+BUILT = [line.split("\t") for line in
+         subprocess.run([MODULE, "--voices"], stdout=subprocess.PIPE, check=True).stdout.decode("utf-8").splitlines()]
+BUILT_NAMES = [b[2] for b in BUILT]
+_P, _I, _D, _S = ctypes.c_void_p, ctypes.c_int, ctypes.c_double, ctypes.c_char_p
+
+
+def _api(prefix, create_args, set_args):
+    f = lambda n: getattr(ref_lib, prefix + n)      # noqa: E731
+    f("create").restype = _P
+    f("create").argtypes = create_args
+    f("set").argtypes = [_P] + [_I] * set_args
+    f("speak").argtypes = [_P, _S, _I]
+    f("render").argtypes = [_P, ctypes.POINTER(ctypes.POINTER(ctypes.c_short)), ctypes.POINTER(_I)]
+    f("cancel").argtypes = [_P]
+    f("destroy").argtypes = [_P]
+    return f
+
+
+# Each voice: its name, its engine's prefix, how its unit is made, and its settings from the config's defaults (or
+# the keys given) -- the calls sd_voices.c makes.
+ENGINES = {"as": ("Accent SA",), "am": ("Accent-mini",), "so": ("Speak-Out",)}
+
+
+class EngineRef:
+    def __init__(self, key, rate=22050, accent_inflection=100):
+        self.key, self.name = key, ENGINES[key][0]
+        err = ctypes.create_string_buffer(256)
+        if key == "as":
+            self.f = _api("asv_", [_S, ctypes.c_size_t, _S, ctypes.c_size_t, _S, ctypes.c_size_t, _D, _S, _I], 5)
+            roms = [open(os.path.join(VDATA, "aicom-accent-sa", n), "rb").read() for n in FW_DIRS["aicom-accent-sa"]]
+            self.v = self.f("create")(roms[0], len(roms[0]), roms[1], len(roms[1]), roms[2], len(roms[2]),
+                                      float(rate), err, 256)
+        elif key == "am":
+            self.f = _api("amv_", [_S, _D, _S, _I], 6)
+            self.v = self.f("create")(os.path.join(VDATA, "aicom-accent-mini", "SPKEMS.DVC").encode(), float(rate),
+                                      err, 256)
+        else:
+            self.f = _api("sov_", [_S, _D, _S, _I], 6)
+            self.v = self.f("create")(os.path.join(VDATA, "gw-micro-speakout", "SPEAKOUT.HEX").encode(),
+                                      float(rate), err, 256)
+        assert self.v, err.value
+        self.accent_inflection = accent_inflection
+
+    def _set(self, rate, pitch, volume):
+        r, p, v = TO100(rate), TO100(pitch), TO100(volume)
+        if self.key == "as":        # asv_set(rate, pitch, inflection, volume, numbers)
+            self.f("set")(self.v, r, p, self.accent_inflection, v, 1)
+        elif self.key == "am":      # amv_set(rate, pitch, inflection, volume, numbers, voice 5)
+            self.f("set")(self.v, r, p, self.accent_inflection, v, 1, 5)
+        else:                       # sov_set(rate, pitch, tone I, volume, join, short pauses)
+            self.f("set")(self.v, r, p, 8, v, 1, 1)
+
+    def say(self, text, rate=0, pitch=0, volume=100, blocks=None):
+        """PCM of the message; with `blocks`, only that many non-empty blocks, then a cancel (as Ref.say)."""
+        self._set(rate, pitch, volume)
+        self.f("speak")(self.v, text.encode("utf-8"), 0)
+        pcm, done, out, n_blocks = ctypes.POINTER(ctypes.c_short)(), ctypes.c_int(0), [], 0
+        while not done.value:
+            n = self.f("render")(self.v, ctypes.byref(pcm), ctypes.byref(done))
+            if n:
+                out.append(ctypes.string_at(pcm, 2 * n))
+                n_blocks += 1
+                if blocks is not None and n_blocks == blocks and not done.value:
+                    self.f("cancel")(self.v)
+                    break
+        return b"".join(out)
+
 # ---- the server's side of the protocol --------------------------------------------------------------------------
 class Module:
     def __init__(self, conf=None, user_conf=None):
         """conf: the module config's text (argv[1]); user_conf: this user's own file's text.  Every module gets a
         fresh HOME, so a real ~/.config/ssi263-speech on the test machine can never change what it says."""
         home = tempfile.mkdtemp(prefix="sd_ssi263_home_")
-        env = dict(os.environ, SSI263_DATADIR=DATA, HOME=home)
+        env = dict(os.environ, SSI263_DATADIR=VDATA, HOME=home)
         env.pop("XDG_CONFIG_HOME", None)
         args = [MODULE]
         if conf is not None:
@@ -215,8 +325,20 @@ assert init[-1] == b"299 OK LOADED SUCCESSFULLY", init
 m.send("LIST VOICES")
 voices = [v.decode("utf-8") for v in m.reply()]
 print("voices:", "; ".join(v[4:].replace("\t", " / ") for v in voices[:-1]))
+listed = [v[4:].split("\t")[0] for v in voices[:-1]]
+# the add-ons' voices, by their names, with their languages: those built in whose files are there, in this order
+EXPECTED = [("Braille Lite 2000", "en-US", ("BL2ENG.BNS", "bl2_2003_warm.state")),
+            ("Braille Lite 2000 (español)", "es-ES", ("BL2SPA.BNS", "bl2spa_fresh.state")),
+            ("Accent SA", "en-US", tuple("aicom-accent-sa/" + f for f in FW_DIRS["aicom-accent-sa"])),
+            ("Accent-mini", "en-US", ("aicom-accent-mini/SPKEMS.DVC",)),
+            ("Speak-Out", "en-US", ("gw-micro-speakout/SPEAKOUT.HEX",))]
+want = ["200-%s\t%s\tMALE1" % (n, lang) for n, lang, files in EXPECTED
+        if n in BUILT_NAMES and all(os.path.isfile(os.path.join(VDATA, f)) for f in files)] + ["249 OK VOICES LISTED"]
+ok = voices == want and "Accent SA" in listed and set(BUILT_NAMES) <= {e[0] for e in EXPECTED}
+print("voices   %d listed, built in: %s: %s" % (len(listed), ", ".join(BUILT_NAMES),
+                                                "as expected" if ok else "NOT as expected: %r" % want))
 ref = Ref()
-results = []
+results = [ok]
 
 HELLO = "Hello from Linux & speech-dispatcher."
 pcm, ev, _ = m.speak("<speak>Hello from Linux &amp; speech-dispatcher.</speak>")
@@ -306,6 +428,77 @@ print("ra_sys   \"Is it ready?\": run ahead's reference %s the lockstep's" % ("d
                                                                              "is IDENTICAL to"))
 results.append(configured("ra_sys", "SSI263RunAhead 1\n", None, 22050, run_ahead=1) and ra_q != lock_q)
 results.append(configured("ra_user0", "SSI263RunAhead 1\n", "SSI263RunAhead 0\n", 22050))
+
+# ---- the other voices, each in a session of its own: speak, stop, after, set; the Braille Lite and back; language --
+def voice_session(key):
+    name = ENGINES[key][0]
+    ref_v, bl = EngineRef(key), Ref()
+    s = Module()
+    s.send("INIT")
+    assert s.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+    s.set(synthesis_voice=name)
+    ok = []
+    pcm, ev, _ = s.speak("<speak>Hello from Linux &amp; speech-dispatcher.</speak>")
+    want = ref_v.say(HELLO)
+    # the guard: the voice's reference is not the Braille Lite's, or a module stuck on the Braille Lite could pass
+    print("%-8s the %s reference %s the Braille Lite's" % (key + "_speak", name,
+                                                       "differs from" if want != lock_hello else "is IDENTICAL to"))
+    ok.append(same(key + "_speak", pcm, want) and ev == "702 END" and want != lock_hello)
+    pcm1, ev1, n = s.speak(LONG, stop_after=5)
+    pcm2, ev2, _ = s.speak("And the next message.")
+    ok.append(ev1 == "703 STOP" and same(key + "_stop", pcm1, ref_v.say(LONG, blocks=n)))
+    ok.append(same(key + "_after", pcm2, ref_v.say("And the next message.")) and ev2 == "702 END")
+    s.set(rate=40, pitch=-30, volume=-20)
+    pcm, ev, _ = s.speak("Faster, lower and quieter.")
+    ok.append(same(key + "_set", pcm, ref_v.say("Faster, lower and quieter.", rate=40, pitch=-30, volume=-20)))
+    s.set(rate=0, pitch=0, volume=100)
+    s.set(synthesis_voice="Braille Lite 2000")
+    pcm, ev, _ = s.speak("Back to the Braille Lite.")
+    ok.append(same(key + "_bl", pcm, bl.say("Back to the Braille Lite.")) and ev == "702 END")
+    s.set(synthesis_voice=name)
+    pcm, ev, _ = s.speak("And the other voice again.")
+    ok.append(same(key + "_back", pcm, ref_v.say("And the other voice again.")) and ev == "702 END")
+    s.set(language="en")
+    pcm, ev, _ = s.speak("Still the same voice.")
+    ok.append(same(key + "_lang", pcm, ref_v.say("Still the same voice.")) and ev == "702 END")
+    s.send("QUIT")
+    s.p.wait(timeout=10)
+    # the sample rate reaches it
+    c = Module(conf="SSI263SampleRate 44100\n")
+    c.send("INIT")
+    assert c.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+    c.set(synthesis_voice=name)
+    pcm, _ev, _n = c.speak("Is it ready?")
+    c.send("QUIT")
+    c.p.wait(timeout=10)
+    print("%-8s audio blocks declare %s Hz (want 44100)" % (key + "_44k", sorted(c.rates)))
+    ok.append(same(key + "_44k", pcm, EngineRef(key, rate=44100).say("Is it ready?")) and c.rates == {44100})
+    return ok
+
+
+# the Accent-mini's and the Speak-Out's checks are counted apart, so the controls' counts (tools/linux_tests.sh) hold
+# whether or not those voices are built in
+others = []
+for key in ("as", "am", "so"):
+    if ENGINES[key][0] in listed:
+        (results if key == "as" else others).extend(voice_session(key))
+    else:
+        print("%-8s %s: not built in or its files are not there -- not checked" % (key, ENGINES[key][0]))
+
+# the Accent's own key: this user's SSI263AccentInflection 0, against a reference at 0 that must differ from the default
+a = Module(user_conf="SSI263AccentInflection 0\n")
+a.send("INIT")
+assert a.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+a.set(synthesis_voice="Accent SA")
+pcm, _ev, _n = a.speak("Is it ready? It is.")
+a.send("QUIT")
+a.p.wait(timeout=10)
+flat, full = EngineRef("as", accent_inflection=0).say("Is it ready? It is."), EngineRef("as").say("Is it ready? It is.")
+print("as_infl  the reference at inflection 0 %s the default's" % ("differs from" if flat != full else "is IDENTICAL to"))
+results.append(same("as_infl", pcm, flat) and flat != full)
+
 print("%d of %d checks passed (stop after %d blocks, %d with run ahead)" % (sum(results), len(results), blocks,
                                                                           ra_blocks))
-sys.exit(0 if all(results) else 1)
+if others:
+    print("the Accent-mini's and the Speak-Out's: %d of %d checks passed" % (sum(others), len(others)))
+sys.exit(0 if all(results) and all(others) else 1)

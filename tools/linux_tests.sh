@@ -14,8 +14,9 @@
 # The z180emu goldens (blazie_*_legacy.txt, made before the cancel protection) are REFERENCE checks only, labelled so:
 # English's spoken values still match them write for write; Spanish's do not, by the two writes the protection adds
 # after the 3.9 s cancel (R1=40, R0=C0), so it is not compared; the times legitimately differ.  The module
-# harness checks speech-dispatcher's protocol and every message's audio (run ahead too), and its two controls (the
-# unit never cancelled, SSI263RunAhead ignored) must fail; the no-GPL audit
+# harness checks speech-dispatcher's protocol and every message's audio (run ahead too) on every voice it offers (the
+# Braille Lite, the Accent SA, and the Accent-mini and Speak-Out when built in), and its three controls (the unit never
+# cancelled, SSI263RunAhead ignored, SSI263AccentInflection ignored) must fail; the no-GPL audit
 # (tools/check_no_gpl.py) searches the library, the module, the package and the wheel, and its controls must fail.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$(cd "${1:-$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie}" && pwd)"
@@ -69,13 +70,19 @@ check "speech-dispatcher module" python3 src/platforms/speechd/test_sd_ssi263.py
 control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^stop +module .*identical" \
     "^after +module .*DIFFER" "^set +module .*DIFFER" "^key +module .*DIFFER" "^spanish +module .*identical" \
     "^ra_stop +module .*identical" "^ra_after +module .*DIFFER" \
-    "^12 of 16 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
+    "^as_stop +module .*identical" "^as_after +module .*DIFFER" "^as_bl +module .*identical" \
+    "^18 of 26 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # the run-ahead key (SSI263RunAhead, EXPERIMENTAL) dropped on its way to the voice: the module speaks the lockstep, so
 # every run-ahead check against the run-ahead reference fails, and this user's 0 over the module file's 1 still passes
 control "module CONTROL (SSI263RunAhead ignored, must fail)" "^speak +module .*identical" \
     "^ra_speak +module .*DIFFER" "^ra_stop +module .*DIFFER" "^ra_after +module .*DIFFER" "^ra_sys +module .*DIFFER" \
-    "^ra_user0 +module .*identical" "^12 of 16 checks passed" -- env SD_SSI263_TEST_IGNORE_RUN_AHEAD=1 \
+    "^ra_user0 +module .*identical" "^as_speak +module .*identical" "^22 of 26 checks passed" \
+    -- env SD_SSI263_TEST_IGNORE_RUN_AHEAD=1 \
+    python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
+# the Accent's own key (SSI263AccentInflection) dropped on its way to the Accent SA: only as_infl fails
+control "module CONTROL (SSI263AccentInflection ignored, must fail)" "^as_speak +module .*identical" \
+    "^as_infl +module .*DIFFER" "^25 of 26 checks passed" -- env SD_SSI263_TEST_IGNORE_ACCENT_INFLECTION=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # The Blazie emulator in a terminal (src/apps/blazie/README-linux.md), on MAME's Z180: its keyboard without a unit
 # (test_keys), the unit headless as on Windows (test_emu_unit, test_clock), and the whole program headless
@@ -200,6 +207,21 @@ check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speec
     python3 -c 'import sys, zipfile; n = zipfile.ZipFile(sys.argv[1]).namelist(); sys.exit(sum(x.endswith(( \
     \".dist-info/LICENSE\", \".dist-info/Casso-MIT.txt\", \".dist-info/MAME-Z180-core-BSD-3-Clause.txt\")) \
     for x in n) != 3)' build/audit/ssi263speech-*.whl && echo 'MIT, Casso MIT, MAME Z180 BSD-3-Clause: in both'"
+# the Accent SA in the package (0.7.1, every voice on Linux): Aicom's three ROMs where the module looks for them, with
+# Aicom's notice and MAME's 8085 notice; the Accent-mini and Speak-Out, when the module has them, are checked the same
+check "the Accent SA in the package, with its notices" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
+    grep -c -E '/(share/ssi263-speech/aicom-accent-sa/u[234]\.BIN|licenses/Aicom-notice\.txt|licenses/MAME-8085-core-BSD-3-Clause\.txt)\$' | \
+    grep -qx 5 && echo 'u2, u3, u4, the Aicom notice, MAME 8085 BSD-3-Clause: in the package'"
+if ./build/linux/sd_ssi263 --voices | grep -q '^accent-mini'; then
+    check "the Accent-mini in the package, with its notices" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
+        grep -c -E '/(share/ssi263-speech/aicom-accent-mini/SPKEMS\.DVC|licenses/MAME-8086-core-BSD-3-Clause\.txt)\$' | \
+        grep -qx 2 && echo 'SPKEMS.DVC, MAME 8086 BSD-3-Clause: in the package'"
+fi
+if ./build/linux/sd_ssi263 --voices | grep -q '^speakout'; then
+    check "the Speak-Out in the package, with its notices" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
+        grep -c -E '/(share/ssi263-speech/gw-micro-speakout/SPEAKOUT\.HEX|licenses/MAME-V40-core-BSD-3-Clause\.txt|licenses/Speak-Out-firmware-notice\.txt)\$' | \
+        grep -qx 3 && echo 'SPEAKOUT.HEX, its notice, MAME V40 BSD-3-Clause: in the package'"
+fi
 check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
     --clean-sample
 check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu \

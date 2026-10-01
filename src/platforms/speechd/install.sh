@@ -1,7 +1,8 @@
 #!/bin/sh
-# Install the Braille Lite 2000 voice for speech-dispatcher (Orca, spd-say).  Run from the unpacked package:
+# Install the SSI-263 voices for speech-dispatcher (Orca, spd-say): the Braille Lite 2000 (English, Spanish), the
+# Accent SA, and the Accent-mini and Speak-Out when the package has them.  Run from the unpacked package:
 #
-#   sudo ./install.sh              # add the voice; your default synthesizer stays as it is
+#   sudo ./install.sh              # add the voices; your default synthesizer stays as it is
 #   sudo ./install.sh --default    # and make it the default
 #   PREFIX=/opt/ssi263 sudo -E ./install.sh
 #
@@ -29,9 +30,19 @@ else
 fi
 [ -d "$MODBIN" ] || { echo "$MODBIN not found: where does your speech-dispatcher keep its modules?"; exit 1; }
 
-echo "Installing the Braille Lite 2000 voice"
+echo "Installing the SSI-263 voices"
 mkdir -p "$DATA" "$PREFIX/lib" "$MODCONF"
 cp "$HERE"/share/ssi263-speech/*.BNS "$HERE"/share/ssi263-speech/*.state "$DATA/"
+for d in aicom-accent-sa aicom-accent-mini gw-micro-speakout; do   # the other voices' firmware (sd_voices.h)
+    if [ -d "$HERE/share/ssi263-speech/$d" ]; then
+        mkdir -p "$DATA/$d"
+        cp "$HERE/share/ssi263-speech/$d"/* "$DATA/$d/"
+    fi
+done
+if [ -d "$HERE/licenses" ]; then
+    mkdir -p "$DATA/licenses"
+    cp "$HERE"/licenses/* "$DATA/licenses/"
+fi
 cp "$HERE/lib/libssi263speech.so" "$PREFIX/lib/"
 cp "$HERE/bin/sd_ssi263" "$MODBIN/sd_ssi263"
 chmod 755 "$MODBIN/sd_ssi263"
@@ -92,7 +103,10 @@ Done.  Restart speech-dispatcher so it sees the new voice (Orca reconnects by it
     killall speech-dispatcher
 Try it:
     spd-say -o ssi263 "Hello from the Braille Lite"
-In Orca: Preferences, Speech, Speech synthesizer: ssi263.
-Settings (sample rate, inflection, hiss, tone, run ahead) are explained in $MODCONF/ssi263.conf; your own copy of any
-line in ~/.config/ssi263-speech/sd_ssi263.conf wins over it.
+    spd-say -o ssi263 -y "Accent SA" "Hello from the Accent"
+    spd-say -o ssi263 -L          (the voices)
+In Orca: Preferences, Speech, Speech synthesizer: ssi263, then the voice.
+Settings (sample rate; the Braille Lite's inflection, hiss, tone, run ahead; the Accents' inflection; the Speak-Out's
+tone) are explained in $MODCONF/ssi263.conf; your own copy of any line in ~/.config/ssi263-speech/sd_ssi263.conf wins
+over it.
 EOF
