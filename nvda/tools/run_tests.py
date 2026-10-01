@@ -933,6 +933,35 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
     CHECKS.append(check("Python wheel CONTROL (rate 70, must fail)", [PY, WHEEL_TEST, "--build", ENG],
                         env={"WHEEL_TEST_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^ok +the chip alone:", r"^FAIL +the Braille Lite:", r"^wheel: 1 FAILED$"]))
+# Windows 7 (Tomi: Windows 7 support; the README promises 7 and later): every shipped Windows binary -- the newest
+# built add-ons, the SAPI stage's native files (not its python/ folder) and the Blazie emulator -- imports nothing
+# Windows 7 SP1 lacks (no newer DLL, API set or function; tools/win7_missing_apis.txt, from the SDK headers) and asks
+# for no subsystem above 6.1.  The controls are built by w64devkit's gcc and must fail naming what 7 lacks.
+WIN7_CHECK = os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "check_win7_imports.py")
+DIST = os.path.join(os.path.dirname(HERE), "dist")
+WIN7_PATHS, WIN7_EXCLUDE = [], ["python", "obj"]
+for addon in ("speakout", "blazie", "accent"):
+    built = [os.path.join(DIST, f) for f in os.listdir(DIST) if re.match(r"%s-ssi263-[\d.]+\.nvda-addon$" % addon, f)] \
+        if os.path.isdir(DIST) else []
+    if built:
+        WIN7_PATHS.append(max(built, key=os.path.getmtime))
+for stage in ("sapi-0.7.0-final", "sapi-0.7.0"):
+    if os.path.isdir(os.path.join(DIST, stage)):
+        WIN7_PATHS.append(os.path.join(DIST, stage))
+        break
+if os.path.isdir(os.path.join(DIST, "blazie-emu")):
+    WIN7_PATHS.append(os.path.join(DIST, "blazie-emu"))
+if WIN7_PATHS:
+    CHECKS.append(check("Windows 7: shipped binaries import nothing 7 lacks",
+                        [PY, WIN7_CHECK] + WIN7_PATHS + sum((["--exclude", x] for x in WIN7_EXCLUDE), []),
+                        ok=lambda out: bool(re.search(r"^win7 imports: \d+ binaries, all load on Windows 7$", out, re.M))))
+for what, marks in (
+        ("win8", [r"(?i)^ +import kernel32\.dll!SetProcessInformation: not in Windows 7"]),
+        ("ucrt", [r"(?i)^ +import of ucrtbase\.dll: not in Windows 7: the Universal CRT"]),
+        ("subsystem", [r"^ +PE header subsystem version 6\.2: above Windows 7's 6\.1"])):
+    CHECKS.append(check("Windows 7 imports CONTROL (%s, must fail)" % what, [PY, WIN7_CHECK, "--control", what],
+                        expect_fail=True, fail_marks=marks + [r"^control %s: built " % what,
+                                                              r"^win7 imports: 1 binaries, 1 FAILED$"]))
 CHECKS.append(check("stacked_q_symbols", [PY, "-S", "stacked_q_symbols.py", NVDA]))
 # the Braille Lite driver keeps the unit's channel open after speech (hiss/whine until the firmware clicks off),
 # at no cost to response time; the control runs it with keep open off and must fail

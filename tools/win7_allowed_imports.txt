@@ -1,0 +1,6 @@
+# Imports tools/check_win7_imports.py lets pass although Windows 7 SP1 lacks them: only those resolved lazily, behind
+# an OS check (a delay-load the code reaches only on Windows 8 or later).  One DLL!function per line (DLL!* for a
+# whole delay-loaded DLL), with the reason and where the guard is.  A plain import never belongs here: Windows 7
+# refuses to load the binary before any of its code runs.  Look the function up with GetProcAddress instead.
+#
+# (none)
