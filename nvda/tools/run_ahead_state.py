@@ -30,7 +30,7 @@ routine that writes it, and when):
   from 'cancelled'    RESIDUE: what the unit read ahead of the listener before ^X -- the line-staging buffer, the
                       banked-call save slots
   at 'cancelled'      the unit's serial output, ^F accounting and chip request (the same registers: the pause after
-                      ^X, its timer), write values up to the cut (a cancel-prefix match); Spanish, its text index
+                      ^X, its timer), write values up to the cut (a cancel-prefix match); its text index
   after it            a redundant XON (the flow state the same)
 Anything else that differs is a FINDING and fails.
 
@@ -96,13 +96,19 @@ RESIDUE = [
     # run-ahead unit had staged part of the cancelled utterance's next line before ^X; the next line is staged from
     # 46000 again, over it, and the rest is never read
     ("the line-staging buffer", 0x46000, 0x460FF),
-    # written only by its banked-call routine, three bytes per nesting level (421A8, 421AB, ...): like the stack below
-    # SP, the level ^X's interrupt used depends on what it interrupted
-    ("the banked-call save slots", 0x421A8, 0x421BF),
+    # written only by its banked-call routine, three bytes per nesting level (... 421A5, 421A8, 421AB, ...): like the
+    # stack below SP, the level ^X's interrupt used depends on what it interrupted.  421A5-421A7 since 0.7 (the MAME
+    # core, the lockstep settling before ^X as run ahead does): the English trace build's watchpoints show them
+    # written by the same routine (5566/5568/556A) as 421A8-421AA, one level lower -- the lockstep's ^X handling
+    # saved 1BCE there, the run-ahead unit's last call before ^X left BC38
+    ("the banked-call save slots", 0x421A5, 0x421BF),
 ]
-# ... and at the cancelled checkpoint only (the next say resets it; 'respoken' agrees): the Spanish firmware's text
-# index at 41617 (advanced at 0C6C while a line is processed, reset at B1D0 as the next begins) stood further on
-CUT_ONLY = [("the text index where the cut line stood (Spanish)", 0x41617, 0x41617)]
+# ... and at the cancelled checkpoint only (the next say resets it; 'respoken' agrees): the firmware's text index at
+# 41617 (Spanish: advanced at 0C6C while a line is processed, reset at B1D0 as the next begins; English, the same
+# pair at 0C72 and BC70) stood elsewhere.  English too since 0.7: both units now settle before ^X, and the index
+# then counts the frames each loaded after it -- the lockstep's cancel cut a second time (its unit loaded a pause
+# after the first ^X) and advanced it 70 -> 73 (the trace build's watchpoints), run ahead's left it at 70
+CUT_ONLY = [("the text index where the cut line stood", 0x41617, 0x41617)]
 # At every checkpoint: the firmware's seconds counters, each incremented by its timer interrupt (0EB1) once per
 # 6.18 M CPU cycles (1.006 s): they count CPU time, which run ahead does not keep (its unit ran ahead, then waited)
 CLOCK = [("the firmware's seconds counters", 0x41436, 0x41436), ("the firmware's seconds counters", 0x41637, 0x41637)]
@@ -197,7 +203,7 @@ def diff_bytes(a, b, base):
 
 def named_cell(x, name, cut):
     """the named, justified difference a RAM cell belongs to at checkpoint `name` (cut: from the cancelled one on)"""
-    lists = CLOCK + (RESIDUE if cut else []) + (CUT_ONLY if name == "cancelled" and SPANISH else [])
+    lists = CLOCK + (RESIDUE if cut else []) + (CUT_ONLY if name == "cancelled" else [])
     return next((r for r in lists if r[1] <= x <= r[2]), None)
 
 

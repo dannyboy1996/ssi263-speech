@@ -343,7 +343,8 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                                     r"^run ahead state \(English\): 1 FAILED$"]))
     CHECKS.append(check("run ahead state CONTROL (the cancel's leak put back, must fail)",
                         [PY, "run_ahead_state.py"], env={"RUN_AHEAD_STATE_BREAK": "settle"}, expect_fail=True,
-                        fail_marks=[r"^FAIL respoken .*writes DIFFER at 12 of 175/181",
+                        fail_marks=[r"^FAIL cancelled .*FINDING: RAM 4 cells beyond timing's: 433AB 0D/61 433AC FF/61 ",
+                                    r"^FAIL respoken .*writes DIFFER at 12 of 175/181",
                                     r"^run ahead state \(English\): \d+ FAILED$"]))
     # a cancel, then at once a new say (run_ahead_cancel.py): the new utterance begins with its own phonemes, over
     # sweeps of the cancel time (with and without history, and in the driver's 30 ms blocks); the lockstep's own rarer
