@@ -17,7 +17,7 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
 | `test_clock.c` | The clock controller alone, then the English Braille Lite and Type 'n Speak setting and reading the time and date with their own commands, the clock going on and kept over a switch-off; and i-chord held through p-chord l's restart. `TEST_CLOCK_BREAK` / `TEST_CLOCK_HOLD_BREAK` put one bug back for run_tests' must-fail controls. |
-| `test_flash.c` | The file flash: the Type 'n Speak's ID check passes and its flash is initialised, the erase takes 32 s with the firmware's clicks, the flash kept across a save and restart; the Braille Lite's reset erases the same way, and a file moved to flash lands in the 2 MB and survives a restart. `test_flash_break.exe` (the old flash put back) and `--break=instant|persist` must fail. |
+| `test_flash.c` | The file flash: the Type 'n Speak's ID check passes and its flash is initialised, the erase takes ~46 s (32 s and the 14.4 s preprogramming) with the firmware's clicks, the flash kept across a save and restart; the Braille Lite's reset erases the same way, and a file moved to flash lands in the 2 MB and survives a restart. `test_flash_break.exe` (the old flash put back), `test_flash_old.exe` (the erase without its preprogramming) and `--break=instant|persist` must fail. |
 | `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
@@ -176,7 +176,7 @@ leaves the volume at 0) and asks how to set itself up. Before it starts, the pro
 Keys box says it again). Press y for each question (the Spanish unit: s), seven times:
 
 1. "initialize file system?" y, "are you sure?" y -- "system initialized".
-2. "initialize flash system?" y, "are you sure?" y -- "please wait", then the flash chip's 32 s erase, with clicks.
+2. "initialize flash system?" y, "are you sure?" y -- "please wait", then the flash chip's ~46 s erase, with clicks.
 3. "initialize folder system?" y -- "Type 'n Speak ready", the date, "help is open".
 4. "delete all data in file area." y, "are you sure?" y -- about 35 s of silence while it clears its memory (keys are
    ignored), then "system initialized" and it starts again: ready.
@@ -211,9 +211,11 @@ A state holds no CPU registers (the unit starts from it as from power-on), so th
 Both units keep their files in a 29F016-style flash chip, 2 MB as the firmware manages it (`../../csrc/blazie/flash29.c`;
 the Braille Lite pages it 512 KB at a time through port E0h bits 0-1, the Type 'n Speak 128 KB through F0h). The
 Type 'n Speak's firmware reads the chip's ID before it offers the flash at all. An erase takes the chip's typical time
-(the Am29F016 data sheet: 32 s for the whole chip, 1 s a sector) and the firmware waits on the chip's status, clicking
-through the speech chip every ~2 s meanwhile (each click: R4 F0, R1 F0, R2 FE, R3 58, phoneme 17h): initialising the
-flash -- the Type 'n Speak's first start, the Braille Lite's reset -- is 32 s of clicks, then "flash initialized" or
+(the Am29F016 data sheet: 32 s for the whole chip, 1 s a sector, plus the embedded algorithm first programming every
+byte it erases to 00h, which those times exclude: 14.4 s for the whole chip) and the firmware waits on the chip's
+status, clicking through the speech chip every ~1.7 s (Braille Lite) or ~2.1 s (Type 'n Speak) meanwhile, a fixed count
+of its status polls apart (each click: R4 F0, R1 F0, R2 FE, R3 58, phoneme 17h, then PA): initialising the flash -- the
+Type 'n Speak's first start, the Braille Lite's reset -- is ~46 s of clicks, then "flash initialized" or
 "ready". A Braille Lite state is 768 KB (256 KB RAM + the flash's first 512 KB) while the rest of the flash is erased,
 2.25 MB once files reach it; both load.
 

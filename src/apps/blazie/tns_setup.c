@@ -7,12 +7,14 @@
 #include <string.h>
 #include "tns_keys.h"
 #include "tns_setup.h"
+#include "../../csrc/blazie/flash29.h"
 
 #define RATE 22050
 #define BLOCK (RATE / 100)
 
 static const double AT[TNS_SETUP_ANSWERS] = {4.0, 7.0, 10.0, 13.0, 18.0, 25.0, 28.0};
-#define ERASE_S 32.0                /* the 29F016's chip erase (flash29.h), after answer 4 */
+/* the 29F016's chip erase of a blank chip (flash29.h), after answer 4: every byte preprogrammed, then erased */
+#define ERASE_S (FLASH29_CHIP_PROGRAM_S + FLASH29_CHIP_ERASE_S)
 
 double tns_setup_answer_at(int k, int flash_timed)
 {

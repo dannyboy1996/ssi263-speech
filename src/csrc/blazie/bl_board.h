@@ -72,7 +72,7 @@ int  bl_starts(const bl_unit *u);
 int  bl_save_state(const bl_unit *u, const char *path);
 /* The file flash's busy time (flash29.h): off (the default) every erase and program is done at once, as the
    screen-reader drivers and their state recipes need; on (the emulator), an erase takes the chip's typical time and the
-   firmware chirps through the speech chip while it waits (an initialisation's chip erase: 32 s).  bl_flash_busy: 1
+   firmware chirps through the speech chip while it waits (an initialisation's chip erase: ~46 s).  bl_flash_busy: 1
    while an erase runs, 2 while a byte programs, 0 idle; the counts of chip and sector erases so far (NULL: not
    wanted). */
 void bl_flash_timed(bl_unit *u, int on);

@@ -57,7 +57,7 @@ int  tns_serial_read(tns_unit *u, unsigned char *out, int cap, bl_serial_status 
    on); 1 on success */
 int  tns_save_state(const tns_unit *u, const char *path);
 /* the file flash's busy time, as bl_board.h's bl_flash_timed / bl_flash_busy (off by default; the emulator turns it
-   on: initialising the flash then takes the chip erase's 32 s, the unit chirping while it waits) */
+   on: initialising the flash then takes the chip erase's ~46 s, the unit chirping while it waits) */
 void tns_flash_timed(tns_unit *u, int on);
 int  tns_flash_busy(const tns_unit *u, unsigned long *chip_erases, unsigned long *sector_erases);
 

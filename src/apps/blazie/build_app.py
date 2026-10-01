@@ -4,7 +4,7 @@
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
   test_clock.exe     the clock controller and the keys held while the unit starts (Jayson), headless
-  test_flash.exe     the file flash: the ID check, the erase's time and chirps, files kept; _break: its control
+  test_flash.exe     the file flash: the ID check, the erase's time and chirps, files kept; _break, _old: its controls
   test_files.exe     files in and out (bl_files.c, the FAT image) against the units' own commands
   blazie_files.exe   the same on a saved state, from the command line
   test_serial.exe    the serial port plugged in, headless: the storage handshake answered from the far end
@@ -51,6 +51,7 @@ CONTROLS = {
     "flash_break": {"bl_board": "BLAZIE_FLASH_BREAK", "tns_board": "BLAZIE_FLASH_BREAK"},
     "cut_rx": {"bl_serial": "BL_SERIAL_CUT_RX"},
     "hooks": {"bl_idle": "BLI_TEST_HOOKS"},
+    "flash_old": {"flash29": "FLASH29_NO_PREPROGRAM"},
 }
 LICENCES = (("LICENSE", os.path.join(REPO, "LICENSE")),
             (os.path.join("licenses", "MAME-Z180-core-BSD-3-Clause.txt"),
@@ -125,6 +126,8 @@ def main():
     flash = compile_c(os.path.join(HERE, "test_flash.c"), APP)
     link("test_flash.exe", [flash] + unit)
     link("test_flash_break.exe", [flash] + chip + board("flash_break") + [emu, chords, setup])
+    # ... and the erase without its preprogramming (flash29.c, FLASH29_NO_PREPROGRAM: 32 s, as before)
+    link("test_flash_old.exe", [flash] + chip + board("flash_old") + [emu, chords, setup])
     # files in and out against the units' own commands (test_files.c; its controls: --break=N)
     link("test_files.exe", [compile_c(os.path.join(HERE, "test_files.c"), APP)] + unit + files)
     # the serial port plugged in, and its control: the same board with the receive path cut (bl_serial.c)
