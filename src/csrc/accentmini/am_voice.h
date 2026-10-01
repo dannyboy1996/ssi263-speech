@@ -60,6 +60,25 @@ AM_API void amv_cancel(am_voice *v);
 /* Nonzero after a host fault ended or refused the last utterance (cleared by the next amv_speak's reboot). */
 AM_API int amv_fault(const am_voice *v);
 
+/* A job: NVDA's whole speech sequence as the NVDA driver (nvda/accent/synthDrivers/accentmini.py, since 0.7.5 on
+   this library) speaks it -- several texts, PitchCommands and IndexCommands in one utterance, which amv_speak cannot
+   say byte for byte: the lead trim is armed once per job, and a capital's pitch stays until the next PitchCommand or
+   the job's end.  As so_voice.h's sov_begin ... sov_flush:
+     amv_begin            _speakJob's start (a failed card restarted, the settings that changed sent, the lead trim)
+     amv_pitch(offset)    a PitchCommand item (offset 0 included), on amv_set's pitch at the call
+     amv_text(bytes, n)   a text item as the card is sent it: amv_say_bytes' text with the carriage return added;
+                          then amv_render until *done.  0 when n is 0
+     amv_end              _speakJob's finally: the user's pitch again if a capital left it changed
+     amv_flush            after amv_end when the job was cancelled: the card restarted if the job failed, the
+                          Accent's flush, the pitch said again if it may have been dropped
+   Each returns -1 once the host has failed (amv_fault): the driver ends the job; the next amv_begin restarts the
+   card, as the driver's _run restarts it.  amv_speak and amv_cancel are a one-text job. */
+AM_API int amv_begin(am_voice *v);
+AM_API int amv_pitch(am_voice *v, int pitch_offset);
+AM_API int amv_text(am_voice *v, const unsigned char *bytes, int n);
+AM_API int amv_end(am_voice *v);
+AM_API int amv_flush(am_voice *v);
+
 /* The driver's _accent_pitch: NVDA's pitch 0-100 on the Accent's ESC P 0-9 (50 -> 5). */
 AM_API int amv_pitch_step(int pitch);
 /* The text the driver would send for this utterance (currencies, _clean, strip, _numbers; the carriage return not

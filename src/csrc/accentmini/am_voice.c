@@ -31,6 +31,7 @@ struct am_voice {
     int base_pitch, cur_pitch;                         /* settings[1], _cur_pitch */
     int pitch_dirty, snap_until_speech;
     int lead, active, fault;
+    int job;                                           /* inside amv_begin ... amv_end: the driver's whole sequence */
     double t_start, gain;
     short *pcm;
     int pcm_cap;
@@ -198,11 +199,33 @@ static int restore_pitch(am_voice *v)
     return 0;
 }
 
-AM_API int amv_speak(am_voice *v, const char *utf8, int pitch_offset)
+/* the items: PitchCommand(offset) */
+static int pitch_item(am_voice *v, int pitch_offset)
 {
-    char r = at_rate_char(v->rate), cmd[64], *text, *line;
+    int want = at_pitch_step(v->pitch + pitch_offset);
+    if (want != v->cur_pitch) {
+        if (say_pitch(v, want) < 0) { failed(v); return -1; }
+        v->cur_pitch = want;
+        v->pitch_dirty = 1;
+    }
+    return 0;
+}
+
+/* a text item: t_start = box.chip.time; box.say(text + "\r", background=True) -- ESC =F: the carriage return starts
+   speech; in the background: audio starts while the driver is still taking a long text */
+static int text_item(am_voice *v, const unsigned char *line, int n)
+{
+    v->t_start = amh_get_double(v->h, "time");
+    if (amh_say(v->h, line, n, -1, 1) < 0) { failed(v); return -1; }
+    v->active = 1;
+    return 1;
+}
+
+/* _speakJob's start: a failed card restarted, only the settings that changed sent, the lead trim armed */
+static int begin(am_voice *v)
+{
+    char r = at_rate_char(v->rate), cmd[64];
     int p = at_pitch_step(v->pitch), infl = at_inflection(v->inflection), k = 0;
-    size_t n;
     v->active = 0;
     if (v->fault && !restart(v))
         return -1;
@@ -218,15 +241,20 @@ AM_API int amv_speak(am_voice *v, const char *utf8, int pitch_offset)
     v->base_pitch = v->cur_pitch = p;
     v->gain = v->volume / 100.0;
     v->lead = 1;
+    return 0;
+}
+
+AM_API int amv_speak(am_voice *v, const char *utf8, int pitch_offset)
+{
+    char *text, *line;
+    size_t n;
+    int k;
+    v->job = 0;
+    if (begin(v) < 0)
+        return -1;
     /* the items: PitchCommand(offset), then the text */
-    if (pitch_offset) {
-        int want = at_pitch_step(v->pitch + pitch_offset);
-        if (want != v->cur_pitch) {
-            if (say_pitch(v, want) < 0) { failed(v); return -1; }
-            v->cur_pitch = want;
-            v->pitch_dirty = 1;
-        }
-    }
+    if (pitch_offset && pitch_item(v, pitch_offset) < 0)
+        return -1;
     text = at_say_text(utf8, v->numbers);
     if (!text || !*text) {
         free(text);
@@ -239,19 +267,73 @@ AM_API int amv_speak(am_voice *v, const char *utf8, int pitch_offset)
     memcpy(line, text, n);
     line[n] = '\r';                                           /* ESC =F: the carriage return starts speech */
     free(text);
-    v->t_start = amh_get_double(v->h, "time");
-    /* in the background: audio starts while the driver is still taking a long text */
-    k = amh_say(v->h, (const unsigned char *)line, (int)n + 1, -1, 1);
+    k = text_item(v, (const unsigned char *)line, (int)n + 1);
     free(line);
-    if (k < 0) { failed(v); return -1; }
-    v->active = 1;
-    return 1;
+    return k;
 }
 
+/* a text's end: in a job the pitch stays as the sequence left it until amv_end (the driver's finally) */
 static int finish(am_voice *v)
 {
     v->active = 0;
-    return restore_pitch(v);
+    return v->job ? 0 : restore_pitch(v);
+}
+
+/* ---- a job: the NVDA driver's whole speech sequence (am_voice.h) ------------------------------------------------ */
+AM_API int amv_begin(am_voice *v)
+{
+    int r;
+    v->job = 0;
+    r = begin(v);
+    v->job = 1;
+    return r;
+}
+
+AM_API int amv_pitch(am_voice *v, int pitch_offset)
+{
+    if (v->fault)
+        return -1;
+    return pitch_item(v, pitch_offset);
+}
+
+AM_API int amv_text(am_voice *v, const unsigned char *bytes, int n)
+{
+    if (v->fault)
+        return -1;
+    if (n <= 0)
+        return 0;
+    return text_item(v, bytes, n);
+}
+
+AM_API int amv_end(am_voice *v)
+{
+    v->active = 0;
+    v->job = 0;
+    if (v->fault)                                             /* failed() has done what the finally could */
+        return -1;
+    if (restore_pitch(v) < 0) { failed(v); return -1; }
+    return 0;
+}
+
+static void resend_pitch(am_voice *v)                         /* _resend_pitch */
+{
+    ssi263_set_snap_pitch(v->chip, 1);
+    v->snap_until_speech = 1;
+    if (say_pitch(v, v->sent_pitch) < 0)
+        failed(v);
+    v->cur_pitch = v->sent_pitch;
+}
+
+/* _run after a cancelled job: the card restarted first if the job failed (the driver's except), then box.cancel(),
+   and _resend_pitch when a pitch command may have been dropped */
+AM_API int amv_flush(am_voice *v)
+{
+    if (v->fault && !restart(v))
+        return -1;
+    if (amh_cancel(v->h, CANCEL_LIMIT) < 0) { failed(v); return -1; }
+    if (v->pitch_dirty)
+        resend_pitch(v);
+    return v->fault ? -1 : 0;
 }
 
 AM_API int amv_render(am_voice *v, const short **pcm, int *done)

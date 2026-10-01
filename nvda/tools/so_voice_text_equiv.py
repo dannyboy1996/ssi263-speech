@@ -17,6 +17,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 COUNT = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
 SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 sys.argv = [sys.argv[0], "speakout"]
+# the reference is 0.7.0's Python driver (since 0.7.5 the add-on's driver has no Python front end)
+sys.path.insert(0, HERE)
+import legacy_drivers  # noqa: E402
+os.environ["SSI263_SYNTH_DRIVERS"] = legacy_drivers.synth_drivers("speakout")
 src = open(os.path.join(HERE, "fake_nvda_driver_test.py"), encoding="utf-8").read()
 exec(src.split("d = drv_mod.SynthDriver()")[0])     # the driver module only: no box is started
 BREAK = os.environ.get("SO_VOICE_TEXT_BREAK") == "1"

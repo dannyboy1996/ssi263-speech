@@ -13,7 +13,8 @@ sys.path.insert(0, REPO)
 from tools import repo_paths             # noqa: E402
 
 WHICH = sys.argv[1]            # speakout | blazie | accent
-BUILD = repo_paths.synth_drivers(WHICH)
+# SSI263_SYNTH_DRIVERS: another add-on folder's synthDrivers (legacy_drivers.py: 0.7.0's Python drivers, the reference)
+BUILD = os.environ.get("SSI263_SYNTH_DRIVERS") or repo_paths.synth_drivers(WHICH)
 
 
 # SIM_SPEED: a paced player plays this many times faster than real time (tests that sleep between steps

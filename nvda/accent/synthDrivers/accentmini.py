@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """NVDA synthesizer driver: the Aicom Accent SA and Accent-mini, talking through an emulated SSI-263.
 
-Two voices, two of Aicom's own programs:
-- Accent-mini: Aicom's DOS device driver (SPKEMS.DVC, "Accent-EMS", V4.5, 1986-1993) runs
-  under Unicorn inside NVDA's process, loaded as DOS would load it, with its rules in
-  emulated expanded memory; the model's A/R request is the card's IRQ.
-- Accent SA: the stand-alone box's own 8085 firmware (1986-1989) and dictionary ROMs run
-  on an emulated 8085 (accent_sa_host.py), with text arriving on its serial port and A/R
-  on its TRAP.
-Both drive a register-level model of the SSI-263 (Aicom's AI901), so the rules, intonation
-and timing are Aicom's own.  Nothing is recorded or concatenated.
+Two voices, two of Aicom's own programs, both in ssi263speech.dll (since 0.7.5 with this driver's front end in C
+too -- no Python host):
+- Accent-mini: Aicom's DOS device driver (SPKEMS.DVC, "Accent-EMS", V4.5, 1986-1993) runs on MAME's 8086 inside
+  NVDA's process, loaded as DOS would load it, with its rules in emulated expanded memory; the model's A/R request
+  is the card's IRQ (src/csrc/accentmini).
+- Accent SA: the stand-alone box's own 8085 firmware (1986-1989) and dictionary ROMs run on MAME's 8085, with text
+  arriving on its serial port and A/R on its TRAP (src/csrc/accentsa).
+Both drive a register-level model of the SSI-263 (Aicom's AI901), so the rules, intonation and timing are Aicom's
+own.  Nothing is recorded or concatenated.  This file keeps NVDA's side: the worker thread, the player, index and
+done callbacks, cancel; nvda/tools/native_driver_equiv.py holds it to 0.7.0's Python driver byte for byte.
 
 This add-on carries Aicom's driver and firmware; see AICOM.txt beside them.
 """
@@ -32,80 +33,22 @@ _HERE = os.path.dirname(__file__)
 _ENGINE_DIR = os.path.join(_HERE, "_ssi263_accent")
 
 # The engine is this add-on's own package, imported relatively and never through sys.path:
-# the Speak-Out and Braille Lite add-ons ship an `ssi263` too.
-from ._ssi263_accent.accent_host import Accent
-from ._ssi263_accent.accent_sa_host import AccentSA
-from ._ssi263_accent.ssi263.native import SSI263C      # the chip in C
-from ._ssi263_accent import ssi263_numwords as numwords
+# the other add-ons ship modules of the same names.
 from ._ssi263_accent import ssi263_rates as rates
+from ._ssi263_accent.ssi263speech import AccentMiniC, AccentSAC, dll_path
 
 # Developer switch: True writes a step-by-step "Accent:" trace to NVDA's log (at debug level)
 # and starts a thread that reports a stuck worker.  Off for everyone else; not a setting.
 DEBUG_LOG = False
 
-BLOCK_S = 0.03
 DRIVER = os.path.join(_ENGINE_DIR, "SPKEMS.DVC")
-STATE = os.path.join(_ENGINE_DIR, "SPKEMS.state")
 SA_ROMS = os.path.join(_ENGINE_DIR, "accent-sa")      # u2.BIN u3.BIN u4.BIN
+DLL = dll_path(_ENGINE_DIR)
 VOICES = (("mini", "Accent-mini"), ("sa", "Accent SA"))
-RATES = "0123456789ABCDEFGH"            # ESC Rn: 0-9, A-H; the Accent's default is 5
-# NVDA's inflection 0/25/50/75/100 -> ESC M1 (monotone), M2, M3, M4, M0 (full, the default),
-# as the Accent Messenger add-on maps them
-INFLECTION = ((0, 1), (25, 2), (50, 3), (75, 4), (100, 0))
-DEFAULTS = ("5", 5, 5, 0)               # rate, pitch, voice, intonation after power-up
-
-
-def _clean(text):
-    """7-bit text with no control characters: ESC and Ctrl-X are the Accent's commands.  No
-    tilde either: "~/" opens the Accent's phoneme input (manual 4.2), and it then swallows
-    everything until the next "~" -- a path like ~/code silenced it."""
-    out = []
-    for ch in text:
-        o = ord(ch)
-        if o < 32 or o == 127 or ch == "~":
-            out.append(" ")
-        elif o < 128:
-            out.append(ch)
-        else:
-            out.append({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-",
-                        "…": "...", "é": "e", "è": "e", "á": "a", "à": "a", "ö": "o", "ü": "u",
-                        "ñ": "n", "ç": "c"}.get(ch, " "))
-    return "".join(out)
-
-
-def _numbers(text):
-    """Numbers as words.  The Accent reads 100 as "one zero zero" and anything of five
-    digits or more digit by digit; only comma-grouped numbers get hundreds and thousands
-    (manual 4.1.4).  Dollar amounts stay with the Accent, which reads them properly
-    ("$30.50": "thirty dollars and fifty cents", 4.1.3) once the dollars carry the commas
-    it counts by: "$6723" alone is "six seven two three dollars"."""
-    parts = numwords.MONEY.split(text)
-    return "".join(_grouped(p) if k % 2 else numwords.normalise(p) for k, p in enumerate(parts))
-
-
-def _grouped(money):
-    whole, dot, cents = money[1:].partition(".")
-    digits = whole.replace(",", "")
-    if digits and len(digits) <= 15:                          # the Accent counts to trillions
-        whole = format(int(digits), ",")
-    return "$" + whole + dot + cents
-
-
-LEAD_THRESHOLD = 0.003      # chip output; the idle carrier is ~1e-4, speech ~0.1-0.7
-LEAD_PREROLL = 220          # samples (5 ms) kept before the first sound
 
 
 def _nothing():
     """onDone for the end-of-utterance flush: the call is what matters, not the callback."""
-
-
-def _trim_lead(y):
-    """Drop the silence at the head of an utterance: the driver reading its text and a
-    stop's closure are silent, and a listener hears them only as delay."""
-    for k, v in enumerate(y):
-        if v > LEAD_THRESHOLD or v < -LEAD_THRESHOLD:
-            return y[max(0, k - LEAD_PREROLL):], True
-    return y[:0], False
 
 
 def _dbg(msg):
@@ -157,6 +100,8 @@ class SynthDriver(SynthDriver):
 
     @staticmethod
     def _present():
+        if not os.path.isfile(DLL):
+            return []
         have = {"mini": os.path.isfile(DRIVER),
                 "sa": all(os.path.isfile(os.path.join(SA_ROMS, n)) for n in ("u2.BIN", "u3.BIN", "u4.BIN"))}
         return [v for v, _ in VOICES if have[v]]
@@ -176,9 +121,6 @@ class SynthDriver(SynthDriver):
         self._booted = None
         self._join = True
         self._numbers = True
-        self._pitch_dirty = False
-        self._snap_until_speech = False
-        self._sent = DEFAULTS   # the driver boots with these; nothing is sent until one changes
         # Defaults only: NEVER read config.conf["speech"][<driver>] here.  NVDA registers this driver's settings
         # after __init__, and its config caches a failed lookup as missing, so an early read of a new key made
         # NVDA's own loadSettings fail ("setSynth failed ... KeyError: 'voiceInflection'", Tomi, 0.6.0 draft).
@@ -336,17 +278,6 @@ class SynthDriver(SynthDriver):
         if v in self._present():
             self._model = v
 
-    @staticmethod
-    def _accent_pitch(p):
-        p = max(0, min(100, p))
-        return int(p * 5 / 50 + 0.5) if p <= 50 else 5 + int((p - 50) * 4 / 50 + 0.5)      # 50 -> 5
-
-    def _accent_settings(self):
-        r = self._rate
-        rate = int(r * 5 / 50 + 0.5) if r <= 50 else 5 + int((r - 50) * 12 / 50 + 0.5)    # 50 -> 5
-        infl = min(INFLECTION, key=lambda x: abs(x[0] - self._inflection))[1]
-        return (RATES[rate], self._accent_pitch(self._pitch), int(self._voice_char), infl)
-
     # -- diagnostics (0.3.7): where the worker is, and a thread that reports it stuck --
     def _set_phase(self, name):
         self._phase = (name, time.monotonic())
@@ -372,18 +303,17 @@ class SynthDriver(SynthDriver):
 
     # -- worker: the only thread that touches the emulated card ----------------
     def _boot(self):
+        """The card for the current voice at the current rate; its settings are then the Accent's power-up ones
+        (rate 5, pitch 5, voice 5, full intonation), and only a setting that differs is sent."""
         t = time.monotonic()
         model = self._model
         if model == "sa":
-            box = AccentSA(SA_ROMS, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
-            box.keep_writes = False
-            box.trace = lambda msg: _dbg("SA: " + msg)
-            box.boot()
+            box = AccentSAC(DLL, SA_ROMS, self._out_rate)
         else:
-            box = Accent(DRIVER, chip=SSI263C(out_rate=self._out_rate), out_rate=self._out_rate)
-            box.keep_writes = False
-            box.trace = lambda msg: _dbg("card: " + msg)
-            box.boot(state=self._saved_state())
+            box = AccentMiniC(DLL, DRIVER, self._out_rate)     # its INIT runs as DOS would run it
+        old, self._box = self._box, box
+        if old is not None:
+            old.close()
         self._booted = model
         _dbg("%s booted in %.0f ms" % (model, (time.monotonic() - t) * 1e3))
         return box
@@ -396,29 +326,15 @@ class SynthDriver(SynthDriver):
             old.close()
         except Exception:
             pass
-        self._box = self._boot()
-        self._sent = DEFAULTS
-        self._pitch_dirty = False
+        self._boot()
 
-    @staticmethod
-    def _saved_state():
-        """The machine after the driver's INIT, saved at build time: launch in a few ms
-        instead of 0.6 s.  None (so INIT runs) if it is missing or made from another driver."""
-        try:
-            import hashlib
-            import pickle
-            with open(STATE, "rb") as f:
-                state = pickle.load(f)
-            with open(DRIVER, "rb") as f:
-                if state.get("dvc_sha256") != hashlib.sha256(f.read()).hexdigest():
-                    return None
-            return state
-        except Exception:
-            return None
+    def _apply(self, box):
+        """the settings as they are now; the card is sent those that changed at begin()"""
+        box.set(self._rate, self._pitch, self._inflection, self._volume, self._numbers, int(self._voice_char))
 
     def _run(self):
         try:
-            self._box = self._boot()
+            self._boot()
         except Exception:
             log.error("Accent: could not start the emulated card", exc_info=True)
             return
@@ -437,8 +353,7 @@ class SynthDriver(SynthDriver):
             if self._model != self._booted:
                 self._set_phase("switching voice")
                 try:
-                    self._box = self._boot()
-                    self._sent = DEFAULTS
+                    self._boot()
                 except Exception:
                     log.error("Accent: could not start %s" % self._model, exc_info=True)
             t_job = time.monotonic()
@@ -448,25 +363,21 @@ class SynthDriver(SynthDriver):
             except Exception:
                 log.error("Accent speech failed; restarting the emulated card", exc_info=True)
                 try:
-                    self._box = self._boot()
-                    self._sent = DEFAULTS
+                    self._boot()
                 except Exception:
                     log.error("Accent restart failed", exc_info=True)
             if self._cancelFlag.is_set():
                 self._set_phase("flushing the card")
                 t = time.monotonic()
                 try:
-                    took = self._box.cancel()
-                    if self._pitch_dirty:
-                        self._resend_pitch()
-                    _dbg("job cancelled after %.0f ms; flush %.3f s card time, %.0f ms wall"
-                         % ((t - t_job) * 1e3, took or 0.0, (time.monotonic() - t) * 1e3))
+                    self._box.cancel()           # the Accent's flush, and the pitch said again if it was dropped
+                    _dbg("job cancelled after %.0f ms; flush %.0f ms wall"
+                         % ((t - t_job) * 1e3, (time.monotonic() - t) * 1e3))
                 except Exception:
                     # 0.3.6 swallowed this and kept a broken card: restart it instead
                     log.error("Accent flush failed; restarting the emulated card", exc_info=True)
                     try:
-                        self._box = self._boot()
-                        self._sent = DEFAULTS
+                        self._boot()
                     except Exception:
                         log.error("Accent restart failed", exc_info=True)
                 # a block computed before NVDA's stop may have been fed after it
@@ -480,29 +391,16 @@ class SynthDriver(SynthDriver):
 
     def _speakJob(self, items):
         box = self._box
-        settings = self._accent_settings()
-        if settings != self._sent:
-            # only what changed: repeated option commands emit preparation records of their own
-            cmd = "".join("\x1b%s%s" % (letter, value) for letter, value, old in
-                          zip("RPVM", settings, self._sent) if value != old)
-            _dbg("settings %s" % ascii(cmd))
-            self._set_phase("sending settings")
-            box.say(cmd, speech=False)
-            self._sent = settings
-        self._cur_pitch = settings[1]
-        gain = self._volume / 100.0
-        self._lead = True
+        self._apply(box)
+        self._set_phase("sending settings")
+        box.begin()
         try:
-            self._speakItems(items, box, gain)
+            self._speakItems(items, box)
         finally:
             # restore the user's pitch only after the capital's audio exists
-            if self._cur_pitch != settings[1]:
-                box.chip.snap_pitch = True
-                box.say("\x1bP%d" % settings[1], speech=False)
-                self._cur_pitch = settings[1]
-                self._pitch_dirty = True
+            box.end()
 
-    def _speakItems(self, items, box, gain):
+    def _speakItems(self, items, box):
         for kind, value in items:
             if self._cancelFlag.is_set():
                 return
@@ -510,54 +408,38 @@ class SynthDriver(SynthDriver):
                 self._notifyIndex(value)
                 continue
             if kind == "pitch":
-                want = self._accent_pitch(self._pitch + (value or 0))
-                if want != self._cur_pitch:
-                    box.chip.snap_pitch = True
-                    box.say("\x1bP%d" % want, speech=False)
-                    self._cur_pitch = want
-                    self._pitch_dirty = True
+                self._apply(box)                 # the user's pitch now, the offset on it
+                box.pitch(value or 0)
                 continue
-            text = _clean(numwords.currencies(value)).strip()   # "£2.63": the firmware reads only "$"
-            if self._numbers:
-                text = _numbers(text)
+            # currencies ("£2.63": the firmware reads only "$"), clean, strip, and the number words when on
+            text = box.prepare(value, self._numbers)
             if not text:
                 continue
-            t_start = box.chip.time
             t = time.monotonic()
             self._set_phase("sending text")
             # ESC =F: the carriage return starts speech.  In the background: audio starts while
             # the driver is still taking a long text (same steps, same audio as waiting for it)
-            box.say(text + "\r", background=True)
+            box.say(text + "\r")
             _dbg("text %d chars handed over in %.0f ms: %s" % (len(text), (time.monotonic() - t) * 1e3, _short(text)))
-            blocks, audio, why = 0, 0.0, "cancelled"
+            blocks, why = 0, "cancelled"
             while not self._cancelFlag.is_set():
                 self._set_phase("running the card")
-                y = box.run(BLOCK_S)
+                pcm, done = box.render()         # 30 ms of the card; its reading time trimmed at the head
                 blocks += 1
-                audio += len(y) / float(self._out_rate)
-                if self._lead:
-                    y, found = _trim_lead(y)
-                    self._lead = not found
-                if len(y) and not self._cancelFlag.is_set():
+                if pcm and not self._cancelFlag.is_set():
                     self._set_phase("feeding audio")
                     t = time.monotonic()
-                    self._player.feed(box.chip.dsp.pcm16(y, gain))
+                    self._player.feed(pcm)
                     if time.monotonic() - t > 0.5:
                         _dbg("feed blocked %.0f ms" % ((time.monotonic() - t) * 1e3))
-                if self._snap_until_speech and box.last_speech >= t_start:
-                    box.chip.snap_pitch = False
-                    self._snap_until_speech = False
-                if not box.busy():
-                    self._pitch_dirty = False     # the driver has taken everything sent so far
+                if done:
+                    if box.fault:
+                        # the watchdog: the card said it was speaking but nothing came out for 4 s
+                        log.warning("Accent: card stalled; restarting it. card: %s" % box.state())
+                        raise RuntimeError("card stalled")
                     why = "done"
                     break
-                # watchdog: the card says it is speaking but nothing has come out for 4 s
-                quiet = box.chip.time - max(box.last_speech, t_start)
-                if box.speaking and quiet > 4.0:
-                    log.warning("Accent: card silent %.1f s while busy; restarting it. card: %s"
-                                % (quiet, box.state()))
-                    raise RuntimeError("card stalled")
-            _dbg("item %s: %d blocks, %.2f s audio" % (why, blocks, audio))
+            _dbg("item %s: %d blocks" % (why, blocks))
         if self._cancelFlag.is_set():
             return
         try:
@@ -570,15 +452,6 @@ class SynthDriver(SynthDriver):
                 self._player.feed(b"", onDone=_nothing)
         except Exception:
             pass
-
-    def _resend_pitch(self):
-        """A cancel drops whatever the driver has not taken yet, pitch commands with it;
-        say the user's pitch again (see the Speak-Out driver)."""
-        base = self._sent[1]
-        self._box.chip.snap_pitch = True
-        self._snap_until_speech = True
-        self._box.say("\x1bP%d" % base, speech=False)
-        self._cur_pitch = base
 
     def _notifyIndex(self, index):
         _dbg("index %s queued" % index)

@@ -42,6 +42,26 @@ AS_API int asv_render(as_voice *v, const short **pcm, int *done);
 /* The driver's cancel: the Accent's flush (Ctrl-X), then the pitch said again if a capital's restore was pending. */
 AS_API void asv_cancel(as_voice *v);
 
+/* The NVDA variant: the voice characteristic, ESC V0-9 (5, the default; anything else ignored).  Sent with the next
+   utterance's settings when it changed, as the driver sends its _accent_settings. */
+AS_API void asv_set_voice(as_voice *v, int voice);
+
+/* A job: NVDA's whole speech sequence as the NVDA driver (nvda/accent/synthDrivers/accentmini.py, since 0.7.5 on
+   this library) speaks it -- several texts, PitchCommands and IndexCommands in one utterance, which asv_speak cannot
+   say byte for byte: the lead trim is armed once per job, and a capital's pitch stays until the next PitchCommand or
+   the job's end.  As so_voice.h's sov_begin ... sov_flush, and am_voice.h's amv_begin ... amv_flush:
+     asv_begin, asv_pitch(offset), asv_text(bytes, n) (asv_say_bytes' text with the carriage return added; then
+     asv_render until *done), asv_end (the finally), asv_flush (after asv_end when the job was cancelled).
+   A job that cannot go on (the watchdog: busy, speaking and silent 4 s; out of memory) ends its text with asv_fault
+   set and each call returning -1; the next asv_begin (or asv_flush) restarts the unit, as the driver's _run does.
+   asv_speak and asv_cancel keep their single-utterance behaviour. */
+AS_API int asv_begin(as_voice *v);
+AS_API int asv_pitch(as_voice *v, int pitch_offset);
+AS_API int asv_text(as_voice *v, const unsigned char *bytes, int n);
+AS_API int asv_end(as_voice *v);
+AS_API int asv_flush(as_voice *v);
+AS_API int asv_fault(const as_voice *v);
+
 /* The driver's _accent_pitch: NVDA's pitch 0-100 on the Accent's ESC P 0-9 (50 -> 5). */
 AS_API int asv_pitch_step(int pitch);
 

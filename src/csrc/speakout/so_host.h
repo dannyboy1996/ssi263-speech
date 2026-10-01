@@ -32,6 +32,11 @@ extern "C" {
 
 typedef struct so_host so_host;
 
+typedef struct {
+    double t;                              /* the chip time the write was applied at */
+    int reg, val;
+} soh_write;
+
 #define SOH_CPU_IPS 1500000.0              /* speakout.py's cpu_ips (above) */
 #define SOH_QUIET 0.06                     /* busy()'s defaults */
 #define SOH_PATIENCE 1.5
@@ -62,11 +67,14 @@ SO_API void soh_cancel(so_host *h, double limit);
 SO_API int soh_fault(const so_host *h);
 
 /* the host's state, by name.  Doubles: "cpu_ips", "last_speech", "say_time", "time" (the chip's; read-only).
-   Ints: "preparing", "request" (read-only), "steps" (read-only, the V40's).  -1: unknown. */
+   Ints: "preparing", "request" (read-only), "steps" (read-only, the V40's), "log_writes" (keep every chip write for
+   soh_writes, as am_host and as_host do: the tests watch the chip through it).  -1: unknown. */
 SO_API double soh_get_double(const so_host *h, const char *name);
 SO_API void soh_set_double(so_host *h, const char *name, double v);
 SO_API int soh_get_int(const so_host *h, const char *name);
 SO_API void soh_set_int(so_host *h, const char *name, int v);
+SO_API int soh_writes(const so_host *h, const soh_write **writes);   /* with "log_writes": drain it, or it grows */
+SO_API void soh_clear_writes(so_host *h);
 
 #ifdef __cplusplus
 }

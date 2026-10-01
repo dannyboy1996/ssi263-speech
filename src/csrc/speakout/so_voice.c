@@ -33,6 +33,7 @@ struct so_voice {
     int base_pitch, cur_pitch;                       /* settings[1], _cur_pitch */
     int pitch_dirty, snap_until_speech;
     int lead, active, fault;
+    int job;                                         /* inside sov_begin ... sov_end: the driver's whole sequence */
     double t_start, gain;
     short *pcm;
     int pcm_cap;
@@ -262,17 +263,29 @@ static void restore_pitch(so_voice *v)
     }
 }
 
+/* a text's end: in a job the pitch stays as the sequence left it until sov_end (the driver's finally) */
 static void finish(so_voice *v)
 {
     v->active = 0;
-    restore_pitch(v);
+    if (!v->job)
+        restore_pitch(v);
 }
 
-SO_API int sov_speak(so_voice *v, const char *utf8, int pitch_offset)
+/* the items: PitchCommand(offset) -- how NVDA marks a capital: an offset on the user's own 0-100 pitch */
+static void pitch_item(so_voice *v, int pitch_offset)
+{
+    int want = box_pitch(v->pitch + pitch_offset);
+    if (want != v->cur_pitch) {
+        say_pitch(v, want);
+        v->cur_pitch = want;
+        v->pitch_dirty = 1;
+    }
+}
+
+/* _speakJob's start: a faulted box rebooted, the settings sent when they changed, the lead trim armed */
+static void begin(so_voice *v)
 {
     box_settings s;
-    unsigned char *text;
-    int n;
     if (v->active)
         sov_cancel(v);
     if (v->fault) {                         /* the driver's "speech failed; rebooting the emulated box" */
@@ -298,26 +311,74 @@ SO_API int sov_speak(so_voice *v, const char *utf8, int pitch_offset)
     v->base_pitch = v->cur_pitch = s.pitch;
     v->gain = v->volume / 100.0;
     v->lead = 1;                            /* nothing audible fed yet in this utterance */
-    /* the items: PitchCommand(offset) -- how NVDA marks a capital: an offset on the user's own 0-100 pitch */
-    if (pitch_offset) {
-        int want = box_pitch(v->pitch + pitch_offset);
-        if (want != v->cur_pitch) {
-            say_pitch(v, want);
-            v->cur_pitch = want;
-            v->pitch_dirty = 1;
-        }
-    }
+}
+
+/* a text item: t_start = box.chip.time; box.say(text + "\r") */
+static void text_item(so_voice *v, const unsigned char *bytes, int n)
+{
+    v->t_start = ssi263_time(v->chip);
+    soh_say(v->h, bytes, n);
+    v->active = 1;
+}
+
+SO_API int sov_speak(so_voice *v, const char *utf8, int pitch_offset)
+{
+    unsigned char *text;
+    int n;
+    v->job = 0;
+    begin(v);
+    if (pitch_offset)
+        pitch_item(v, pitch_offset);
     text = say_text(utf8, &n);
     if (!text || !n) {
         free(text);
         restore_pitch(v);
         return 0;
     }
-    v->t_start = ssi263_time(v->chip);
-    soh_say(v->h, text, n);
+    text_item(v, text, n);
     free(text);
-    v->active = 1;
     return 1;
+}
+
+/* ---- a job: the NVDA driver's whole speech sequence (so_voice.h) ------------------------------------------------ */
+SO_API void sov_begin(so_voice *v)
+{
+    v->job = 0;
+    begin(v);
+    v->job = 1;
+}
+
+SO_API void sov_pitch(so_voice *v, int pitch_offset)
+{
+    pitch_item(v, pitch_offset);
+}
+
+SO_API int sov_text(so_voice *v, const unsigned char *bytes, int n)
+{
+    if (n <= 0)
+        return 0;
+    text_item(v, bytes, n);
+    return 1;
+}
+
+SO_API void sov_end(so_voice *v)
+{
+    v->active = 0;
+    v->job = 0;
+    restore_pitch(v);                       /* _speakJob's finally */
+}
+
+SO_API void sov_flush(so_voice *v)
+{
+    soh_cancel(v->h, CANCEL_LIMIT);         /* _run: box.cancel() */
+    if (v->pitch_dirty && v->sent_valid) {  /* _resend_pitch (none after a reboot) */
+        char cmd[16];
+        ssi263_set_snap_pitch(v->chip, 1);
+        v->snap_until_speech = 1;
+        snprintf(cmd, sizeof cmd, "\x05P%d", v->sent.pitch);
+        say_str(v, cmd);
+        v->cur_pitch = v->sent.pitch;
+    }
 }
 
 /* one pass of _speakItems' loop: box.run(BLOCK_S), _trim_lead, pcm16, the snap check, busy() */
@@ -373,16 +434,6 @@ SO_API void sov_cancel(so_voice *v)
 {
     if (!v->active)
         return;
-    finish(v);                                                 /* _speakJob's finally */
-    soh_cancel(v->h, CANCEL_LIMIT);
-    if (v->pitch_dirty && v->sent_valid) {                     /* _resend_pitch (none after a reboot) */
-        ssi263_set_snap_pitch(v->chip, 1);
-        v->snap_until_speech = 1;
-        {
-            char cmd[16];
-            snprintf(cmd, sizeof cmd, "\x05P%d", v->sent.pitch);
-            say_str(v, cmd);
-        }
-        v->cur_pitch = v->sent.pitch;
-    }
+    sov_end(v);                                                /* _speakJob's finally */
+    sov_flush(v);
 }
