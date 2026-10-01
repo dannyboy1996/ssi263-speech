@@ -118,6 +118,49 @@ else
     echo "FAIL  emulator: build/linux/blazie_emu not built (sudo apt install libasound2-dev, then ./build_linux.sh)"
     fail=1
 fi
+# The same emulator in a GTK window, for Orca (main_gtk.c; README-linux.md, "The desktop app"): run in a virtual X
+# display (Xvfb) with its own session and accessibility buses, its keys typed through the X server (xdotool), its
+# window read as Orca reads it (AT-SPI): the menu bar's items, the keyboard area's name and focus, a chord answered,
+# F11 and Alt+Shift+F, the dialogs' text, the announcements, the Type 'n Speak's keys, i-chord held through a
+# restart.  Its controls leave the keyboard area unnamed (BLAZIE_GTK_BREAK=noname) and swap dots 1 and 4.  Skipped,
+# saying why, where GTK, Xvfb, xdotool or the accessibility bus is missing (the BTSpeak, a minimal build).
+GTK_EMU=build/linux/blazie_emu_gtk
+GTK_SHIP=""
+XRUN="dbus-run-session -- xvfb-run -a -s"
+if [ ! -x "$GTK_EMU" ]; then
+    echo "skip  emulator (GTK): $GTK_EMU not built (no GTK 3 headers: sudo apt install libgtk-3-dev)"
+else
+    GTK_SHIP="$GTK_EMU"
+    check "emulator (GTK): libraries needed (libc, libm, sound, GTK's own; libstdc++ inside)" sh -c "! readelf -d \
+        $GTK_EMU | grep NEEDED | grep -v -E '\[lib(c|m|pthread|dl|asound|pulse|pulse-simple|gtk-3|gdk-3|glib-2\.0|\
+gobject-2\.0|gio-2\.0|atk-1\.0|pango-1\.0|pangocairo-1\.0|cairo|cairo-gobject|gdk_pixbuf-2\.0|harfbuzz)\.so' | \
+        grep -q . && ! readelf -d $GTK_EMU | grep NEEDED | grep -q -E 'libstdc|libgcc_s' && \
+        echo 'only the C library, the sound library and GTK (dynamic)'"
+    if ! command -v xvfb-run >/dev/null 2>&1; then
+        echo "skip  emulator (GTK): no Xvfb (sudo apt install xvfb)"
+    elif ! command -v dbus-run-session >/dev/null 2>&1; then
+        echo "skip  emulator (GTK): no dbus-run-session (sudo apt install dbus-bin)"
+    elif ! command -v xdotool >/dev/null 2>&1; then
+        echo "skip  emulator (GTK): no xdotool to type its keys (sudo apt install xdotool)"
+    elif [ ! -f /usr/share/dbus-1/services/org.a11y.Bus.service ]; then
+        echo "skip  emulator (GTK): no accessibility bus (sudo apt install at-spi2-core)"
+    elif ! python3 -c "import gi; gi.require_version('Atspi', '2.0')" >/dev/null 2>&1; then
+        echo "skip  emulator (GTK): no AT-SPI for Python (sudo apt install python3-gi gir1.2-atspi-2.0)"
+    else
+        check "emulator (GTK): the window as Orca reads it, keys through X" $XRUN "-screen 0 1024x768x24" \
+            python3 src/apps/blazie/test_emu_gtk.py "$GTK_EMU" "$DATA"
+        control "emulator (GTK): accessibility CONTROL (the keyboard area unnamed, must fail)" \
+            "^ok +menu bar: items by name" "^FAIL +keyboard area: named, focused +role panel, focused, name ''" \
+            "^ok +status bar" "^gtk emulator: 1 of 4 FAILED$" \
+            -- env BLAZIE_GTK_BREAK=noname $XRUN "-screen 0 1024x768x24" \
+            python3 src/apps/blazie/test_emu_gtk.py "$GTK_EMU" "$DATA" --only settings,tree
+        control "emulator (GTK): held keys CONTROL (dots 1 and 4 swapped, must fail)" \
+            "^FAIL +i-chord held through the restart +the unit asked \"initialize file system\": no" \
+            "^gtk emulator: 1 of 1 FAILED$" \
+            -- env BLAZIE_KEYS_BREAK=1 $XRUN "-screen 0 1024x768x24" \
+            python3 src/apps/blazie/test_emu_gtk.py "$GTK_EMU" "$DATA" --only held
+    fi
+fi
 # the Python wheel: built from build/linux, installed into a fresh venv, the Braille Lite as the library directly
 check "Python wheel" python3 python/test_wheel.py --build "$DATA"
 control "Python wheel CONTROL (rate 70, must fail)" "^ok +the chip alone:" "^FAIL +the Braille Lite:" \
@@ -128,7 +171,7 @@ check "package" sh tools/package_linux.sh "$DATA"
 check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
     --out build/audit
 check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \
-    build/linux/sd_ssi263 build/linux/blazie_emu build/linux/blazie_files \
+    build/linux/sd_ssi263 build/linux/blazie_emu build/linux/blazie_files $GTK_SHIP \
     build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
     build/audit/ssi263speech-*.whl
 # the licences that must ship: MIT (ours, Casso's) and MAME's BSD-3-Clause for the Z180, in the package and the wheel
@@ -140,7 +183,7 @@ check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speec
 check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
     --clean-sample
 check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu \
-    build/linux/blazie_files"
+    build/linux/blazie_files $GTK_SHIP"
 control "no-GPL audit CONTROL (genuine legacy payloads, must fail)" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: z180emu engine" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: Unicorn engine" \

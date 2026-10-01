@@ -108,6 +108,22 @@ if [ -n "$AUDIO_LIBS" ]; then
 else
     echo "NOT built: blazie_emu -- no ALSA (sudo apt install libasound2-dev) nor PulseAudio (libpulse-dev) headers"
 fi
+# The same emulator in a GTK 3 window (main_gtk.c), for a desktop and Orca: built when GTK 3's headers are there
+# (libgtk-3-dev), skipped without them -- the terminal blazie_emu above never needs GTK (the BTSpeak has no desktop).
+# GTK (LGPL) is linked dynamically, as the system's library; libstdc++ inside as above.  --as-needed: only the
+# libraries it calls are listed (tools/linux_tests.sh checks them).
+rm -f "$OUT/blazie_emu_gtk"
+if [ -n "$AUDIO_LIBS" ] && pkg-config --exists gtk+-3.0 2>/dev/null; then
+    $CC $APPF $AUDIO_DEF $(pkg-config --cflags gtk+-3.0) -Wno-cast-function-type -c -o "$OUT/obj_emu/main_gtk.o" \
+        "$APP/main_gtk.c"
+    $CXX $SHARED_CXX -Wl,--as-needed -o "$OUT/blazie_emu_gtk" "$OUT/obj_emu/main_gtk.o" "$OUT/obj_emu/audio_linux.o" \
+        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS \
+        "$OUT/obj_emu/bl_files_xfer.o" "$OUT/obj_emu/fat_img.o" $EMU_OBJS $AUDIO_LIBS $(pkg-config --libs gtk+-3.0) \
+        -lpthread -lm
+    echo "built $OUT/blazie_emu_gtk (GTK $(pkg-config --modversion gtk+-3.0), sound: $SOUND)"
+elif [ -n "$AUDIO_LIBS" ]; then
+    echo "skipped: blazie_emu_gtk -- no GTK 3 headers (sudo apt install libgtk-3-dev); the terminal blazie_emu is built"
+fi
 
 # MAME's Z180 core's own tests (CONTRACT.md's clauses, and white-box)
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/test_z180_contract.o" "$SRC/cpu/test_z180_contract.c"

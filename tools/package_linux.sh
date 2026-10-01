@@ -45,6 +45,26 @@ if [ -f "$ROOT/build/linux/blazie_emu" ]; then
 else
     echo "note: build/linux/blazie_emu not built, so not packaged"
 fi
+# the same emulator in a GTK window, for Orca (README-blazie-emu.md, "The desktop app"), when it was built (GTK 3's
+# headers there), with a menu entry for the desktop; GTK is the system's own library, not packaged
+if [ -f "$ROOT/build/linux/blazie_emu_gtk" ]; then
+    cp "$ROOT/build/linux/blazie_emu_gtk" "$STAGE/bin/"
+    chmod +x "$STAGE/bin/blazie_emu_gtk"
+    mkdir -p "$STAGE/share/applications"
+    cat > "$STAGE/share/applications/ssi263-blazie-emu.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Blazie emulator
+GenericName=Braille Lite 2000 and Type 'n Speak
+Comment=Blazie's Braille Lite 2000 or Type 'n Speak running its own firmware, with its SSI-263 voice
+Exec=blazie_emu_gtk
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=braille;notetaker;speech;Blazie;
+EOF
+else
+    echo "note: build/linux/blazie_emu_gtk not built (no GTK 3 headers), so not packaged"
+fi
 # blazie_files: a saved unit's files from the command line (README-blazie-emu.md, "Files in and out"); no sound needed
 if [ -f "$ROOT/build/linux/blazie_files" ]; then
     cp "$ROOT/build/linux/blazie_files" "$STAGE/bin/"

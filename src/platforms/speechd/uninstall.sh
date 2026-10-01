@@ -21,6 +21,6 @@ for CONF in "$USER_HOME/.config/speech-dispatcher/speechd.conf" /etc/speech-disp
     rm -f "$(dirname "$CONF")/modules/ssi263.conf"
 done
 rm -f /usr/lib/speech-dispatcher-modules/sd_ssi263 "$PREFIX/lib/libssi263speech.so" "$PREFIX/bin/blazie_emu" \
-    "$PREFIX/bin/blazie_files"
+    "$PREFIX/bin/blazie_files" "$PREFIX/bin/blazie_emu_gtk" "$PREFIX/share/applications/ssi263-blazie-emu.desktop"
 rm -rf "$PREFIX/share/ssi263-speech"
 echo "Removed.  Restart speech-dispatcher: killall speech-dispatcher"
