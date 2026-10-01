@@ -454,8 +454,8 @@ def run_main(exe, fw, tmp, want):
                 if os.path.isfile(ref_img) else None
             check("Braille 'n Speak 2000 Slovak: export, names in cp852", bool(ann) and got is not None
                   and SLOVAK_FLASH in got and got == ref, "announced %s; folders %s; blazie_files --codepage=852: %s" % (
-                      "yes" if ann else "NO", [ascii(f) for f in got] if got is not None else "NO IMAGE",
-                      "the same" if got is not None and got == ref else [ascii(f) for f in ref or []]))
+                      "yes" if ann else "NO", ", ".join(map(ascii, got)) if got is not None else "NO IMAGE",
+                      "the same" if got is not None and got == ref else ", ".join(map(ascii, ref or []))))
             emu.focus()
 
         if want("tns"):
