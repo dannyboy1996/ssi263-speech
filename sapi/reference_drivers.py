@@ -53,7 +53,9 @@ def guard(py, serve, ref_env, summary):
     """ok, or FAIL and exit 1 ("<summary>: 1 FAILED"): the server ref_env starts runs 0.7.0's drivers."""
     legacy = legacy_drivers.OUT
     try:
-        r = subprocess.run([py, serve, "--drivers"], capture_output=True, env=ref_env, timeout=180)
+        # stdin closed: a server without --drivers (a staged pre-0.7.5 copy) serves nothing and exits, and fails here
+        r = subprocess.run([py, serve, "--drivers"], capture_output=True, env=ref_env, timeout=180,
+                           stdin=subprocess.DEVNULL)
         out, code = r.stdout.decode("utf-8", "replace"), r.returncode
     except subprocess.TimeoutExpired:
         out, code = "", "a timeout"
