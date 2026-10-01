@@ -8,6 +8,7 @@ utterance (a fix claimed without a test that fails on the bug is how 0.6.0 shipp
 """
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -260,6 +261,52 @@ if os.path.isfile(CLOCK):
             CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, a 29F040's ID, must fail)",
                                 [os.path.join(EMU, "test_flash_break.exe")] + TNS_FLASH, expect_fail=True,
                                 fail_marks=[r"^FAIL flash ID accepted, flash initialised +0 chip erase", r"^FAILED$"]))
+# files in and out of the units without the serial cable (src/apps/blazie/test_files.c, src/csrc/blazie/bl_files.c;
+# Tomi, for Jage and Jayson): files the firmware made with its own commands exported exactly (the open file with the
+# text typed since it was opened); an image imported (RAM, flash, a new folder, PC line ends, a file before the open
+# one dropped) and then listed with sizes, typed into and moved RAM<->flash by the unit's own commands, byte for
+# byte, its flash allocator agreeing with our free space; export-import-export the same image, on the unit and on a
+# fresh one.  Every unit (English and Spanish).  Controls, each one bug put back: 1 the open file's live pointers
+# ignored, 2 new flash blocks not marked used, 3 a RAM file's end of text one short, 4 dates dropped, 5 the open
+# file's number not followed when an earlier file goes.
+FILES = os.path.join(EMU, "test_files.exe")
+FW_BLAZIE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie")
+if os.path.isfile(FILES):
+    FILES_BL = [FILES, "bl", os.path.join(FW_BLAZIE, "BL2ENG.BNS"), os.path.join(FW_BLAZIE, "bl2_2003_warm.state")]
+    CHECKS.append(check("Blazie emulator: files in and out, Braille Lite ENG", FILES_BL))
+    CHECKS.append(check("Blazie emulator: files in and out, Braille Lite SPA",
+                        [FILES, "bl", os.path.join(FW_BLAZIE, "spanish", "BL2SPA.BNS"),
+                         os.path.join(FW_BLAZIE, "spanish", "bl2spa_fresh.state")]))
+    for name in ("TNSENG.TNS", "TNSSPA.TNS"):
+        if os.path.isfile(os.path.join(FW_BLAZIE, "tns", name)):
+            CHECKS.append(check("Blazie emulator: files in and out, Type 'n Speak %s" % name[3:6],
+                                [FILES, "tns", os.path.join(FW_BLAZIE, "tns", name)]))
+    for brk, marks in (
+            ("1", [r"^ok +export: a file the unit made", r"^FAIL export: the open file, typed into since opened .*\"abc\"",
+                   r"^FAILED$"]),
+            ("2", [r"^FAIL import: done, the file system's rules hold .*not marked used", r"^FAILED$"]),
+            ("3", [r"^FAIL the unit lists the imported files, with sizes .*imported 23 not listed",
+                   r"^FAIL the unit reads an imported RAM file \(moved to flash\)", r"^FAILED$"]),
+            ("4", [r"^ok +export, import, export: the same image",
+                   r"^FAIL export, import into a fresh unit, export: the same", r"^FAILED$"]),
+            ("5", [r"^ok +import: done", r"^FAIL the open file goes on after the import", r"^FAILED$"])):
+        CHECKS.append(check("Blazie emulator: files CONTROL (break %s, must fail)" % brk, FILES_BL + ["--break=" + brk],
+                            expect_fail=True, fail_marks=marks))
+    if os.path.isfile(os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS")):   # the Type 'n Speak's open-file number (51 back)
+        CHECKS.append(check("Blazie emulator: files CONTROL (Type 'n Speak, break 5, must fail)",
+                            [FILES, "tns", os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS"), "--break=5"], expect_fail=True,
+                            fail_marks=[r"^FAIL the open file goes on after the import", r"^FAILED$"]))
+    # ... and the images in another program: 7-Zip (when this machine has it) extracts a packed image and a unit's
+    # export exactly; its control writes the long names with a wrong checksum (7-Zip then shows 8.3 aliases)
+    SEVEN = shutil.which("7z") or r"C:\Program Files\7-Zip\7z.exe"
+    if os.path.isfile(SEVEN) and os.path.isfile(os.path.join(EMU, "blazie_files.exe")):
+        Z7 = [PY, "files_7zip.py", os.path.join(EMU, "blazie_files.exe"),
+              os.path.join(FW_BLAZIE, "bl2_2003_warm.state"), SEVEN]
+        CHECKS.append(check("Blazie emulator: disk images in 7-Zip", Z7))
+        CHECKS.append(check("Blazie emulator: disk images in 7-Zip CONTROL (long names broken, must fail)", Z7,
+                            env={"TEST_FILES_FAT_BREAK": "1"}, expect_fail=True,
+                            fail_marks=[r"^FAIL 7-Zip extracts a packed image exactly .*extra .*~1",
+                                        r"^FAIL 7-Zip reads a unit's export as the unit holds it", r"^FAILED$"]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
 # storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
 # paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end
