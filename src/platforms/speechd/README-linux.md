@@ -30,9 +30,17 @@ onto the unit's own: its factory rate 11 and pitch 16 at the middle.
 Builds: x86_64 and aarch64 (a Raspberry Pi 4 or 5 is fine: the unit runs several times faster than real time on a
 Pi 5). No Python, no other packages: one program.
 
+## The Blazie emulator
+
+`bin/blazie_emu` is the whole unit in a terminal -- a Braille Lite 2000 or a Type 'n Speak running its own firmware,
+booting to its own main menu, its files and settings kept between runs -- for a Raspberry Pi's console, a desktop's
+terminal or a BTSpeak. `./bin/blazie_emu` from this folder (`install.sh` also puts it in `/usr/local/bin`); F11 is
+its menu. `README-blazie-emu.md` has the keys, the sound, the serial port and the BTSpeak notes.
+
 ## The firmware, and the licences
 
-This package carries the Braille Lite's own firmware, shared with permission. It is not ours; it is here so the
+This package carries the Braille Lite's own firmware (and the Type 'n Speak's, for the emulator), shared with
+permission. It is not ours; it is here so the
 unit can speak again, and it will be removed if its rights holders ask.
 
 The program and library are MIT (`LICENSE`; the chip model draws on Casso's, also MIT:
