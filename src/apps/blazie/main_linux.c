@@ -809,7 +809,8 @@ static void menu(void)
                 g_quit = 1;
                 goto done;
             }
-            /* fall through: not a number */
+            say("Not in the menu.");            /* not a number */
+            continue;
         default:
             say("Not in the menu.");
             continue;
@@ -972,10 +973,12 @@ static int headless(const char *wav, double seconds, const char *script, const c
     if (clock_check) {                          /* the unit's own words for the time, from the host's clock */
         blc_time t;
         time_t now = time(NULL);
-        int found = 0, back;
+        int found = 0, step;
         char text[16] = "";
-        for (back = 0; back <= 2 && !found; back++) {   /* the minute may have turned since the unit said it */
-            time_t when = now - 60 * back;
+        /* the clock started at the host's time and has run in the unit's time since (faster than real time here):
+           the minute it said is from a minute before now to a minute after now plus the unit's seconds */
+        for (step = -1; step <= 1 + (int)(seconds / 60.0) && !found; step++) {
+            time_t when = now + 60 * step;
             struct tm *tm = localtime(&when);
             int h = tm->tm_hour % 12 ? tm->tm_hour % 12 : 12;
             snprintf(text, sizeof text, "%d:%02d", h, tm->tm_min);
