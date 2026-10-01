@@ -13,7 +13,7 @@ read from a folder or given in memory (`firmware/aicom-accent-sa`, in the reposi
 | `as_host.h`, `as_host.c` | The host: `accent_sa.py`'s `AccentSA` in C (say, run, skip, busy, boot, cancel, speaking), around the board and an SSI-263 (`../ssi263.h`): the caller's, or one made from the built-in defaults. ROMs from a folder (`ash_create_dir`) or memory (`ash_create`). The API of `accent_sa.dll` / `libaccent_sa.so`. |
 | `as_voice.h`, `as_voice.c` | The Accent SA as a voice, for front ends without Python (Android's built-in voice): the NVDA Accent driver's "sa" front end in C, as `../blazie/bl_voice.c` is the Braille Lite's -- boot, settings commands sent when they change, currencies, `_clean` and number words (`../numwords.c`), a capital's pitch with snap_pitch, the 30 ms speak loop with the lead trim and the gain, cancel. Held to the driver byte for byte by `src/platforms/android/test/test_android_native.py`. |
 | `as_render.c` | The C API alone: the ROMs from a folder and a text into a WAV, no Python (`as_render <folder> "text" out.wav`). |
-| `test_as_board.c` | The board's rules on small programs in a synthetic u2 (no firmware): 11 tests. |
+| `test_as_board.c` | The board's rules on small programs in a synthetic u2 (no firmware): 12 tests, including I/O, memory and register effects at an acceptance-only slice boundary. |
 | `as_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (17). Run by hand, as `so_controls.py`: seventeen builds. |
 | `compare_accent_sa.py` | The C host against the Python host (the reference) on a scripted session: every write's value and chip time, the audio, and the counting events, identical; the core's own counting reported and classified. `ACCENTSA_COMPARE_FLIP=1`: its must-fail control. |
 | `build_board.py` | Windows build (w64devkit): `nvda/dist/accentsa-lib/` gets `test_as_board.exe`, `as_render.exe`, `x64/` and `x86/accent_sa.dll` (importing `ssi263.dll`, as `bl.dll` does). `../../../build_linux.sh` builds `test_as_board`, `as_render` and `libaccent_sa.so`. |
@@ -39,8 +39,9 @@ on this firmware. The hosts differ in how a slice ends, and `as_board_run` count
 - **An acceptance at the end of a slice.** `i8085.py`'s `run()` tests its budget between an interrupt's acceptance and
   the next instruction, so an acceptance that reaches the budget ends the slice, and the vector's first instruction (a
   JMP at every vector of u2) runs in the next slice. The core's step is the acceptance and the instruction together.
-  The board carries that instruction's T-states into the next slice's budget, so every later slice ends where the
-  Python host's does. It happens when a command arrives on the serial line (the scripted session: twice; random
+  The board uses `i8085_step_slice` to stop before the instruction and its effects. The earlier cost-only carry
+  executed it too early; a synthetic OUT/STA/MVI boundary test now prevents that regression. It happens when a
+  command arrives on the serial line (the scripted session: twice; random
   sessions with ESC R/P between texts: 115 times in 40).
 - **A TRAP raised in EI's shadow.** The Python core samples nothing in the instruction after EI, TRAP included; the chip
   (and the core, CONTRACT.md 5) takes TRAP at once. The board holds such a TRAP through that instruction. Never seen

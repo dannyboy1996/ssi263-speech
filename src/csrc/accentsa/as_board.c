@@ -27,7 +27,6 @@ struct as_board {
     uint64_t d_cycles;                     /* the core's T-states at the step's D (after any acceptance) */
     uint8_t d_op;                          /* the opcode at the step's D */
     uint8_t last_op;                       /* the last step's instruction (EI's shadow follows an EI) */
-    uint64_t carry;                        /* T-states of an instruction the Python host counts in the next slice */
     int trap_held;                         /* a TRAP edge held through EI's shadow: given after the next step */
     int splits, ei_traps;
 };
@@ -189,30 +188,25 @@ void as_board_rst75(as_board *b)
     i8085_set_irq(b->cpu, I8085_RST75, 0);
 }
 
-/* A carry and a held TRAP never meet: a carry follows an acceptance's step (its instruction the vector's JMP), a hold
-   only an EI's. */
+/* Python may end its budget after acceptance. The core's slice entry point leaves the vector instruction entirely
+   unexecuted; only an executed instruction advances last_op or releases an EI-held TRAP. */
 uint64_t as_board_run(as_board *b, uint64_t budget)
 {
-    uint64_t done = b->carry;
-    b->carry = 0;
+    uint64_t done = 0;
     while (done < budget) {
-        uint64_t c0 = i8085_cycles(b->cpu), acc;
-        int t;
-        b->d_cycles = c0;
-        t = i8085_step(b->cpu);
-        acc = b->d_cycles - c0;
+        int accepted_only = 0;
+        int t = b->python_slices ? i8085_step_slice(b->cpu, budget - done, &accepted_only)
+                                : i8085_step(b->cpu);
+        done += (uint64_t)t;
+        if (accepted_only) {
+            b->splits++;
+            return done;
+        }
         b->last_op = b->d_op;
         if (b->trap_held) {                /* EI's shadow is over: the held edge now */
             b->trap_held = 0;
             i8085_set_irq(b->cpu, I8085_TRAP, b->trap_line);
         }
-        if (b->python_slices && acc && done + acc >= budget) {
-            /* i8085.py ends its slice after the acceptance: the vector's instruction is the next slice's */
-            b->carry = (uint64_t)t - acc;
-            b->splits++;
-            return done + acc;
-        }
-        done += (uint64_t)t;
     }
     return done;
 }

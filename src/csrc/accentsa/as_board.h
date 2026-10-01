@@ -17,8 +17,8 @@
  * Counting (as_board_run): the 8085 core takes one STEP as an interrupt's acceptance and the instruction after it,
  * together.  The Python host (src/hosts/i8085.py's run()) tests its budget between the two, so an acceptance that
  * reaches the budget ends its slice and the vector's first instruction runs in the next.  With python_slices on (the
- * default) the board counts as the Python host does: that instruction's T-states are carried into the next slice's
- * budget, and a TRAP raised while the core is in EI's shadow is held through the instruction after the EI, as the
+ * default) the board stops before that instruction: its registers, memory and I/O are unchanged until a later
+ * call executes it. A TRAP raised while the core is in EI's shadow is held through the instruction after the EI, as the
  * Python core holds it (CONTRACT.md 5: the chip does not).  Both are the HOST's counting, not the core's: the core's
  * T-states per instruction and per acceptance match the Python core's (cpu/trace_i8085.py).  Off, the core's own
  * semantics stand (experimental).
@@ -67,7 +67,7 @@ int as_board_tx(const as_board *b, const uint8_t **bytes);     /* every byte the
 
 /* state, by name: "latch40", "bank", "switches" (settable), "python_slices" (settable), "usart_cmd", "usart_mode_next",
    "rx" (queued), "rx_ready", "trap_line", "pc", "sp", "af", "bc", "de", "hl", "im" (the RIM view), "halted",
-   "splits" (acceptances that ended a slice: carried), "ei_traps" (TRAPs held through EI's shadow); -1: unknown */
+   "splits" (acceptances that ended a slice before the instruction), "ei_traps" (TRAPs held through EI's shadow); -1: unknown */
 int as_board_get(const as_board *b, const char *name);
 void as_board_set(as_board *b, const char *name, int v);
 uint64_t as_board_cycles(const as_board *b);   /* the core's T-states since power-on */

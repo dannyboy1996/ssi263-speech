@@ -103,6 +103,11 @@ i8085 *i8085_create(const cpu_bus *bus, double clock_hz);
 void i8085_destroy(i8085 *c);
 void i8085_reset(i8085 *c);
 int i8085_step(i8085 *c);
+/* Board slice compatibility: a positive budget may end after a vectored acceptance's charge, before any
+   instruction/boundary callback. Sets *accepted_only to 1 then (otherwise 0). No instruction effect is deferred
+   artificially: it has not executed. The next call samples interrupts normally. Budget zero does nothing.
+   Ordinary i8085_step and i8085_run retain their whole-step contract. */
+int i8085_step_slice(i8085 *c, uint64_t budget, int *accepted_only);
 uint64_t i8085_run(i8085 *c, uint64_t budget);
 void i8085_set_irq(i8085 *c, int line, int asserted);
 uint64_t i8085_cycles(const i8085 *c);

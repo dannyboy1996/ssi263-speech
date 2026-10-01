@@ -43,6 +43,14 @@ Consequences worth stating:
 with an overrun under one step. `*_run(0)` returns 0 and has no side effects. A halted core keeps stepping in slots:
 `*_run` never skips to the budget's end.
 
+The Accent SA board additionally uses `i8085_step_slice(c, remaining, &accepted_only)` for Python-host slice
+compatibility. It runs one step except that a vectored acceptance reaching the remaining budget returns after C,
+before D/E/F: no instruction, boundary callback or step increment has happened. The next call samples interrupts
+normally before executing anything. It carries no previously executed instruction or its cost. Zero budget has no
+CPU side effects and reports `accepted_only = 0`. This is an explicit board compatibility API; ordinary
+`i8085_step` and `i8085_run` retain the whole-step rules above. The board's `python_split` and `split_effects` tests
+check the boundary PC, clocks, step count and the absence of early I/O, memory and register effects.
+
 ## 3. The legacy compatibility path (`z180_run_legacy`)
 
 `z180_run_legacy(budget)` reproduces today's `cpu_execute_z180(budget)` exactly, **its exceptions included**:

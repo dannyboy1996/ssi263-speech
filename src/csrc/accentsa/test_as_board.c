@@ -11,7 +11,8 @@
  *   drop_input    dropping the input empties the queue, not the loaded byte
  *   rst75         an RST 7.5 edge is latched and taken when unmasked
  *   python_split  (python_slices) an acceptance that reaches the budget ends the slice; the vector's instruction is
- *                 carried into the next slice's budget; off, the step is whole
+ *                 left unexecuted until the next slice; off, the step is whole
+ *   split_effects  the vector's I/O, memory and register effects must not happen in the acceptance-only slice
  *   ei_trap       (python_slices) a TRAP raised in EI's shadow is held through the instruction after the EI; off, it
  *                 is taken at once (the chip's rule)
  *   two_boards    two boards interleaved write what each writes alone
@@ -339,7 +340,7 @@ static void t_python_split(void)
 {
     char d[200];
     uint64_t r1[2], r2[2], steps[2];
-    int splits[2], pc[2], mode;
+    int splits[2], pc[2], at_split[2], mode;
     for (mode = 1; mode >= 0; mode--) {
         stub s;
         as_board *b;
@@ -356,6 +357,7 @@ static void t_python_split(void)
         as_board_send(b, (const uint8_t *)"Q", 1);
         as_board_serial(b);
         r1[mode] = as_board_run(b, 5);      /* the acceptance (12 T) reaches the budget */
+        at_split[mode] = as_board_get(b, "pc");
         s0 = as_board_steps(b);
         r2[mode] = as_board_run(b, 15);
         steps[mode] = as_board_steps(b) - s0;
@@ -364,10 +366,46 @@ static void t_python_split(void)
         as_board_destroy(b);
     }
     snprintf(d, sizeof d, "python_slices: %d T then %d T in %d step(s), %d split; off: %d T then %d T in %d steps "
-             "(want 12, 20 in 1, 1; 22, 20 in 2)", (int)r1[1], (int)r2[1], (int)steps[1], splits[1], (int)r1[0],
+             "(want 12, 20 in 2, 1; 22, 20 in 2)", (int)r1[1], (int)r2[1], (int)steps[1], splits[1], (int)r1[0],
              (int)r2[0], (int)steps[0]);
-    report("python_split", r1[1] == 12 && r2[1] == 20 && steps[1] == 1 && splits[1] == 1 && pc[1] == 0x202
+    report("python_split", r1[1] == 12 && at_split[1] == 0x34 && r2[1] == 20 && steps[1] == 2 && splits[1] == 1 && pc[1] == 0x202
            && r1[0] == 22 && r2[0] == 20 && steps[0] == 2 && splits[0] == 0 && pc[0] == 0x202, d);
+}
+
+static void t_split_effects(void)
+{
+    int k, ok = 1;
+    for (k = 0; k < 3; k++) {
+        stub s;
+        as_board *b;
+        uint64_t n, t;
+        memset(&s, 0, sizeof s);
+        roms();
+        PUT(0x40, 0x31, 0x00, 0x80, 0x3E, 0x4E, 0xD3, 0x21, 0x3E, 0x37, 0xD3, 0x21,
+            0x3E, 0x0D, 0x30, 0xFB, 0xC3, 0x4F, 0x00);
+        if (k == 0) { PUT(0x34, 0xD3, 0x07, 0x76); }       /* OUT R0 */
+        if (k == 1) { PUT(0x34, 0x32, 0x00, 0x78, 0x76); } /* STA RAM */
+        if (k == 2) { PUT(0x34, 0x3E, 0x77, 0x76); }       /* MVI A */
+        b = board(&s);
+        as_board_run(b, 200);
+        as_board_send(b, (const uint8_t *)"Q", 1);
+        as_board_serial(b);
+        n = as_board_steps(b);
+        t = as_board_cycles(b);
+        ok = (as_board_run(b, 5) == 12) && ok;
+        ok = ok && as_board_get(b, "pc") == 0x34 && as_board_steps(b) == n
+             && as_board_cycles(b) == t + 12 && s.n == 0 && as_board_peek(b, 0x7800) == 0
+             && (as_board_get(b, "af") >> 8) == 0x0D;
+        ok = (as_board_run(b, 0) == 0) && ok;
+        ok = ok && as_board_get(b, "pc") == 0x34 && as_board_steps(b) == n;
+        t = as_board_run(b, 1);
+        ok = ok && as_board_steps(b) == n + 1;
+        if (k == 0) ok = ok && t == 10 && s.n == 1 && s.reg[0] == 0 && s.val[0] == 0x0D;
+        if (k == 1) ok = ok && t == 13 && as_board_peek(b, 0x7800) == 0x0D && s.n == 0;
+        if (k == 2) ok = ok && t == 7 && (as_board_get(b, "af") >> 8) == 0x77 && s.n == 0;
+        as_board_destroy(b);
+    }
+    report("split_effects", ok, "OUT, STA and MVI unexecuted after acceptance/zero budget; each executes once on resume");
 }
 
 /* 0040: SP; the gate open (OUT 40h, 10h); EI; NOP; NOP; HLT.  TRAP -> 0300h: HLT */
@@ -398,8 +436,8 @@ static void t_ei_trap(void)
         as_board_destroy(b);
     }
     snprintf(d, sizeof d, "python_slices: PC %04X then %04X, %d held; off: %04X then %04X, %d held "
-             "(want 0049 0300 1; 0300, 0)", pc1[1], pc2[1], held[1], pc1[0], pc2[0], held[0]);
-    report("ei_trap", pc1[1] == 0x49 && pc2[1] == 0x300 && held[1] == 1 && pc1[0] == 0x300 && held[0] == 0, d);
+             "(want 0049 0024 1; 0300, 0)", pc1[1], pc2[1], held[1], pc1[0], pc2[0], held[0]);
+    report("ei_trap", pc1[1] == 0x49 && pc2[1] == 0x24 && held[1] == 1 && pc1[0] == 0x300 && held[0] == 0, d);
 }
 
 static void t_two_boards(void)
@@ -453,6 +491,7 @@ int main(void)
     t_drop_input();
     t_rst75();
     t_python_split();
+    t_split_effects();
     t_ei_trap();
     t_two_boards();
     printf("%s\n", failures ? "FAILED" : "all passed");

@@ -119,8 +119,12 @@ void i8085_reset(i8085 *c)
     c->pc = 0;
 }
 
-int i8085_step(i8085 *c)
+int i8085_step_slice(i8085 *c, uint64_t budget, int *accepted_only)
 {
+    if (accepted_only)
+        *accepted_only = 0;
+    if (!budget)
+        return 0;
     i8085a_cpu_device &d = *c->dev;
     // A's callbacks (the stack writes) see the interrupted instruction's address: where execution resumes.  A halted
     // core's PC rests on its HLT, so that address is past it.  D then sets the saved instruction-start PC.
@@ -128,6 +132,15 @@ int i8085_step(i8085 *c)
     int acc = d.drv_accept();             // A
     c->cycles += (uint64_t)acc;           // B
     d.m_after_ei = 0;                     // C
+
+    // A board may end a slice at acceptance, as the Python Accent SA host does. Do not execute the vector's
+    // instruction and carry only its cost: that sends I/O and changes registers/memory one slice too early.
+    // There is no pending instruction to replay; the next call samples its then-current interrupt lines at A.
+    if (acc && (uint64_t)acc >= budget) {
+        if (accepted_only)
+            *accepted_only = 1;
+        return acc;
+    }
 
     c->steps++;                           // D
     c->pc = d.m_PC.w.l;
@@ -137,6 +150,11 @@ int i8085_step(i8085 *c)
     int ins = d.drv_instruction();        // E
     c->cycles += (uint64_t)ins;           // F
     return acc + ins;
+}
+
+int i8085_step(i8085 *c)
+{
+    return i8085_step_slice(c, UINT64_MAX, nullptr);
 }
 
 uint64_t i8085_run(i8085 *c, uint64_t budget)
