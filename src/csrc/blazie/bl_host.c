@@ -9,6 +9,10 @@
 #include "bl_board.h"
 #include "bl_host.h"
 #include "bl_whine_table.h"
+/* run_ahead.c's allocations, through the host: a test can make one fail (bh_set_int "fail_alloc_size"; every call site
+   there has its run_ahead r, whose b.ctx is the host) */
+static void *bh_ra_realloc(void *host, void *p, size_t n);
+#define RA_REALLOC(p, n) bh_ra_realloc(r->b.ctx, (p), (n))
 #include "run_ahead.c"             /* the run-ahead mode (bh_set_int "run_ahead"): one translation unit */
 
 /* BH_TRACE (-DBH_TRACE, a scratch build only, never a release): an ordered trace in the working directory's
@@ -69,24 +73,75 @@ struct bl_host {
     double *pace;                  /* lane 1 (bh_pace): the schedule of the next run-ahead utterance */
     int n_pace;
     int ar_hold;                   /* bh_cancel of a run-ahead capture: A/R not requesting over the first ^X slice */
+    /* Faults (Astra, Reply 112 item 2): nothing the unit did is lost silently.  BH_FAULT_*: the host cannot go on as
+       if nothing happened -- bh_busy reports -1 BEFORE anything else (held input included), input is refused (-1)
+       and held input is not delivered, so no new utterance starts over it, until the explicit recovery: bh_cancel
+       (the utterance abandoned, held input dropped, ^X; the NVDA driver goes further and restarts the unit) */
+    int fault;
+    int tx_lost, wl_lost;          /* transmitted bytes (bh_tx), logged writes (bh_writes) the host could not keep:
+                                      counted, read by the caller (native_blazie.py raises) -- records, not state */
+    size_t fail_size;              /* tests: run_ahead.c's next allocation of exactly this many bytes fails */
+    int fail_tx, fail_log;         /* tests: the n-th transmitted byte / logged write from now cannot be kept */
+    /* EXPERIMENTAL, off (Reply 112 item 3's prototype, not the default): the lockstep's own cancel race -- ^X met the
+       firmware mid-copy of its next line, and a character of the cancelled text led the next utterance.  bit 0: the
+       unit runs on, A/R not requesting, its chip writes dropped, until its CPU waits for an interrupt (at most
+       RA_SETTLE_S of CPU time; ra_settle's rule for run ahead); bit 1: A/R not requesting over the first ^X slice */
+    int cancel_settle;
+    int settling, cancel_settled, cancel_dropped;
 };
+
+enum { BH_FAULT_RUN_AHEAD = 1, BH_FAULT_EVENT = 2 };
+
+static void *bh_ra_realloc(void *host, void *p, size_t n)
+{
+    bl_host *h = (bl_host *)host;
+    if (h && h->fail_size && n == h->fail_size) {
+        h->fail_size = 0;                                  /* once */
+        return NULL;
+    }
+    return realloc(p, n);
+}
+
+/* the faults now: the run-ahead capture's error (sticky until bh_cancel), a board event lost */
+static int faults(const bl_host *h)
+{
+    int f = h->fault;
+    if (h->ra.outcome == RA_ERROR || (h->ra.active && h->ra.end == RA_END_ALLOC))
+        f |= BH_FAULT_RUN_AHEAD;
+    return f;
+}
+
+/* ... as they stop the host (the RA_BRK_STICKY control: the run-ahead error as the 0.7 draft let it through) */
+static int blocked(const bl_host *h)
+{
+    return faults(h) & ~(h->ra.brk == RA_BRK_STICKY ? BH_FAULT_RUN_AHEAD : 0);
+}
+
+/* tests: the n-th store from now fails, as a failed allocation would (a countdown; 0: none) */
+static int inject(int *countdown)
+{
+    return *countdown > 0 && --*countdown == 0;
+}
 
 /* the tests' log of writes (bh_writes), at the chip's time now */
 static void log_write(bl_host *h, int reg, int val)
 {
+    int fail;
     if (!h->log_on)
         return;
-    if (h->n_wl == h->cap_wl) {
+    fail = inject(&h->fail_log);
+    if (h->n_wl == h->cap_wl && !fail) {
         int cap = h->cap_wl ? h->cap_wl * 2 : 1024;
         bh_write *w = (bh_write *)realloc(h->wl, (size_t)cap * sizeof(bh_write));
         if (w) { h->wl = w; h->cap_wl = cap; }
     }
-    if (h->n_wl < h->cap_wl) {
+    if (h->n_wl < h->cap_wl && !fail) {
         h->wl[h->n_wl].t = ssi263_time(h->chip);
         h->wl[h->n_wl].reg = reg;
         h->wl[h->n_wl].val = val;
         h->n_wl++;
-    }
+    } else if (h->ra.brk != RA_BRK_DROP)
+        h->wl_lost++;                                      /* never silently: the log is incomplete from here */
 }
 
 /* the idle model hears every chip write and the channel's power, at the sample the block has reached */
@@ -131,7 +186,10 @@ static void events(bl_host *h)
     const bl_event *ev;
     int n = bl_events(h->unit, &ev), i;
     for (i = 0; i < n; i++) {
-        if (ev[i].type == 'W') {
+        if (ev[i].type == 'W' && h->settling) {
+            HTR("SETTLE-DROP r%d=%02X\n", ev[i].a, ev[i].b);
+            h->cancel_dropped++;                           /* the cancelled utterance's future (cancel_settle) */
+        } else if (ev[i].type == 'W') {
             /* run ahead: into the script, played later -- and after a failed allocation, lost with the capture (its
                error, RA_ERROR), never applied out of order */
             if (h->ra.active && (h->ra.capturing || h->ra.end == RA_END_ALLOC)) {
@@ -141,13 +199,16 @@ static void events(bl_host *h)
                 chip_write(h, ev[i].a, ev[i].b);
         } else {
             unsigned char b = ev[i].a;
-            if (h->n_tx == h->cap_tx) {
+            int fail = inject(&h->fail_tx);
+            if (h->n_tx == h->cap_tx && !fail) {
                 int cap = h->cap_tx ? h->cap_tx * 2 : 256;
                 unsigned char *t = (unsigned char *)realloc(h->tx, (size_t)cap);
                 if (t) { h->tx = t; h->cap_tx = cap; }
             }
-            if (h->n_tx < h->cap_tx)
+            if (h->n_tx < h->cap_tx && !fail)
                 h->tx[h->n_tx++] = b;
+            else if (h->ra.brk != RA_BRK_DROP)
+                h->tx_lost++;                              /* the record only: the echo is still counted below */
             if (b == 0x06) {
                 HTR("ECHO t=%.6f echo_f=%d->%d sent_f=%d stale=%d\n", ssi263_time(h->chip), h->echo_f, h->echo_f + 1,
                     h->sent_f, h->stale_f);
@@ -161,6 +222,11 @@ static void events(bl_host *h)
         }
     }
     bl_clear_events(h->unit);
+    if (bl_events_lost(h->unit)) {                         /* a chip write or serial byte the board could not store */
+        if (h->ra.brk != RA_BRK_DROP)
+            h->fault |= BH_FAULT_EVENT;
+        bl_clear_events_lost(h->unit);
+    }
     if (h->idle)
         idle_events(h, -1, 0);
 }
@@ -389,7 +455,7 @@ static int ra_end_for_input(bl_host *h)
 static void deliver(bl_host *h)
 {
     int i = 0, k;
-    while (i < h->n_held && ra_end_for_input(h)) {
+    while (i < h->n_held && !blocked(h) && ra_end_for_input(h)) {   /* never over a fault: it waits for bh_cancel */
         const struct held *e = &h->held[i++];
         if (e->say)
             say_now(h, h->held_bytes + e->off, e->n);
@@ -416,6 +482,8 @@ BL_API int bh_send(bl_host *h, const unsigned char *data, int n)
 {
     if (n <= 0)
         return 1;
+    if (blocked(h))
+        return -1;                                         /* a fault: refused, not taken (bh_cancel first) */
     if (!ra_takes_input(h)) {
         h->ra.stop_trailing = 1;
         return hold(h, 0, data, n);
@@ -426,6 +494,8 @@ BL_API int bh_send(bl_host *h, const unsigned char *data, int n)
 
 BL_API int bh_say(bl_host *h, const unsigned char *data, int n)
 {
+    if (blocked(h))
+        return -1;                                         /* a fault: refused, not taken (bh_cancel first) */
     if (!ra_takes_input(h)) {
         h->ra.stop_trailing = 1;
         return hold(h, 1, data, n);
@@ -443,6 +513,8 @@ BL_API int bh_busy(const bl_host *h, double quiet, double patience)
 {
     double now = ssi263_time(h->chip);
     double since = h->say_time > h->last_speech ? h->say_time : h->last_speech;   /* max(say_time, last_speech) */
+    if (blocked(h))
+        return -1;                                         /* a fault, before anything else: held input included */
     if (h->ra.brk == RA_BRK_COMPLETION && (h->ra.active || h->ra.outcome == RA_COMPLETE))
         return ra_sounding(&h->ra, h->chip) && (h->ra.capturing || now - h->last_load < PLAYING_MAX_S);  /* 0.7 draft */
     if (h->n_held)
@@ -532,8 +604,31 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
         ra_abort(&h->ra);
         h->ar = -1;
         h->ar_hold = h->ra.brk != RA_BRK_SETTLE;           /* the control puts both back */
+    } else if (h->cancel_settle) {                         /* the lockstep, EXPERIMENTAL and off (struct bl_host) */
+        h->cancel_settled = -1;
+        h->cancel_dropped = 0;
+        if (h->cancel_settle & 1) {
+            unsigned long long start = bl_cycles(h->unit), cap = (unsigned long long)(RA_SETTLE_S * CLOCK_HZ);
+            h->settling = 1;
+            bl_set_ar(h->unit, 0);
+            events(h);
+            while (!ra_cb_idle(h) && bl_cycles(h->unit) - start < cap) {
+                bl_run(h->unit, RA_SLICE);
+                events(h);
+            }
+            h->cancel_settled = ra_cb_idle(h) ? 1 : 0;
+            h->settling = 0;
+            h->ar = -1;                                    /* the unit's line was dropped: the next slice gives it */
+            HTR("LOCK-SETTLE cyc=%llu settled=%d dropped=%d\n", (unsigned long long)bl_cycles(h->unit),
+                h->cancel_settled, h->cancel_dropped);
+        }
+        h->ar_hold = (h->cancel_settle & 2) != 0;
     }
-    h->ra.outcome = h->ra.outcome == RA_CANCELLED ? RA_CANCELLED : RA_IDLE;
+    /* the explicit recovery from a fault (Reply 112 item 2): the utterance, its held input and a failed script are
+       abandoned here (ra_reset), the unit gets its ^X below */
+    if (h->ra.outcome != RA_CANCELLED)
+        ra_reset(&h->ra);
+    h->fault = 0;
     holding = bh_owed(h) == 0;                             /* decided after the drop (see blazie.py) */
     h->preparing = 0;
     if (cut < 0.0)
@@ -671,6 +766,11 @@ static double ra_block(bl_host *h, double seconds)
         /* ended: the unit's line stays as the capture left it (raised) -- the chip requests too after a complete
            final load, so no second edge; if the chip still plays (a limit), it is given the chip's line */
         h->ar = (request(h) || h->ra.brk == RA_BRK_COMPLETION) ? request(h) : -1;
+        /* a spoken final load held (a limit, run_ahead.h): the unit was given that request in the capture and never
+           answered it -- the lockstep's own bounded policy for exactly this (bh_busy: UNANSWERED_S, "not a proof")
+           counts from when its timer ended.  Without this its request time was stale: busy for ever */
+        if (h->ra.held)
+            h->ar_time = h->ra.held_at;
     }
     return t;
 }
@@ -763,6 +863,13 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "run_ahead_captured")) return h->ra.nw;
     if (!strcmp(name, "run_ahead_settled")) return h->ra.settled;
     if (!strcmp(name, "run_ahead_dropped")) return h->ra.dropped;
+    if (!strcmp(name, "run_ahead_held")) return h->ra.held;
+    if (!strcmp(name, "fault")) return faults(h);
+    if (!strcmp(name, "cancel_settle")) return h->cancel_settle;
+    if (!strcmp(name, "cancel_settled")) return h->cancel_settled;
+    if (!strcmp(name, "cancel_dropped")) return h->cancel_dropped;
+    if (!strcmp(name, "tx_lost")) return h->tx_lost;
+    if (!strcmp(name, "writes_lost")) return h->wl_lost;
     if (!strcmp(name, "held")) return h->n_held;
     if (!strcmp(name, "log_ar")) return h->log_ar;
     if (!strcmp(name, "port_a0")) return bl_port_a0(h->unit);
@@ -781,6 +888,14 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
         h->ra_on = v != 0;                                 /* utterance playing ends as it would (bh_cancel stops) */
     else if (!strcmp(name, "run_ahead_break")) h->ra.brk = v;   /* the tests' controls only (run_ahead.h RA_BRK_*) */
     else if (!strcmp(name, "log_ar")) h->log_ar = v != 0;
+    else if (!strcmp(name, "tx_lost")) h->tx_lost = v;         /* the caller has reported them */
+    else if (!strcmp(name, "writes_lost")) h->wl_lost = v;
+    else if (!strcmp(name, "cancel_settle")) h->cancel_settle = v & 3;   /* EXPERIMENTAL, off (struct bl_host) */
+    /* tests only (run_ahead_fault.py): one allocation or store made to fail, as memory running out would */
+    else if (!strcmp(name, "fail_alloc_size")) h->fail_size = v > 0 ? (size_t)v : 0;
+    else if (!strcmp(name, "fail_event")) bl_fail_event(h->unit, v);
+    else if (!strcmp(name, "fail_tx")) h->fail_tx = v;
+    else if (!strcmp(name, "fail_log")) h->fail_log = v;
 #ifdef BH_TRACE
     else if (!strcmp(name, "trace")) {
         if (!bh_trace_fp && v > 0)

@@ -61,15 +61,19 @@ struct bl_unit {
     uint32_t instr_pc;
     bl_event *ev;
     int n_ev, cap_ev;
+    int ev_lost, fail_ev;                    /* events that could not be stored; tests: the n-th to fail */
 };
 
 static void event(bl_unit *u, unsigned char type, unsigned char a, unsigned char b)
 {
-    if (u->n_ev == u->cap_ev) {
+    int fail = u->fail_ev > 0 && --u->fail_ev == 0;       /* bl_fail_event (tests) */
+    if (u->n_ev == u->cap_ev || fail) {
         int cap = u->cap_ev ? u->cap_ev * 2 : 256;
-        bl_event *e = (bl_event *)realloc(u->ev, (size_t)cap * sizeof(bl_event));
-        if (!e)
+        bl_event *e = fail ? NULL : (bl_event *)realloc(u->ev, (size_t)cap * sizeof(bl_event));
+        if (!e) {
+            u->ev_lost++;                                  /* lost: counted, for the host (bl_events_lost) */
             return;
+        }
         u->ev = e;
         u->cap_ev = cap;
     }
@@ -578,4 +582,19 @@ int bl_events(const bl_unit *u, const bl_event **events)
 void bl_clear_events(bl_unit *u)
 {
     u->n_ev = 0;
+}
+
+int bl_events_lost(const bl_unit *u)
+{
+    return u->ev_lost;
+}
+
+void bl_clear_events_lost(bl_unit *u)
+{
+    u->ev_lost = 0;
+}
+
+void bl_fail_event(bl_unit *u, int n)
+{
+    u->fail_ev = n > 0 ? n : 0;
 }

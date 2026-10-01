@@ -61,6 +61,8 @@ int ra_start(run_ahead *r, int r3, int requesting)
 {
     if (r->active)
         return 0;                                          /* the host completes, cancels or aborts it first */
+    if (r->outcome == RA_ERROR && r->brk != RA_BRK_STICKY)
+        return 0;                                          /* a failed script is abandoned explicitly first: ra_reset */
     r->nw = r->nack = r->ri = r->seg = r->seg_ready = r->loaded = r->over = 0;
     r->last_spoken = -1;
     r->shift = 0;
@@ -69,7 +71,8 @@ int ra_start(run_ahead *r, int r3, int requesting)
     r->outcome = 0;
     r->r3 = r->r3_play = r3;
     r->last_load = -1;
-    r->final_at = -1.0;
+    r->final_at = r->held_at = -1.0;
+    r->held = 0;
     r->last_write = r->b.cycles(r->b.ctx);
     r->pending = !requesting;                              /* a chip still busy: acknowledged at once */
     r->pend_pa = 1;                                        /* ... as the utterance's start: not its own speech */
@@ -193,24 +196,35 @@ long ra_play(run_ahead *r, ssi263 *chip, double out_rate, double seconds, double
             break;
         }
         if (r->ri >= r->nw) {                              /* the capture has ended and all of it is played */
+            int requesting = ssi263_request(chip);
             if (r->brk == RA_BRK_COMPLETION) {             /* the 0.7 draft: exhausted = finished */
                 finish(r, RA_COMPLETE);
                 break;
             }
             if (r->final_at < 0.0)
                 r->final_at = now;
-            if (ssi263_request(chip)) {                    /* chip completion: the final load has ended */
+            /* the final load's timer has ended (the chip requests): permission for the next load, NOT the end of
+               its sound -- a spoken phoneme sounds on until something replaces it (Astra, Reply 112).  The speech has
+               ended only when a pause was the final load (the Braille Lite: every utterance of both corpora ends so,
+               a pause loaded at the last spoken phoneme's request), or nothing was loaded at all */
+            if (requesting && (r->last_load <= 0 || r->brk == RA_BRK_REQUEST)) {
                 finish(r, r->end == RA_END_QUIET ? RA_COMPLETE : RA_LIMIT);
                 break;
             }
-            if (now - r->final_at >= RA_FINAL_S - 1e-12) { /* it never ended: a limit */
+            if (requesting && r->held_at < 0.0)
+                r->held_at = now;                          /* a spoken final load held: its timer ended here */
+            if (now - r->final_at >= RA_FINAL_S - 1e-12) { /* it never ended, or nothing silenced it: a limit */
+                r->held = r->held_at >= 0.0;
                 finish(r, RA_LIMIT);
                 break;
             }
             {
                 double stop = r->final_at + RA_FINAL_S < t_end ? r->final_at + RA_FINAL_S : t_end;
                 k = (long)ceil((stop - now) * out_rate);
-                n += ssi263_run_until_request(chip, k > 0 ? k : 1, out + n);
+                if (k < 1)
+                    k = 1;
+                /* held, the chip requests: it plays on (run_until_request would return at once) */
+                n += requesting ? ssi263_run(chip, k, out + n) : ssi263_run_until_request(chip, k, out + n);
             }
             continue;
         }
@@ -326,9 +340,18 @@ int ra_flush(run_ahead *r)
         r->end = RA_END_ABORT;
     while (r->ri < r->nw)
         apply(r, &r->w[r->ri]);
-    finish(r, r->end == RA_END_QUIET ? RA_COMPLETE : r->end == RA_END_LIMIT ? RA_LIMIT
-              : r->end == RA_END_ALLOC ? RA_ERROR : RA_CANCELLED);
+    /* complete only where the speech was seen to be over (RA_TRAILING: a pause after the last spoken load ended); a
+       flush anywhere else ends the utterance unresolved (the host's cancel, or a caller of its own) */
+    finish(r, r->end == RA_END_QUIET ? (r->over || r->brk == RA_BRK_COMPLETION || r->brk == RA_BRK_REQUEST
+                                        ? RA_COMPLETE : RA_LIMIT)
+              : r->end == RA_END_LIMIT ? RA_LIMIT : r->end == RA_END_ALLOC ? RA_ERROR : RA_CANCELLED);
     return 1;
+}
+
+void ra_reset(run_ahead *r)
+{
+    if (!r->active)
+        r->outcome = RA_IDLE;
 }
 
 void ra_abort(run_ahead *r)

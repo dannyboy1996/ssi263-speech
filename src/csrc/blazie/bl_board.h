@@ -88,6 +88,12 @@ int bl_memory(const bl_unit *u, int which, const unsigned char **bytes);
 /* the events since the last bl_clear_events, in order */
 int  bl_events(const bl_unit *u, const bl_event **events);
 void bl_clear_events(bl_unit *u);
+/* events the board could not store (its buffer could not grow): lost from the list above, and counted here -- a chip
+   write or a transmitted byte gone, which a host must treat as a fault, never pass over (Astra, Reply 112) */
+int  bl_events_lost(const bl_unit *u);
+void bl_clear_events_lost(bl_unit *u);
+/* tests: the n-th event from now cannot be stored, as when an allocation fails (0: none) */
+void bl_fail_event(bl_unit *u, int n);
 
 #ifdef __cplusplus
 }

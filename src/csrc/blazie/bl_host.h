@@ -40,13 +40,17 @@ BL_API void bh_clear_writes(bl_host *h);
 BL_API void bh_destroy(bl_host *h);
 
 /* bytes for the unit, counting ^F; and a say: the lines and flush, as say() builds them.  While a run-ahead utterance
-   plays (below) both are held and delivered in order when it ends.  1, or 0 when out of memory (nothing taken). */
+   plays (below) both are held and delivered in order when it ends.  1, or 0 when out of memory (nothing taken), or
+   -1 refused over a fault (below; nothing taken). */
 BL_API int bh_send(bl_host *h, const unsigned char *data, int n);
 BL_API int bh_say(bl_host *h, const unsigned char *data, int n);
 BL_API int bh_owed(const bl_host *h);
-/* 1 while the unit is still speaking what it was given, 0 when done; -1 when a run-ahead utterance failed (out of
-   memory: its script is incomplete; bh_cancel) */
+/* 1 while the unit is still speaking what it was given, 0 when done; -1 on a fault (Astra, Reply 112), before
+   anything else, held input included: a run-ahead utterance failed (out of memory: its script is incomplete), or the
+   board lost a chip write or serial byte (out of memory).  A fault is sticky: input is refused and held input is not
+   delivered (no new utterance starts over it) until bh_cancel, the explicit recovery ("fault": which). */
 BL_API int bh_busy(const bl_host *h, double quiet, double patience);
+/* also clears a fault: the utterance, held input and a failed script abandoned, the unit given its ^X */
 BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut);   /* quiet, cut < 0: the defaults */
 BL_API double bh_skip(bl_host *h, double seconds);
 /* Runs `seconds` of chip time in `step` lockstep (0.0005 s): the audio after the board pole and the whine, in an
@@ -68,8 +72,9 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    with the unit run ahead of the chip -- a bounded streaming capture, up to RA_AHEAD segments ahead -- and played from
    the script (run_ahead.h).  Its end is inferred from bh_owed's ^F echo accounting and a quiet interval: a policy,
    not a proof.  bh_busy follows run_ahead.h's completion: busy until the capture has ended by that policy, every
-   write has played and the final load has ended; a limit hands over to the lockstep's own judgement; an allocation
-   failure is -1.  Input given meanwhile is held (bh_say).  The capture's other effects -- the unit's serial bytes,
+   write has played and the speech has ended (a pause the final load, ended: the chip's request alone is not
+   silence); a limit hands over to the lockstep's own judgement (a spoken final load held: its UNANSWERED_S counts
+   from that load's request); an allocation failure is -1.  Input given meanwhile is held (bh_say).  The capture's other effects -- the unit's serial bytes,
    ^F echoes, XON/XOFF, its RAM -- happen at the capture's frontier, ahead of the listener: a cancel cannot take them
    back (nvda/tools/run_ahead_state.py compares them).  bh_cancel over a running capture first lets the unit, parked
    mid-routine at the frontier, run on to a wait for an interrupt (run_ahead.h ra_settle), and holds its A/R not
@@ -77,9 +82,17 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    (nvda/tools/run_ahead_cancel.py).  Timing is emulated Z180 time, not a chip-bus measurement.
    The pipe host has no such mode.  Read-only: "run_ahead_state" (RA_*), "run_ahead_end" (RA_END_*),
    "run_ahead_played" / "run_ahead_captured" (writes), "run_ahead_settled" / "run_ahead_dropped" (the last cancel's
-   ra_settle), "held" (inputs waiting), "port_a0".  Tests only:
-   "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead segments'
-   openings, reg 9 + how, in the write log). */
+   ra_settle), "run_ahead_held" (the last utterance ended at its bound, a spoken final load held), "held" (inputs
+   waiting), "port_a0", "fault" (BH_FAULT_*: 1 the run-ahead script, 2 a board event).  Read and reset by the caller:
+   "tx_lost", "writes_lost" (bytes of bh_tx, writes of bh_writes the host could not keep: records, not a fault).
+   "cancel_settle" (EXPERIMENTAL, 0 = off, the default; Reply 112 item 3's prototype, nvda/tools/lockstep_cancel.py):
+   the lockstep's bh_cancel lets the unit run on, A/R not requesting and its chip writes dropped, to a wait for an
+   interrupt before its ^X (bit 0), and holds A/R not requesting over the first ^X slice (bit 1); read-only
+   "cancel_settled" (1 idle, 0 the cap, -1 not run) and "cancel_dropped" (its writes) for the last cancel.
+   Tests only: "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead
+   segments' openings, reg 9 + how, in the write log), and one failure each, as memory running out would cause it:
+   "fail_alloc_size" (run_ahead.c's next allocation of that many bytes), "fail_event" / "fail_tx" / "fail_log" (the
+   n-th board event, transmitted byte, logged write from now). */
 BL_API int bh_get_int(const bl_host *h, const char *name);
 BL_API void bh_set_int(bl_host *h, const char *name, int v);
 /* tests: the current (or last) run-ahead script, as run_ahead.h's ra_write array; its length */

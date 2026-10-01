@@ -27,15 +27,23 @@
  *   capture limit      it ended at RA_LIMIT_S with speech still owed (RA_END_LIMIT), or on an allocation failure
  *                      (RA_END_ALLOC: an explicit error; the script is never silently shortened)
  *   playback exhausted every captured write has been applied to the chip
- *   chip completion    ... and the final load has ended: the chip requests again.  Only this, after a capture
- *                      exhausted by the policy, is RA_COMPLETE.  The final load still sounding is not complete; if it
- *                      does not end within RA_FINAL_S the utterance ends as RA_LIMIT.
+ *   speech ended       ... and the chip is silent by what it was given: the final load was a pause (code 00), and it
+ *                      has ended (the chip requests).  Only this, after a capture exhausted by the policy, is
+ *                      RA_COMPLETE.  (Nothing loaded at all counts too: nothing of the utterance sounds.)
+ * The chip's request is NOT the end of the sound (Astra, Reply 112): it is permission for the next load.  A spoken
+ * phoneme sounds on after its timer ends, until another load replaces it -- so a final load that is spoken, its timer
+ * ended, the chip requesting, is still sounding: RA_FINAL_LOAD, "held".  The Braille Lite never ends so (both corpora:
+ * every utterance's last spoken phoneme is answered at its request with a pause, measured 82-117 ms after its load),
+ * but another unit, or a failure, may.  If the final load has not ended, or is held with nothing to silence it, within
+ * RA_FINAL_S of the playback's end, the utterance ends as RA_LIMIT -- unresolved, never complete -- with run_ahead.held
+ * set for the held case (and held_at: the chip time its timer ended).
  * Before that, RA_TRAILING: the capture exhausted, every spoken load applied, a pause loaded after the last of them
  * and ended (the chip requests), and the rest of the script idle -- pauses and register writes, nothing spoken.  The
  * speech is over there (the host's "done"); the rest plays on in real time unless the host has input for the unit,
  * which may then apply it at once (ra_flush checks its content first) -- a deliberate retiming: those pauses are cut.
  * A limit or an error ends the run-ahead utterance (ra.active = 0) as that state; the host decides what follows (the
- * Braille Lite host goes on in lockstep, whose own policies then judge "done", or reports the error).
+ * Braille Lite host goes on in lockstep, whose own policies then judge "done", or reports the error).  An error is
+ * sticky: no new utterance starts over it (ra_start refuses) until the host abandons it explicitly (ra_reset).
  */
 #ifndef RUN_AHEAD_H
 #define RUN_AHEAD_H
@@ -65,10 +73,14 @@ enum {
     RA_CAPTURING,                  /* capture running (replay under way too) */
     RA_REPLAYING,                  /* capture ended; captured writes still to apply */
     RA_TRAILING,                   /* the speech is over: only idle writes left, the pause after it ended (above) */
-    RA_FINAL_LOAD,                 /* playback exhausted; the final load still sounds (the chip does not request) */
-    RA_COMPLETE,                   /* capture exhausted by the quiet policy, playback exhausted, the final load ended */
-    RA_LIMIT,                      /* ended at a bound: RA_LIMIT_S with speech owed, or RA_FINAL_S: NOT complete */
-    RA_ERROR,                      /* an allocation failed: the capture is incomplete, replay stopped there */
+    RA_FINAL_LOAD,                 /* playback exhausted; the final load still sounds: its timer runs (the chip does not
+                                      request), or it was spoken and is held (its timer ended, nothing replaced it) */
+    RA_COMPLETE,                   /* capture exhausted by the quiet policy, playback exhausted, the speech ended: a
+                                      pause the final load, and ended */
+    RA_LIMIT,                      /* ended at a bound: RA_LIMIT_S with speech owed, or RA_FINAL_S (its final load not
+                                      ended, or spoken and held: run_ahead.held): NOT complete */
+    RA_ERROR,                      /* an allocation failed: the capture is incomplete, replay stopped there.  Sticky
+                                      (ra_start refuses) until ra_reset */
     RA_CANCELLED                   /* ra_abort */
 };
 /* The contract test's controls (test_run_ahead.c, nvda/tools/run_ahead_equiv.py): run_ahead.brk puts ONE earlier
@@ -81,9 +93,17 @@ enum {
     RA_BRK_READING,                /* 0.7 draft: any answer over RA_READ_S moved up, also after a spoken phoneme */
     RA_BRK_SLIVER,                 /* 0.7 draft (the Braille Lite host): a lockstep slice in a block's rounding
                                       sliver while the script still played -- the unit stalled at 44.1 kHz */
-    RA_BRK_SETTLE                  /* 0.7 draft: a cancel reached the unit where the capture had stopped it, mid-
+    RA_BRK_SETTLE,                 /* 0.7 draft: a cancel reached the unit where the capture had stopped it, mid-
                                       routine (ra_settle skipped; the Braille Lite host: the chip's request given at
                                       once too) -- cancelled text leaked into the next utterance */
+    RA_BRK_REQUEST,                /* Reply 112 item 1: the final load's request taken as the end of speech -- complete
+                                      while a spoken final load still sounded */
+    RA_BRK_STICKY,                 /* Reply 112 item 2 (the Braille Lite host): held input masked an error (busy 1, not
+                                      -1), and was delivered over it -- a held say started a new capture, the error
+                                      lost; input taken over an error; ra_start over an error */
+    RA_BRK_DROP                    /* Reply 112 item 2 (the Braille Lite host): a chip write or serial byte the board
+                                      could not store, a transmitted byte or a logged write the host could not keep,
+                                      lost silently */
 };
 
 typedef struct {
@@ -126,6 +146,8 @@ typedef struct {
     int last_spoken;               /* index of the last spoken load (code not 00) captured, -1: none */
     int loaded;                    /* a load has been applied by the replay */
     double anchor, final_at;       /* the segment's start; when the playback was exhausted (chip time) */
+    double held_at;                /* a spoken final load's timer ended here (chip time), still sounding; -1: none */
+    int held;                      /* the utterance ended as RA_LIMIT with its spoken final load held (above) */
     unsigned long long shift, lat;
     const double *pace;            /* lane 1: write i at chip time pace[i] (ra_pace); NULL: the retimed rule */
     int npace;
@@ -165,6 +187,9 @@ int ra_rest_is_idle(const run_ahead *r);
 int ra_flush(run_ahead *r);
 /* stops: the script not yet played is dropped (the unit stays where the capture left it); RA_CANCELLED */
 void ra_abort(run_ahead *r);
+/* the host abandons an ended utterance's outcome (an error above all: its explicit recovery) -- RA_IDLE; nothing while
+   one is active */
+void ra_reset(run_ahead *r);
 /* Before a cancel reaches the unit (a host's ^X ...) while the capture runs.  The capture stops the CPU wherever its
    bound falls: just after an acknowledgement, which wakes the unit, so it is parked MID-ROUTINE (the Braille Lite:
    awake at 97% of stops, against 15% of the time in the lockstep, whose CPU mostly waits on the chip).  A cancel
