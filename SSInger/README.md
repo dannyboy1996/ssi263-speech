@@ -64,7 +64,7 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 |---|---|---|
 | Windows | **Windows 10 (version 1607) or later**, x64. Not Windows 7 or 8.1: the binaries will not load there. | JUCE 8 and 9 support Windows 10 1607+ only; JUCE imports dcomp.dll, the shcore scaling API and user32's per-monitor DPI functions directly. JUCE 9 has no supported switch to lower this. |
 | macOS | **macOS 10.15 (Catalina) or later**, Apple silicon or Intel (one universal binary) | Built with `CMAKE_OSX_DEPLOYMENT_TARGET=10.15` |
-| Linux | x86-64 or arm64 with **glibc 2.38 and libstdc++ from GCC 13 or newer**: Ubuntu 24.04+, Debian 13+, Fedora 39+, Raspberry Pi OS based on Debian 13. Older systems (Debian 12, Ubuntu 22.04): build from source. | The downloads are built on GitHub's current Ubuntu runners; their binaries ask for GLIBC_2.38 and GLIBCXX_3.4.32 (checked on this build) |
+| Linux | x86-64 or arm64 with **glibc 2.35 and libstdc++ from GCC 12 or newer**: Ubuntu 22.04+, Debian 12+, Fedora 36+, Raspberry Pi OS Bookworm or later. Older systems (Debian 11, Ubuntu 20.04): build from source. | The downloads are built on GitHub's Ubuntu 22.04 runners; their binaries ask for GLIBC_2.35, GLIBCXX_3.4.30 and CXXABI_1.3.13 (checked on this build) |
 
 ## Build
 
