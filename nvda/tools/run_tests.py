@@ -163,6 +163,19 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
 EMU = os.path.join(os.path.dirname(HERE), "dist", "blazie-emu")
 if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
     CHECKS.append(check("Blazie emulator: chords", [os.path.join(EMU, "test_chords.exe")]))
+    # its sound queue (src/apps/blazie/audio_pace.c; Tomi: the emulator's speech stutters, the add-on's doesn't)
+    # against a simulated sound card calibrated on this desktop's waveOut: a busy machine and a remote card heard
+    # without gaps once the automatic queue has grown, a slow save without gaps; the control puts the 0.7.0 draft's
+    # queue back (four blocks of 10 ms, the save on the window's thread) and must fail on exactly those
+    if os.path.isfile(os.path.join(EMU, "test_audio.exe")):
+        CHECKS.append(check("Blazie emulator: the sound queue", [os.path.join(EMU, "test_audio.exe")]))
+        CHECKS.append(check("Blazie emulator: the sound queue CONTROL (the 0.7.0 draft's, must fail)",
+                            [os.path.join(EMU, "test_audio.exe"), "--old"], expect_fail=True,
+                            fail_marks=[r"^FAIL busy machine: no gap after 10 s +\d{2,} gaps after 10 s",
+                                        r"^FAIL remote card: no gap after 10 s +\d{2,} gaps after 10 s",
+                                        r"^FAIL autosave: no gap +\d+ saves of 50 ms: [1-9]\d* gaps",
+                                        r"^ok +steady card: no gap after the first second",
+                                        r"^audio: 7 FAILED$"]))
     CHECKS.append(check("Blazie emulator: the unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
     CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",

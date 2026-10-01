@@ -116,6 +116,7 @@ static audio_out *g_audio;
 static pthread_t g_audio_thread;
 static int g_audio_running;
 static volatile int g_audio_stop;
+static int g_save_due;                         /* the minute's save, waiting for the sound thread (__atomic) */
 
 static double mono(void)
 {
@@ -394,22 +395,24 @@ static void save_settings(void)
 }
 
 /* ---- the unit --------------------------------------------------------------------------------------------------- */
+/* Written and put in place under the lock: the sound thread's minute save (audio_main) and a save here (switching
+   units, leaving) never write the same file at once.  Called from either thread. */
 static void save_unit(void)
 {
     char path[PATH_MAX], tmp[PATH_MAX + 8];
-    int ok;
-    if (!g_unit)
-        return;
-    make_dirs(g_cfg_dir);
-    saved_path(g_kind, path, sizeof path);
-    snprintf(tmp, sizeof tmp, "%s.new", path);   /* whole or not at all: a crash mid-write keeps the last one */
+    int ok = 1;
     pthread_mutex_lock(&g_lock);
-    ok = emu_save(g_unit, tmp);
-    pthread_mutex_unlock(&g_lock);
-    if (!ok || rename(tmp, path) != 0) {
-        unlink(tmp);
-        say("Could not save the unit's memory to %s; what you wrote this time is lost.", path);
+    if (g_unit) {
+        make_dirs(g_cfg_dir);
+        saved_path(g_kind, path, sizeof path);
+        snprintf(tmp, sizeof tmp, "%s.new", path);   /* whole or not at all: a crash mid-write keeps the last one */
+        ok = emu_save(g_unit, tmp) && rename(tmp, path) == 0;
+        if (!ok)
+            unlink(tmp);
     }
+    pthread_mutex_unlock(&g_lock);
+    if (!ok)
+        say("Could not save the unit's memory to %s; what you wrote this time is lost.", path);
 }
 
 static void apply_idle(void)
@@ -576,6 +579,11 @@ static void *audio_main(void *arg)
             }
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
         }
+        /* the minute's save here, just after a write filled the card's buffer: the card plays it while the memory is
+           written, instead of a render waiting on the lock with the buffer low (Tomi: the emulator's speech
+           stutters, the add-on's doesn't) */
+        if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL))
+            save_unit();
     }
     return NULL;
 }
@@ -1425,8 +1433,11 @@ int main(int argc, char **argv)
                     break;
                 }
             keys_tick(mono());
-            if (mono() >= next_save) {          /* every minute: nothing is lost if the program is killed */
-                save_unit();
+            if (mono() >= next_save) {          /* every minute: nothing is lost if the program is killed -- */
+                if (g_audio_running)            /* by the sound thread, between two blocks */
+                    __atomic_store_n(&g_save_due, 1, __ATOMIC_RELEASE);
+                else
+                    save_unit();
                 next_save = mono() + AUTOSAVE_S;
             }
         }

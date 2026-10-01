@@ -11,12 +11,14 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | --- | --- |
 | `chords.h`, `chords.c` | A braille chord from separate key presses: sent when the last key of the chord comes up. Portable. |
 | `emu_unit.h`, `emu_unit.c` | One unit running in real time: create from firmware + state, render 16-bit PCM, take chords. Portable. |
-| `main_win.c` | The Windows shell: the window, the menu (firmware, idle channel, keep open, pop and tick, sample rate, serial port, help), the keyboard, waveOut. |
+| `main_win.c` | The Windows shell: the window, the menu (firmware, idle channel, keep open, pop and tick, sample rate, sound buffer, serial port, help), the keyboard, waveOut. |
+| `audio_pace.h`, `.c` | The sound queue: how many blocks the sound thread keeps at the card (automatic, short, medium, long), a gap told from the card's played position, the minute's save after rendering ahead. Portable. |
+| `test_audio.c` | The sound queue against a simulated sound card (calibrated on this desktop's waveOut): a steady card, a busy machine, a remote card, a slow save, and the gap detector; `--old` (the 0.7.0 draft's queue) is run_tests' must-fail control. |
 | `serial_win.c`, `.h` | The unit's serial port on a Windows COM port: the port list, and a thread moving bytes and setting the port as the firmware programs it. The portable half is `../../csrc/blazie/bl_serial.c`. |
 | `tns_keymap_win.c`, `.h` | A Windows key to the Type 'n Speak's key code (measured on the running firmware). |
 | `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static), the boards on MAME's Z180 (`../../csrc/cpu/z180_mame.cpp`), with the licence files beside them. |
 | `test_chords.c` | The chord logic. |
-| `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
+| `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time, its key latency, a save under 50 ms. |
 | `test_clock.c` | The clock controller alone, then the English Braille Lite and Type 'n Speak setting and reading the time and date with their own commands, the clock going on and kept over a switch-off; and i-chord held through p-chord l's restart. `TEST_CLOCK_BREAK` / `TEST_CLOCK_HOLD_BREAK` put one bug back for run_tests' must-fail controls. |
 | `test_flash.c` | The file flash: the Type 'n Speak's ID check passes and its flash is initialised, the erase takes ~46 s (32 s and the 14.4 s preprogramming) with the firmware's clicks, the flash kept across a save and restart; the Braille Lite's reset erases the same way, and a file moved to flash lands in the 2 MB and survives a restart. `test_flash_break.exe` (the old flash put back), `test_flash_old.exe` (the erase without its preprogramming) and `--break=instant|persist` must fail. |
 | `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
@@ -139,8 +141,41 @@ test_emu_unit's "key latency"), the unit's own pace at its 6.144 MHz clock.  On,
 until the first spoken phoneme loads: 56, 83 and 51 ms.  The phonemes and every register value are unchanged; only the
 wait before the first one is shorter than on the real unit.
 
-Sound: four blocks of 10 ms (`[sound] block_ms` in `blazie_emu.ini`, 5-20).  A key's speech plays behind the blocks
-already queued, so 20 ms blocks (0.6.0) added 60-80 ms; 10 ms blocks add 30-40.  Raise it if the sound breaks up.
+Settings > Sound buffer (`[sound] buffer=` in `blazie_emu.ini`; `audio_pace.h`): how much sound is kept queued at the
+sound card, in blocks of 10 ms (`[sound] block_ms`, 5-20).  A key's speech plays behind it.
+
+| Choice | Queue | |
+| --- | --- | --- |
+| `auto` (the default) | 60 ms, growing (100, 150, 220, 250 ms) each time the card runs dry, for the session | a key's speech ~20 ms later than 0.7.0's on a PC that never breaks up |
+| `short` | 40 ms | the 0.7.0 draft's four blocks: the quickest answer, and it chops the moment the program is held up |
+| `medium` | 100 ms | |
+| `long` | 250 ms | Remote Desktop, a Bluetooth headset, a handheld PC on battery |
+
+Why (Tomi, 2026-10-01: "the emulator stutters horribly ... but not the nvda side"): measured on this desktop, the unit
+renders 10 ms blocks in 0.4-0.7 ms each (14-26 times real time; the worst block 1.85 ms, through the Type 'n Speak's
+flash erase too, and with every core loaded), and a save takes 0.5-1.4 ms (the Type 'n Speak's 5 MB too).  Neither
+is the stutter.  waveOut is: it hands a block back only once it has played it, and the card's pipeline holds ~25 ms
+of what is queued, so four blocks of 10 ms leave ~10 ms to spare -- the sound thread held up 10 ms by anything (Remote
+Desktop's audio, a power-saving or busy machine) is a 10 ms gap, every time.  The thread held up a fixed time each
+second (the sound lost, by the card's played position against the wall clock):
+
+| Blocks queued | held 10 ms | 20 ms | 30 ms | 50 ms | 5% of blocks held up to 60 ms |
+| --- | --- | --- | --- | --- | --- |
+| 4 (0.7.0) | 110 ms lost of 12 s | 330 | 390 | 540 | 1.6-2.0 s of 15 s |
+| 8 | 0 | 0 | 0 | 50 | 370 ms |
+| 12 | | | | | 30-50 ms |
+
+The app itself, held up the same way (`BLAZIE_EMU_AUDIO_STALL=60`, 30 s): short lost 3.8 s in 85 gaps; automatic
+lost 58 ms in 3 gaps while it grew to 220 ms, then none; long lost 16 ms.  Unloaded, and with every core busy or the
+program on one core with four busy threads, no gap at any setting (the sound thread runs at time-critical priority).
+
+A gap is found by the card's played position against the wall clock: counting the blocks handed back cannot see it
+(waveOut keeps the last one until the next comes).  `test_audio.c` runs the queue against a simulated card calibrated
+on the table above; `--old`, the 0.7.0 draft's queue, is run_tests' must-fail control.  The minute's save runs on the
+sound thread after it has rendered 50 ms ahead, so the card plays on while it writes and no key waits for it
+(`test_emu_unit` checks a save takes under 50 ms).  `BLAZIE_EMU_AUDIO_LOG=file` logs each wake of the sound thread:
+its renders, how far ahead it is, the gaps found and the saves.  The program also asks Windows not to slow it down to
+save power (EcoQoS; a precaution, not seen here).
 
 ## Firmware
 

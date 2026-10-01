@@ -135,6 +135,7 @@ static audio_out *g_audio;
 static pthread_t g_audio_thread;
 static int g_audio_running;
 static volatile int g_audio_stop;
+static int g_save_due;                         /* the minute's save, waiting for the sound thread (__atomic) */
 
 /* the tests' trace */
 static FILE *g_trace;
@@ -479,26 +480,46 @@ static void save_settings(void)
 }
 
 /* ---- the unit --------------------------------------------------------------------------------------------------- */
-/* its memory, written whole then put in place (a crash mid-write keeps the last one); 1 on success */
+/* its memory, written whole then put in place (a crash mid-write keeps the last one), under the lock: the sound
+   thread's minute save (audio_main) and a save from the window never write the same file at once.  Either thread;
+   no GTK here.  1 on success (or no unit), the file in path. */
+static int write_unit(char *path, int cap)
+{
+    char tmp[PATH_MAX + 8];
+    int ok = 1;
+    path[0] = 0;
+    pthread_mutex_lock(&g_lock);
+    if (g_unit) {
+        make_dirs(g_cfg_dir);
+        saved_path(g_kind, path, cap);
+        snprintf(tmp, sizeof tmp, "%s.new", path);
+        ok = emu_save(g_unit, tmp) && rename(tmp, path) == 0;
+        if (!ok)
+            unlink(tmp);
+    }
+    pthread_mutex_unlock(&g_lock);
+    if (ok && path[0])
+        trace("saved %s", path);
+    return ok;
+}
+
+static char g_save_failed[PATH_MAX];           /* the sound thread's save that failed, for the window to say */
+
+static gboolean on_save_failed(gpointer data)
+{
+    (void)data;
+    set_status(1, "Could not save the unit's memory to %s; what you wrote this time is lost.", g_save_failed);
+    return G_SOURCE_REMOVE;
+}
+
+/* 1 on success */
 static int save_unit(void)
 {
-    char path[PATH_MAX], tmp[PATH_MAX + 8];
-    int ok;
-    if (!g_unit)
+    char path[PATH_MAX];
+    if (write_unit(path, (int)sizeof path))
         return 1;
-    make_dirs(g_cfg_dir);
-    saved_path(g_kind, path, sizeof path);
-    snprintf(tmp, sizeof tmp, "%s.new", path);
-    pthread_mutex_lock(&g_lock);
-    ok = g_unit && emu_save(g_unit, tmp);
-    pthread_mutex_unlock(&g_lock);
-    if (!ok || rename(tmp, path) != 0) {
-        unlink(tmp);
-        set_status(1, "Could not save the unit's memory to %s; what you wrote this time is lost.", path);
-        return 0;
-    }
-    trace("saved %s", path);
-    return 1;
+    set_status(1, "Could not save the unit's memory to %s; what you wrote this time is lost.", path);
+    return 0;
 }
 
 static void apply_idle(void)
@@ -715,6 +736,12 @@ static void *audio_main(void *arg)
             }
             clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
         }
+        /* the minute's save here, just after a write filled the card's buffer: the card plays it while the memory is
+           written, instead of a render waiting on the lock with the buffer low (Tomi: the emulator's speech
+           stutters, the add-on's doesn't) */
+        if (__atomic_exchange_n(&g_save_due, 0, __ATOMIC_ACQ_REL)
+                && !write_unit(g_save_failed, (int)sizeof g_save_failed))
+            g_idle_add(on_save_failed, NULL);    /* the window says so */
     }
     return NULL;
 }
@@ -1523,7 +1550,10 @@ static GtkWidget *make_menu(GtkAccelGroup *accel)
 static gboolean on_autosave(gpointer data)
 {
     (void)data;
-    save_unit();                                /* every minute: nothing is lost if the program is ended */
+    if (g_audio_running)                        /* every minute: nothing is lost if the program is ended -- by the */
+        __atomic_store_n(&g_save_due, 1, __ATOMIC_RELEASE);   /* sound thread, between two blocks */
+    else
+        save_unit();
     return G_SOURCE_CONTINUE;
 }
 
