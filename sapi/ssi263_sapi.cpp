@@ -187,8 +187,8 @@ static std::wstring token_string(ISpObjectToken *t, const wchar_t *name) {
 }
 
 /* The voices: the library and one bank of booted units per process, shared by every Engine (SAPI makes one per
- * voice in use) and guarded, as the one pipe host was.  The library is loaded on first use and let go only when COM
- * lets this DLL go (DllCanUnloadNow) -- never in DllMain. */
+ * voice in use) and guarded, as the one pipe host was.  The library is loaded on first use and kept, booted units
+ * and all, for the life of the process (DllCanUnloadNow). */
 static CRITICAL_SECTION g_lock;
 static bool g_lockReady;
 static ssi_api g_api;
@@ -223,10 +223,6 @@ static bool voices_ready() {
         return false;
     }
     return true;
-}
-static void voices_drop() {
-    if (g_bank) { g_api.bank_free(g_bank); g_bank = 0; }
-    if (g_api.dll) { FreeLibrary(g_api.dll); memset(&g_api, 0, sizeof g_api); }
 }
 
 class Engine : public ISpTTSEngine, public ISpObjectWithToken {
@@ -406,12 +402,14 @@ public:
 };
 class Factory:public IClassFactory{LONG refs;public:Factory():refs(1){InterlockedIncrement(&g_objects);} ~Factory(){InterlockedDecrement(&g_objects);} STDMETHODIMP QueryInterface(REFIID i,void**p){if(!p)return E_POINTER;*p=0;if(i==IID_IUnknown||i==IID_IClassFactory)*p=this;else return E_NOINTERFACE;AddRef();return S_OK;} STDMETHODIMP_(ULONG)AddRef(){return InterlockedIncrement(&refs);} STDMETHODIMP_(ULONG)Release(){ULONG n=InterlockedDecrement(&refs);if(!n)delete this;return n;} STDMETHODIMP CreateInstance(IUnknown*o,REFIID i,void**p){if(o)return CLASS_E_NOAGGREGATION;Engine*e=new Engine;HRESULT h=e->QueryInterface(i,p);e->Release();return h;} STDMETHODIMP LockServer(BOOL x){InterlockedExchangeAdd(&g_objects,x?1:-1);return S_OK;}};
 
-/* COM lets this DLL go only when nothing of it is in use: the units and the library go first (FreeLibrary is not
- * for DllMain). */
+/* The booted units stay for the life of the process, as 0.7.0's resident server did: a client that lets go of its
+ * last engine object and makes a new one (System.Speech's SelectVoice does) must not pay a cold boot on its next
+ * utterance.  So nothing is torn down here, and so this DLL never unloads while its voices are loaded (it holds the
+ * library; FreeLibrary is not for DllMain either). */
 STDAPI DllCanUnloadNow(){
     if(g_objects)return S_FALSE;
-    if(g_lockReady){CsLock lock(&g_lock);if(!g_objects){voices_drop();g_failed=false;}}
-    return g_objects?S_FALSE:S_OK;
+    if(g_lockReady){CsLock lock(&g_lock);if(g_bank||g_api.dll)return S_FALSE;}
+    return S_OK;
 }
 STDAPI DllGetClassObject(REFCLSID c,REFIID i,void **p){if(c!=CLSID_Ssi263)return CLASS_E_CLASSNOTAVAILABLE;Factory*f=new Factory;HRESULT h=f->QueryInterface(i,p);f->Release();return h;}
 static HRESULT reg(bool add){
