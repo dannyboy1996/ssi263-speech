@@ -96,6 +96,11 @@ cat > "$STAGE/share/ssi263-speech/speech-dispatcher/ssi263.conf" <<'EOF'
 
 # Sentences packed onto one line from the second on, for shorter pauses (1, default) or not (0).
 # SSI263ShortPauses 1
+
+# EXPERIMENTAL: run the unit ahead of its chip (1) or not (0, default), as the NVDA add-on's "Run the unit ahead".
+# The unit reads each message ahead and the chip plays what it wrote at the unit's own answer times: the same
+# phonemes, without the pauses where the unit reads its next line.  Only with SSI263ShortPauses 1.
+# SSI263RunAhead 0
 EOF
 cp "$ROOT/src/platforms/speechd/install.sh" "$ROOT/src/platforms/speechd/uninstall.sh" "$STAGE/"
 cp "$ROOT/src/platforms/speechd/README-linux.md" "$STAGE/README.md"

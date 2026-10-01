@@ -11,8 +11,19 @@ same PCM:
   spanish  language=es switches to the Spanish unit (when its files are there)
   key      KEY space speaks "space"
 
+and the config: the module file and this user's own (which wins), the sample rate and the hiss -- and the
+EXPERIMENTAL run ahead (SSI263RunAhead 1, blv_set_run_ahead), against a reference voice running ahead too:
+
+  ra_speak a message whole, with the same phonemes as the lockstep's (the reference's own write log: the module's PCM
+           is the reference's, byte for byte), its audio not the lockstep's (the run-ahead path taken)
+  ra_dflt  no key: the first message above was the lockstep's, not run ahead's
+  ra_stop  STOP mid-message (as "stop", 12 blocks in), and ra_after: the next message whole, its phonemes those of it said alone --
+           nothing of the cancelled text
+  ra_sys   the key in the module file runs ahead; ra_user0: this user's "SSI263RunAhead 0" wins over it
+
     python3 test_sd_ssi263.py <sd_ssi263> <libssi263speech.so> <data folder>
     SD_SSI263_TEST_NO_CANCEL=1 in the environment: the module leaves the unit uncancelled -- "stop" must FAIL
+    SD_SSI263_TEST_IGNORE_RUN_AHEAD=1: the module drops SSI263RunAhead -- the ra_ checks must FAIL
 """
 import ctypes
 import os
@@ -33,21 +44,53 @@ lib.blv_render.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes
                            ctypes.POINTER(ctypes.c_int)]
 lib.blv_cancel.argtypes = [ctypes.c_void_p]
 lib.blv_destroy.argtypes = [ctypes.c_void_p]
+lib.blv_set_run_ahead.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lib.blv_host.restype = ctypes.c_void_p
+lib.blv_host.argtypes = [ctypes.c_void_p]
+lib.bh_set_int.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+
+
+class BhWrite(ctypes.Structure):                 # bl_host.h's bh_write
+    _fields_ = [("t", ctypes.c_double), ("reg", ctypes.c_int), ("val", ctypes.c_int)]
+
+
+lib.bh_writes.restype = ctypes.c_int
+lib.bh_writes.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(BhWrite))]
+lib.bh_clear_writes.argtypes = [ctypes.c_void_p]
 
 
 # ---- the reference -----------------------------------------------------------------------------------------------
 class Ref:
-    def __init__(self, spanish=False, rate=22050, whine=0):
+    def __init__(self, spanish=False, rate=22050, whine=0, run_ahead=0):
         fw, st = (("BL2SPA.BNS", "bl2spa_fresh.state") if spanish else ("BL2ENG.BNS", "bl2_2003_warm.state"))
         err = ctypes.create_string_buffer(256)
         self.v = lib.blv_create(os.path.join(DATA, fw).encode(), os.path.join(DATA, st).encode(), int(spanish),
                                 float(rate), 1, whine, err, 256)
         assert self.v, err.value
+        lib.blv_set_run_ahead(self.v, run_ahead)
+        self.host = lib.blv_host(self.v)
+        lib.bh_set_int(self.host, b"log_writes", 1)    # the chip's writes, for the phonemes (nothing else changes)
+        self.ctrl = 0
+        self.phonemes = []
+
+    def _drain(self):
+        """The phonemes in the writes logged since the last drain -- run_ahead_driver.py's reading: a register-0 write
+        while the control register's bit 7 is clear, its code not a pause."""
+        p, out = ctypes.POINTER(BhWrite)(), []
+        for i in range(lib.bh_writes(self.host, ctypes.byref(p))):
+            if p[i].reg == 3:
+                self.ctrl = p[i].val
+            elif p[i].reg == 0 and not self.ctrl & 0x80 and p[i].val & 0x3F:
+                out.append(p[i].val & 0x3F)
+        lib.bh_clear_writes(self.host)
+        return out
 
     def say(self, text, rate=0, pitch=0, volume=100, blocks=None):
-        """PCM of the message; with `blocks`, only that many non-empty blocks, then a cancel."""
+        """PCM of the message; with `blocks`, only that many non-empty blocks, then a cancel.  self.phonemes: the
+        message's, up to its end or the cancel."""
         to100 = lambda s: max(0, min(100, (s + 100) // 2))      # noqa: E731
         lib.blv_set(self.v, to100(rate), to100(pitch), 7, to100(volume), 1)
+        self._drain()
         lib.blv_speak(self.v, text.encode("utf-8"))
         pcm, done, out, n_blocks = ctypes.POINTER(ctypes.c_short)(), ctypes.c_int(0), [], 0
         while not done.value:
@@ -56,8 +99,11 @@ class Ref:
                 out.append(ctypes.string_at(pcm, 2 * n))
                 n_blocks += 1
                 if blocks is not None and n_blocks == blocks and not done.value:
+                    self.phonemes = self._drain()
                     lib.blv_cancel(self.v)
                     break
+        else:
+            self.phonemes = self._drain()
         return b"".join(out)
 
 
@@ -172,8 +218,10 @@ print("voices:", "; ".join(v[4:].replace("\t", " / ") for v in voices[:-1]))
 ref = Ref()
 results = []
 
+HELLO = "Hello from Linux & speech-dispatcher."
 pcm, ev, _ = m.speak("<speak>Hello from Linux &amp; speech-dispatcher.</speak>")
-results.append(same("speak", pcm, ref.say("Hello from Linux & speech-dispatcher.")) and ev == "702 END")
+results.append(same("speak", pcm, ref.say(HELLO)) and ev == "702 END")
+hello_default = pcm
 
 pcm1, ev1, blocks = m.speak(LONG, stop_after=5)
 pcm2, ev2, _ = m.speak("And the next message.")
@@ -199,7 +247,7 @@ m.p.wait(timeout=10)
 
 
 # ---- the config: the module file, this user's own file (which wins), and a rate we do not offer -------------------
-def configured(label, conf, user_conf, rate, whine=0):
+def configured(label, conf, user_conf, rate, whine=0, run_ahead=0):
     c = Module(conf, user_conf)
     c.send("INIT")
     assert c.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
@@ -208,12 +256,56 @@ def configured(label, conf, user_conf, rate, whine=0):
     c.p.wait(timeout=10)
     ok = c.rates == {rate}
     print("%-8s audio blocks declare %s Hz (want %d)" % (label, sorted(c.rates), rate))
-    return same(label, pcm, Ref(rate=rate, whine=whine).say("Is it ready?")) and ok
+    return same(label, pcm, Ref(rate=rate, whine=whine, run_ahead=run_ahead).say("Is it ready?")) and ok
 
 
 results.append(configured("conf44", "SSI263SampleRate 44100\n", None, 44100))
 results.append(configured("user", "SSI263SampleRate 11025\n", "SSI263SampleRate 44100\n", 44100))
 results.append(configured("badrate", "SSI263SampleRate 48000\n", None, 22050))
 results.append(configured("userhiss", None, 'SSI263Whine "hiss"\n', 22050, whine=1))
-print("%d of %d checks passed (stop after %d blocks)" % (sum(results), len(results), blocks))
+
+
+# ---- run ahead (EXPERIMENTAL, off by default): this user's SSI263RunAhead 1 -----------------------------------------
+def phonemes_same(label, got, want, what):
+    ok = got == want
+    print("%-8s %d phonemes, %s %d: %s" % (label, len(got), what, len(want), "the same" if ok else "DIFFERENT"))
+    return ok
+
+
+lock, ahead = Ref(), Ref(run_ahead=1)
+lock_hello = lock.say(HELLO)
+lock_ph = lock.phonemes
+r = Module(user_conf="SSI263RunAhead 1\n")
+r.send("INIT")
+assert r.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+pcm, ev, _ = r.speak(HELLO)
+want = ahead.say(HELLO)
+ok = same("ra_speak", pcm, want) and ev == "702 END"
+ok = phonemes_same("ra_speak", ahead.phonemes, lock_ph, "the lockstep's") and ok
+print("ra_speak the run-ahead reference's audio %s the lockstep's" % ("differs from" if want != lock_hello else
+                                                                       "is IDENTICAL to"))
+results.append(ok and want != lock_hello)
+print("ra_dflt  no SSI263RunAhead: the first message is %s" % ("the lockstep's" if hello_default == lock_hello and
+                                                              hello_default != want else "NOT the lockstep's"))
+results.append(hello_default == lock_hello and hello_default != want)
+
+NEXT = "And the next message."
+pcm1, ev1, ra_blocks = r.speak(LONG, stop_after=12)     # ~0.35 s in: where a cancel once leaked (blazie.py)
+pcm2, ev2, _ = r.speak(NEXT)
+r.send("QUIT")
+r.p.wait(timeout=10)
+results.append(ev1 == "703 STOP" and same("ra_stop", pcm1, ahead.say(LONG, blocks=ra_blocks)))
+ok = same("ra_after", pcm2, ahead.say(NEXT)) and ev2 == "702 END"
+alone = Ref()
+alone.say(NEXT)
+results.append(phonemes_same("ra_after", ahead.phonemes, alone.phonemes, "said alone") and ok)
+
+# the module file's key, and this user's 0 over it; the two references must differ, or neither check could tell
+ra_q, lock_q = Ref(run_ahead=1).say("Is it ready?"), Ref().say("Is it ready?")
+print("ra_sys   \"Is it ready?\": run ahead's reference %s the lockstep's" % ("differs from" if ra_q != lock_q else
+                                                                             "is IDENTICAL to"))
+results.append(configured("ra_sys", "SSI263RunAhead 1\n", None, 22050, run_ahead=1) and ra_q != lock_q)
+results.append(configured("ra_user0", "SSI263RunAhead 1\n", "SSI263RunAhead 0\n", 22050))
+print("%d of %d checks passed (stop after %d blocks, %d with run ahead)" % (sum(results), len(results), blocks,
+                                                                          ra_blocks))
 sys.exit(0 if all(results) else 1)

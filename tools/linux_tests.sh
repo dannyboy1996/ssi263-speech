@@ -14,7 +14,8 @@
 # The z180emu goldens (blazie_*_legacy.txt, made before the cancel protection) are REFERENCE checks only, labelled so:
 # English's spoken values still match them write for write; Spanish's do not, by the two writes the protection adds
 # after the 3.9 s cancel (R1=40, R0=C0), so it is not compared; the times legitimately differ.  The module
-# harness checks speech-dispatcher's protocol and every message's audio, and its control must fail; the no-GPL audit
+# harness checks speech-dispatcher's protocol and every message's audio (run ahead too), and its two controls (the
+# unit never cancelled, SSI263RunAhead ignored) must fail; the no-GPL audit
 # (tools/check_no_gpl.py) searches the library, the module, the package and the wheel, and its controls must fail.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$(cd "${1:-$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie}" && pwd)"
@@ -67,7 +68,14 @@ check "chip defaults" python3 src/csrc/gen_chip_defaults.py --check
 check "speech-dispatcher module" python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^stop +module .*identical" \
     "^after +module .*DIFFER" "^set +module .*DIFFER" "^key +module .*DIFFER" "^spanish +module .*identical" \
-    "^7 of 10 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
+    "^ra_stop +module .*identical" "^ra_after +module .*DIFFER" \
+    "^12 of 16 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
+    python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
+# the run-ahead key (SSI263RunAhead, EXPERIMENTAL) dropped on its way to the voice: the module speaks the lockstep, so
+# every run-ahead check against the run-ahead reference fails, and this user's 0 over the module file's 1 still passes
+control "module CONTROL (SSI263RunAhead ignored, must fail)" "^speak +module .*identical" \
+    "^ra_speak +module .*DIFFER" "^ra_stop +module .*DIFFER" "^ra_after +module .*DIFFER" "^ra_sys +module .*DIFFER" \
+    "^ra_user0 +module .*identical" "^12 of 16 checks passed" -- env SD_SSI263_TEST_IGNORE_RUN_AHEAD=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # The Blazie emulator in a terminal (src/apps/blazie/README-linux.md), on MAME's Z180: its keyboard without a unit
 # (test_keys), the unit headless as on Windows (test_emu_unit, test_clock), and the whole program headless

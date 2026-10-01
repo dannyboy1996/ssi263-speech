@@ -31,6 +31,11 @@ BL_API void blv_destroy(bl_voice *v);
 /* NVDA's scales: rate, pitch and volume 0-100 (50, 50, 100 = the unit's factory rate 11 and pitch 16, full volume);
    tone 0-26 (7 = factory); pack = the driver's "short pauses" (sentences packed onto one line from the second on). */
 BL_API void blv_set(bl_voice *v, int rate, int pitch, int tone, int volume, int pack);
+/* The driver's "Run the unit ahead" (runAhead; EXPERIMENTAL, off by default): nonzero runs the unit ahead of its chip
+   from the next blv_speak, as the driver does, with packing on only (blv_set's pack).  The host carries the whole
+   mode (bl_host.h "run_ahead", run_ahead.h): its completion in blv_render's done, its faults in blv_speak's -1 and
+   blv_fault, its settle before a cancel in blv_cancel.  Off: the lockstep, byte for byte as before. */
+BL_API void blv_set_run_ahead(bl_voice *v, int on);
 
 /* Starts one utterance (UTF-8).  Returns the number of lines sent to the unit (0: nothing to say), or -1 when the
    host refused it (a run-ahead fault); the next blv_speak recovers with a cancel first. */

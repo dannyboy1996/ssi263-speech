@@ -28,6 +28,7 @@ struct bl_voice {
     bl_host *host;
     int encoding;
     int rate, pitch, tone, volume, pack;          /* NVDA's scales */
+    int run_ahead;                                /* the driver's runAhead (blv_set_run_ahead) */
     int sent_rate, sent_pitch, sent_tone;         /* unit.sent_settings */
     double gain;
     int lead, active;
@@ -97,6 +98,11 @@ BL_API ssi263 *blv_chip(bl_voice *v) { return v->chip; }
 BL_API void blv_set(bl_voice *v, int rate, int pitch, int tone, int volume, int pack)
 {
     v->rate = rate; v->pitch = pitch; v->tone = tone; v->volume = volume; v->pack = pack != 0;
+}
+
+BL_API void blv_set_run_ahead(bl_voice *v, int on)
+{
+    v->run_ahead = on != 0;
 }
 
 /* ---- _unit_rate, _unit_pitch (int() of a positive float = floor) ---------------------------------------------- */
@@ -468,6 +474,9 @@ BL_API int blv_speak(bl_voice *v, const char *utf8)
     v->gain = MAKEUP * v->volume / 100.0;
     v->lead = 1;
     v->active = 0;
+    /* unit.run_ahead: on with short pauses only (both Braille Lite voices are in the driver's RUN_AHEAD_TESTED); read
+       by the host's next say, which runs the mode (run_ahead.h) -- nothing of it here */
+    bh_set_int(v->host, "run_ahead", v->run_ahead && v->pack);
     if (v->fault) {                                  /* the explicit recovery: a cancel clears the host's fault */
         bh_cancel(v->host, 3.0, -1.0, -1.0);
         v->fault = 0;

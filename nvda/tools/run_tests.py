@@ -917,6 +917,15 @@ CHECKS.append(check("bl_voice = the NVDA driver, byte for byte", [PY, "voice_equ
 CHECKS.append(check("bl_voice CONTROL (packing flipped, must fail)", [PY, "voice_equiv.py"],
                     env={"VOICE_EQUIV_BREAK": "1"}, expect_fail=True,
                     fail_marks=[r"^DIFF ", r"^[0-9] of 10 utterances byte-identical to the NVDA driver$"]))
+# ... and with "run ahead" on (blv_set_run_ahead, the speech-dispatcher module's SSI263RunAhead): the driver's runAhead
+# path, byte for byte, the host running ahead on both sides wherever the driver does (short pauses on); its control
+# never turns it on in C, so the C side speaks the lockstep
+CHECKS.append(check("bl_voice = the NVDA driver with run ahead, byte for byte", [PY, "voice_equiv.py", "--run-ahead"]))
+CHECKS.append(check("bl_voice run ahead CONTROL (never turned on in C, must fail)", [PY, "voice_equiv.py", "--run-ahead"],
+                    env={"VOICE_EQUIV_BREAK": "ahead"}, expect_fail=True,
+                    fail_marks=[r"^DIFF  en .*run ahead: driver 1, C 0, want 1  'Hello there\.'",
+                                r"^DIFF  es .*run ahead: driver 1, C 0, want 1",
+                                r"^[0-9] of 10 utterances byte-identical to the NVDA driver \(run ahead on\)$"]))
 # bl_voice's text path (currencies, clean-up, lines, encoding) against the driver's, on random texts; and its control
 CHECKS.append(check("bl_voice text = the driver's, 5000 random texts", [PY, "voice_text_equiv.py", "5000", "1"]))
 CHECKS.append(check("bl_voice text CONTROL (no currencies, must fail)", [PY, "voice_text_equiv.py", "2000", "1"],

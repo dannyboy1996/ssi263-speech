@@ -4,7 +4,11 @@ equal what blv_render returns.  English and (when its files are there) Spanish; 
 text clean-up, settings changes and the lead trim are all on the path.
 
     python voice_equiv.py            # exit 1 on the first difference
+    python voice_equiv.py --run-ahead
+                                     # "run ahead" on: the driver's runAhead setting against blv_set_run_ahead (the
+                                     # host runs ahead only with packing on, as the driver gates it)
     VOICE_EQUIV_BREAK=1              # control: the C side speaks with pack flipped -- must FAIL
+    VOICE_EQUIV_BREAK=ahead          # control, with --run-ahead: the C side never turns run ahead on -- must FAIL
 
 Number words are off on both sides: bl_voice v1 leaves numbers to the firmware (bl_voice.h).
 """
@@ -15,6 +19,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+RUN_AHEAD = "--run-ahead" in sys.argv
 sys.argv = [sys.argv[0], "blazie"]
 src = open(os.path.join(HERE, "fake_nvda_driver_test.py"), encoding="utf-8").read()
 exec(src.split("time.sleep(2.0)")[0])
@@ -24,6 +29,7 @@ ARCH = "x64" if struct.calcsize("P") == 8 else "x86"
 LIB = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib", ARCH, "bl.dll")
 CHIP = os.path.join(os.path.dirname(os.path.dirname(HERE)), "src", "ssi263", "_bin", ARCH, "ssi263.dll")
 BREAK = os.environ.get("VOICE_EQUIV_BREAK") == "1"
+BREAK_AHEAD = os.environ.get("VOICE_EQUIV_BREAK") == "ahead"
 
 # (text, rate, pitch, tone, volume, pack)
 CASES = [
@@ -55,6 +61,7 @@ def driver_side(cases):
         return orig(data, onDone)
     d._player.feed = feed
     d._numbers = False
+    d._set_runAhead(RUN_AHEAD)
     for text, rate, pitch, tone, volume, pack in cases:
         d._rate, d._pitch, d._tone, d._volume, d._short = rate, pitch, str(tone), volume, pack
         del raw[:]
@@ -62,7 +69,7 @@ def driver_side(cases):
         d.speak([text])
         if not wait_idle(60):
             sys.exit("the driver did not finish %r" % text)
-        out.append(b"".join(raw))
+        out.append((b"".join(raw), d._unit.geti("run_ahead")))
     d._player.feed = orig
     return out
 
@@ -78,10 +85,17 @@ def c_side(cases, fw, state, encoding):
     lib.blv_render.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes.c_short)),
                                ctypes.POINTER(ctypes.c_int)]
     lib.blv_destroy.argtypes = [ctypes.c_void_p]
+    lib.blv_host.restype = ctypes.c_void_p
+    lib.blv_host.argtypes = [ctypes.c_void_p]
+    lib.bh_get_int.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
     err = ctypes.create_string_buffer(256)
     v = lib.blv_create(fw.encode("mbcs"), state.encode("mbcs"), encoding, float(d._out_rate), 1, 0, err, 256)
     if not v:
         sys.exit("blv_create: %s" % err.value.decode())
+    if RUN_AHEAD and not BREAK_AHEAD:
+        lib.blv_set_run_ahead.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.blv_set_run_ahead(v, 1)
+    host = lib.blv_host(v)
     out = []
     for text, rate, pitch, tone, volume, pack in cases:
         lib.blv_set(v, rate, pitch, tone, volume, int(pack) ^ (1 if BREAK else 0))
@@ -91,21 +105,29 @@ def c_side(cases, fw, state, encoding):
             n = lib.blv_render(v, ctypes.byref(pcm), ctypes.byref(done))
             if n:
                 chunks.append(ctypes.string_at(pcm, 2 * n))
-        out.append(b"".join(chunks))
+        ahead = lib.bh_get_int(host, b"run_ahead")
+        if ahead and lib.bh_get_int(host, b"run_ahead_captured") <= 0:
+            ahead = -1                                  # on, but nothing captured: not the run-ahead path
+        out.append((b"".join(chunks), ahead))
     lib.blv_destroy(v)
     return out
 
 
 def compare(label, cases, a, b):
     bad = 0
-    for (text, *_), x, y in zip(cases, a, b):
-        if x == y:
-            print("same  %-6s %6d samples  %r" % (label, len(x) // 2, text[:40]))
+    for (text, *_, pack), (x, xa), (y, ya) in zip(cases, a, b):
+        want = int(RUN_AHEAD and pack)                  # the driver runs ahead only with short pauses on
+        flags = "" if xa == want and ya == want else "  run ahead: driver %d, C %d, want %d" % (xa, ya, want)
+        if x == y and not flags:
+            print("same  %-6s %6d samples  run ahead %d  %r" % (label, len(x) // 2, want, text[:40]))
             continue
         bad += 1
+        if x == y:
+            print("DIFF  %-6s %6d samples, the same PCM%s  %r" % (label, len(x) // 2, flags, text[:40]))
+            continue
         k = next((i for i in range(0, min(len(x), len(y)), 2) if x[i:i + 2] != y[i:i + 2]), min(len(x), len(y)))
-        print("DIFF  %-6s driver %d / C %d samples, first difference at sample %d  %r"
-              % (label, len(x) // 2, len(y) // 2, k // 2, text[:40]))
+        print("DIFF  %-6s driver %d / C %d samples, first difference at sample %d%s  %r"
+              % (label, len(x) // 2, len(y) // 2, k // 2, flags, text[:40]))
     return bad
 
 
@@ -117,5 +139,6 @@ if os.path.isfile(drv_mod.FIRMWARE_ES) and os.path.isfile(drv_mod.STATE_ES):
     bad += compare("es", CASES_ES, driver_side(CASES_ES), c_side(CASES_ES, drv_mod.FIRMWARE_ES, drv_mod.STATE_ES, 1))
 d.terminate()
 total = len(CASES) + len(CASES_ES)
-print("%d of %d utterances byte-identical to the NVDA driver" % (total - bad, total))
+print("%d of %d utterances byte-identical to the NVDA driver%s" % (total - bad, total,
+                                                                   " (run ahead on)" if RUN_AHEAD else ""))
 sys.exit(1 if bad else 0)

@@ -22,7 +22,8 @@ it added.
 
 Settings are in `ssi263.conf` beside speech-dispatcher's other module settings (the installer prints where), each
 explained in the file: the sample rate (11, 22 or 44 kHz), voice inflection, the unit's hiss or whine, its tone,
-and the "short pauses" line packing. For your own settings, without root and kept when you reinstall, copy any of
+the "short pauses" line packing, and the experimental "run the unit ahead" (`SSI263RunAhead 1`; off by default, as
+in the NVDA add-on). For your own settings, without root and kept when you reinstall, copy any of
 those lines into `~/.config/ssi263-speech/sd_ssi263.conf`: they win over the module's file. After a change,
 `killall speech-dispatcher` (Orca reconnects by itself). Rate, pitch and volume come from Orca or spd-say, mapped
 onto the unit's own: its factory rate 11 and pitch 16 at the middle.
