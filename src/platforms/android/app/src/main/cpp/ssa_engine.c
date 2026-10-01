@@ -66,6 +66,7 @@ void ssa_default_settings(ssa_settings *s)
     s->so_tone = 8;
     s->so_join = 1;
     s->so_short = 1;
+    s->numbers = 1;                    /* blazie.py: self._numbers = True (numberWords, defaultVal=True) */
 }
 
 static int clamp100(int x) { return x < 0 ? 0 : x > 100 ? 100 : x; }
@@ -124,7 +125,7 @@ static void settings_for(const ssa_engine *e, int voice, const ssa_settings *s, 
         o->tone = s->tone;
         o->pack = s->pack;
         o->run_ahead = s->run_ahead && ssa_voice_break != 3;
-        o->numbers = 0;                /* as before 0.7.5 (bl.dll, the tests' reference, has no number words) */
+        o->numbers = s->numbers && ssa_voice_break != 4;    /* bl_numbers (voices.c), English or Spain's */
         break;
     case SSA_SPEAKOUT:                 /* the slider's pitch as the setting, the request's as a capital's offset */
         o->pitch = clamp100(s->pitch);

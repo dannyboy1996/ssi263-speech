@@ -113,8 +113,9 @@ JNIEXPORT jstring JNICALL FN(nativeError)(JNIEnv *env, jclass cls)
 }
 
 JNIEXPORT jint JNICALL FN(nativeStart)(JNIEnv *env, jclass cls, jint voice, jbyteArray jutf8, jint rate, jint pitch,
-                                       jint tone, jint volume, jint pack, jint run_ahead, jint so_tone,
-                                       jint so_join, jint so_short, jint request_rate, jint request_pitch)
+                                       jint tone, jint volume, jint pack, jint run_ahead, jint numbers,
+                                       jint so_tone, jint so_join, jint so_short, jint request_rate,
+                                       jint request_pitch)
 {
     ssa_settings s;
     jsize n;
@@ -128,7 +129,8 @@ JNIEXPORT jint JNICALL FN(nativeStart)(JNIEnv *env, jclass cls, jint voice, jbyt
     (*env)->GetByteArrayRegion(env, jutf8, 0, n, (jbyte *)utf8);
     utf8[n] = 0;
     s.rate = rate; s.pitch = pitch; s.tone = tone; s.volume = volume; s.pack = pack;
-    s.run_ahead = run_ahead; s.so_tone = so_tone; s.so_join = so_join; s.so_short = so_short;
+    s.run_ahead = run_ahead; s.numbers = numbers;
+    s.so_tone = so_tone; s.so_join = so_join; s.so_short = so_short;
     g_error[0] = 0;
     r = ssa_start(g_engine, voice, utf8, &s, request_rate, request_pitch);
     free(utf8);

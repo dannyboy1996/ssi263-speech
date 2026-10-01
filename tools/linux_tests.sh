@@ -15,8 +15,9 @@
 # English's spoken values still match them write for write; Spanish's do not, by the two writes the protection adds
 # after the 3.9 s cancel (R1=40, R0=C0), so it is not compared; the times legitimately differ.  The module
 # harness checks speech-dispatcher's protocol and every message's audio (run ahead too) on every voice it offers (the
-# Braille Lite, the Accent SA, and the Accent-mini and Speak-Out when built in), and its three controls (the unit never
-# cancelled, SSI263RunAhead ignored, SSI263AccentInflection ignored) must fail; the no-GPL audit
+# Braille Lite, the Accent SA, and the Accent-mini and Speak-Out when built in) and the Braille Lite's number words,
+# and its four controls (the unit never cancelled, SSI263RunAhead ignored, SSI263BrailleLiteNumbers ignored,
+# SSI263AccentInflection ignored) must fail; the no-GPL audit
 # (tools/check_no_gpl.py) searches the library, the module, the package and the wheel, and its controls must fail.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$(cd "${1:-$ROOT/nvda/dist/blazie-build/synthDrivers/_ssi263_blazie}" && pwd)"
@@ -71,18 +72,24 @@ control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^s
     "^after +module .*DIFFER" "^set +module .*DIFFER" "^key +module .*DIFFER" "^spanish +module .*identical" \
     "^ra_stop +module .*identical" "^ra_after +module .*DIFFER" \
     "^as_stop +module .*identical" "^as_after +module .*DIFFER" "^as_bl +module .*identical" \
-    "^18 of 26 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
+    "^num_off +module .*identical" "^23 of 31 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # the run-ahead key (SSI263RunAhead, EXPERIMENTAL) dropped on its way to the voice: the module speaks the lockstep, so
 # every run-ahead check against the run-ahead reference fails, and this user's 0 over the module file's 1 still passes
 control "module CONTROL (SSI263RunAhead ignored, must fail)" "^speak +module .*identical" \
     "^ra_speak +module .*DIFFER" "^ra_stop +module .*DIFFER" "^ra_after +module .*DIFFER" "^ra_sys +module .*DIFFER" \
-    "^ra_user0 +module .*identical" "^as_speak +module .*identical" "^22 of 26 checks passed" \
+    "^ra_user0 +module .*identical" "^as_speak +module .*identical" "^27 of 31 checks passed" \
     -- env SD_SSI263_TEST_IGNORE_RUN_AHEAD=1 \
+    python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
+# the Braille Lite's number words key (SSI263BrailleLiteNumbers) dropped on its way to the voice: the driver's default
+# (on) reaches it, so this user's 0 is not heard -- English and Spanish -- while the default and this user's 1 still pass
+control "module CONTROL (SSI263BrailleLiteNumbers ignored, must fail)" "^num_dflt +module .*identical" \
+    "^num_es +module .*identical" "^num_user +module .*identical" "^num_off +module .*DIFFER" \
+    "^num_es_off +module .*DIFFER" "^29 of 31 checks passed" -- env SD_SSI263_TEST_IGNORE_BL_NUMBERS=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # the Accent's own key (SSI263AccentInflection) dropped on its way to the Accent SA: only as_infl fails
 control "module CONTROL (SSI263AccentInflection ignored, must fail)" "^as_speak +module .*identical" \
-    "^as_infl +module .*DIFFER" "^25 of 26 checks passed" -- env SD_SSI263_TEST_IGNORE_ACCENT_INFLECTION=1 \
+    "^as_infl +module .*DIFFER" "^30 of 31 checks passed" -- env SD_SSI263_TEST_IGNORE_ACCENT_INFLECTION=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
 # The Blazie emulator in a terminal (src/apps/blazie/README-linux.md), on MAME's Z180: its keyboard without a unit
 # (test_keys), the unit headless as on Windows (test_emu_unit, test_clock), and the whole program headless

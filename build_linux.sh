@@ -45,9 +45,15 @@ for f in bl_board flash29 bl_serial bl_idle bl_clock bl_host bl_voice bl_firmwar
     $CC $BOARD -c -o "$OUT/obj/$f.o" "$SRC/blazie/$f.c"
 done
 CHIP_OBJS="$OUT/obj/ssi263.o $OUT/obj/ssi263dsp.o"
+# the Braille Lite driver's number words (bl_numbers.h, for blv_set_numbers: English, and Spain's Spanish), as in
+# ssi263speech.dll (build_ssi263speech.py): plain C99
+for f in blazie/bl_numbers numwords numwords_es; do
+    $CC -O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC -I$SRC/blazie -c -o "$OUT/obj/${f##*/}.o" "$SRC/$f.c"
+done
+NUM_OBJS="$OUT/obj/bl_numbers.o $OUT/obj/numwords.o $OUT/obj/numwords_es.o"
 # the board alone (test_bl_board), and the board with its host and voice (the library)
 BOARD_OBJS="$OUT/obj/bl_board.o $OUT/obj/flash29.o $OUT/obj/bl_serial.o $OUT/obj/bl_idle.o $OUT/obj/bl_clock.o $OUT/obj/z180_mame.o $OUT/obj/z180_asci.o"
-LIB_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj/bl_voice.o $OUT/obj/bl_firmware.o $OUT/obj/bl_state.o"
+LIB_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj/bl_voice.o $OUT/obj/bl_firmware.o $OUT/obj/bl_state.o $NUM_OBJS"
 
 # only the API is exported (SSI263_API / BL_API mark it); the Z180 core and the C++ runtime stay inside
 $CXX -shared $SHARED_CXX -o "$OUT/libssi263speech.so" $LIB_OBJS -lm
@@ -186,33 +192,34 @@ $CXX -shared -o "$OUT/libaccent_sa.so" "$OUT"/obj_accentsa/*.o -lm
 # The speech-dispatcher module (src/platforms/speechd): one program with every voice's engine inside (no .so to
 # install beside it) -- the Braille Lite (the library's objects), the Accent SA (as_voice on the board above), and
 # the Accent-mini (am_voice, MAME's 8086) and the Speak-Out (so_voice, MAME's V40) once their voices' sources are in
-# the tree: sd_voices.c's SD_ACCENT_MINI and SD_SPEAKOUT switch their table entries on.  libsd_voices_ref.so: the same
-# engine objects with the chip, the test's reference (test_sd_ssi263.py drives the voices directly); never shipped.
+# the tree: voices.c (src/csrc/voices.h, the voice table the SAPI engine and Android share) gets SSV_HAVE_ACCENTMINI and
+# SSV_HAVE_SPEAKOUT for them.  libsd_voices_ref.so: the same engine objects with the chip and the number words, the
+# test's reference (test_sd_ssi263.py drives the voices directly); never shipped.
 rm -rf "$OUT/obj_voices"; mkdir -p "$OUT/obj_voices"
 VOICE="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC -I$SRC/cpu -I$SRC/accentsa -I$SRC/pc86 -I$SRC/speakout"
-VOICE_SRCS="$SRC/accentsa/as_voice.c $SRC/numwords.c"
+VOICE_SRCS="$SRC/accentsa/as_voice.c"            # numwords.o: the library's ($NUM_OBJS)
 [ -f "$SRC/accent_text.c" ] && VOICE_SRCS="$VOICE_SRCS $SRC/accent_text.c"   # the Accents' shared text rules
 SD_DEFS=""
 ENGINE_OBJS="$OUT/obj_accentsa/i8085_mame.o $OUT/obj_accentsa/as_board.o $OUT/obj_accentsa/as_usart.o $OUT/obj_accentsa/as_host.o"
 if [ -f "$SRC/accentmini/am_voice.c" ]; then
     VOICE_SRCS="$VOICE_SRCS $SRC/accentmini/am_voice.c $SRC/accentmini/am_host.c"
     ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_i86/pc86.o $OUT/obj_i86/i86_mame.o"
-    SD_DEFS="$SD_DEFS -DSD_ACCENT_MINI"
+    SD_DEFS="$SD_DEFS -DSSV_HAVE_ACCENTMINI"
 fi
 if [ -f "$SRC/speakout/so_voice.c" ]; then
     VOICE_SRCS="$VOICE_SRCS $SRC/speakout/so_voice.c $SRC/speakout/so_host.c"
     ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_v40/so_board.o $OUT/obj_v40/so_icu.o $OUT/obj_v40/so_scu.o $OUT/obj_v40/so_hex.o $OUT/obj_v40/v40_mame.o"
-    SD_DEFS="$SD_DEFS -DSD_SPEAKOUT"
+    SD_DEFS="$SD_DEFS -DSSV_HAVE_SPEAKOUT"
 fi
 for f in $VOICE_SRCS; do
     $CC $VOICE -I"$(dirname "$f")" -c -o "$OUT/obj_voices/$(basename "$f" .c).o" "$f"
 done
 ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_voices/*.o"
 $CC $BOARD -c -o "$OUT/sd_ssi263.o" "$ROOT/src/platforms/speechd/sd_ssi263.c"
-$CC $BOARD -I$SRC/accentsa -I$SRC/pc86 -I$SRC/speakout $SD_DEFS -c -o "$OUT/sd_voices.o" \
-    "$ROOT/src/platforms/speechd/sd_voices.c"
-$CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" "$OUT/sd_voices.o" $LIB_OBJS $ENGINE_OBJS -lm
-$CXX -shared $SHARED_CXX -o "$OUT/libsd_voices_ref.so" $CHIP_OBJS $ENGINE_OBJS -lm
+$CC $BOARD -c -o "$OUT/sd_voices.o" "$ROOT/src/platforms/speechd/sd_voices.c"
+$CC $VOICE $SD_DEFS -c -o "$OUT/sd_ssv.o" "$SRC/voices.c"
+$CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" "$OUT/sd_voices.o" "$OUT/sd_ssv.o" $LIB_OBJS $ENGINE_OBJS -lm
+$CXX -shared $SHARED_CXX -o "$OUT/libsd_voices_ref.so" $CHIP_OBJS $NUM_OBJS $ENGINE_OBJS -lm
 echo "built $OUT/sd_ssi263: $("$OUT/sd_ssi263" --voices | cut -f3 | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 
 # The Accent-mini in C (src/csrc/accentmini: SPKEMS.DVC on MAME's 8086 above, accent.py's host and the NVDA driver's

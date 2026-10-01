@@ -23,8 +23,9 @@
  * utterance starts clean.  The Speak-Out and the Accent-mini take a request's pitch as the NVDA driver takes a
  * capital's -- the slider's pitch as the setting, the difference as PitchCommand's offset (snapped to, and restored
  * after the utterance by the voice itself) -- moved at least one of the box's pitch steps, as the Accent SA's is.
- * The Braille Lite takes it as its pitch setting (bl_voice's own scale has 32 steps), and its experimental run ahead
- * (blv_set_run_ahead) from the settings.
+ * The Braille Lite takes it as its pitch setting (bl_voice's own scale has 32 steps), and from the settings its
+ * number words (the NVDA driver's "Custom number processing", bl_numbers through blv_set_numbers: on by default, as
+ * there) and its experimental run ahead (blv_set_run_ahead).
  *
  * No JNI here (ssa_jni.c is the thin bridge), so the host-side test (src/platforms/android/test) runs this same code
  * on the desktop and over adb.  Not thread-safe: one caller at a time (the app holds a lock), except ssa_stop.
@@ -56,13 +57,15 @@ typedef struct ssa_engine ssa_engine;
 
 /* The app's own settings, on the NVDA drivers' scales.  rate, pitch 0-100 (50 = the unit's factory rate and pitch);
    volume 0-200 (100 = the desktop voices' level), every voice's.  The Braille Lite's (bl_voice.h's blv_set): tone
-   0-26 (7), pack = short pauses, run_ahead = "Run the unit ahead" (EXPERIMENTAL, off by default).  The Speak-Out's
+   0-26 (7), pack = short pauses, run_ahead = "Run the unit ahead" (EXPERIMENTAL, off by default), numbers = "Read
+   numbers as words" (1, the driver's default; English, and Spain's Spanish for the Spanish unit).  The Speak-Out's
    (so_voice.h's sov_set): so_tone 0-25 = A-Z (8 = I), so_join = "Join phrases", so_short = "Shorten pauses between
    sentences".  The Accents take rate, pitch and volume. */
 typedef struct {
     int rate, pitch, tone, volume, pack;
     int run_ahead;
     int so_tone, so_join, so_short;
+    int numbers;
 } ssa_settings;
 
 /* The defaults above (the NVDA drivers'). */
@@ -136,7 +139,7 @@ int ssa_speakout_pitch(int slider, int request);       /* ... with the Speak-Out
    follows; 4: the plain mapping for the pitch (ssa_step_pitch's step rule gone), so a 120 % request sounds like
    100 % -- the Accent SA's and the Speak-Out's alike.  ssa_voice_break -- 1: the Speak-Out's request pitch dropped
    (no capital offset); 2: the Speak-Out's own settings (tone, join, short pauses) dropped, the defaults sent; 3: the
-   Braille Lite's run ahead dropped. */
+   Braille Lite's run ahead dropped; 4: the Braille Lite's number words dropped (always off, as before 0.7.5). */
 extern int ssa_accent_break;
 extern int ssa_voice_break;
 

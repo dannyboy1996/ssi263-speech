@@ -1,14 +1,16 @@
 /* sd_voices.h -- the speech-dispatcher module's voice table: each voice it offers, the engine behind it, and that
  * engine's create / set / speak / render / cancel / destroy.  sd_ssi263.c speaks the protocol and calls only this.
  *
- * The voices are the NVDA add-ons' (Tomi, 0.7.1: "uniform everywhere"):
+ * The voices are the NVDA add-ons' (Tomi, 0.7.1: "uniform everywhere"), each through src/csrc/voices.h -- the voice
+ * table the SAPI engine and Android speak through: each voice's engine and its NVDA driver's defaults:
  *   Braille Lite 2000            en-US  bl_voice.h  <data>/BL2ENG.BNS + bl2_2003_warm.state
  *   Braille Lite 2000 (espanol)  es-ES  bl_voice.h  <data>/BL2SPA.BNS + bl2spa_fresh.state
  *   Accent SA                    en-US  as_voice.h  <data>/aicom-accent-sa/u2.BIN, u3.BIN, u4.BIN
- *   Accent-mini                  en-US  am_voice.h  <data>/aicom-accent-mini/SPKEMS.DVC     (built with SD_ACCENT_MINI)
- *   Speak-Out                    en-US  so_voice.h  <data>/gw-micro-speakout/SPEAKOUT.HEX   (built with SD_SPEAKOUT)
+ *   Accent-mini                  en-US  am_voice.h  <data>/aicom-accent-mini/SPKEMS.DVC     (built with its engine)
+ *   Speak-Out                    en-US  so_voice.h  <data>/gw-micro-speakout/SPEAKOUT.HEX   (built with its engine)
  * The data folder mirrors the repository's firmware/ folders.  A voice whose files are not there is not offered.
- * build_linux.sh defines SD_ACCENT_MINI / SD_SPEAKOUT when those voices' sources are in the tree.
+ * build_linux.sh compiles voices.c with SSV_HAVE_ACCENTMINI / SSV_HAVE_SPEAKOUT when those voices' sources are in the
+ * tree; a voice whose engine is not built in is not listed.
  *
  * Each voice's unit is made on its first use and kept for the session (as the add-ons keep one card): its settings
  * are sent before each message, a stop cancels it.  Not thread-safe (the module is one thread).  MIT.
@@ -30,6 +32,7 @@ typedef struct {
     int tone;                          /* SSI263Tone 0-26 */
     int short_pauses;                  /* SSI263ShortPauses 0/1 */
     int run_ahead;                     /* SSI263RunAhead 0/1 (EXPERIMENTAL; the Braille Lite only) */
+    int numbers;                       /* SSI263BrailleLiteNumbers 0/1 (the driver's custom number processing: 1) */
     /* the Accents' (the SA and the mini) */
     int accent_inflection;             /* SSI263AccentInflection 0-100 (100 = full intonation) */
     int accent_numbers;                /* SSI263AccentNumbers 0/1 (the add-on's custom number processing) */

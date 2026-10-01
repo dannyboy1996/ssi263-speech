@@ -5,7 +5,12 @@ ssa_map.c and ssa_import.c, on the same chip, boards, hosts and voices), every c
   (src/platforms/speechd/sd_ssi263.c: SSIP -100..100 through its to100), from the desktop library the NVDA add-on
   and Linux ship (bl.dll + ssi263.dll on Windows, libssi263speech.so on Linux), loaded with ctypes.  Lockstep, and
   with the EXPERIMENTAL run ahead on (blv_set_run_ahead, the app's setting), whose audio must also differ from the
-  lockstep's (the run-ahead path taken).
+  lockstep's (the run-ahead path taken).  And its number words ("Read numbers as words", the NVDA driver's "Custom
+  number processing", on by default): "1,234,567", "3.5" and "$12.50" on the English unit and Spain's "1.234.567" and
+  "3,5" on the Spanish one, on and off, each on a fresh unit, against bl_voice with blv_set_numbers(bl_numbers) and
+  without -- from a library that has the number words (bl.dll has none): ssi263speech.dll on Windows
+  (src/csrc/build_ssi263speech.py), libssi263speech.so on Linux.  On and off must also sound different (fresh units:
+  by the setting alone).
 - The GW Micro Speak-Out (imported; its cases run when firmware/gw-micro-speakout/SPEAKOUT.HEX is there): against
   so_voice driven directly (test_android_native --so-direct: sov_set, sov_speak, sov_render, sov_cancel on one kept
   unit, the settings computed here: the request's rate on the slider, the slider's pitch as the setting and the
@@ -42,15 +47,17 @@ ssa_map.c and ssa_import.c, on the same chip, boards, hosts and voices), every c
                              speakout-pitch       ssa_voice_break 1: the Speak-Out's request pitch dropped
                              speakout-settings    ssa_voice_break 2: its tone, join and short pauses dropped
                              run-ahead            ssa_voice_break 3: the Braille Lite's run ahead dropped
+                             numbers              ssa_voice_break 4: its number words dropped (always off)
                              import-hash          ssa_import_break: any well-formed Intel HEX taken as the Speak-Out
 
 SSI263_ANDROID_TEST_ONLY=<blocks>, a comma list of bl (the Braille Lite in lockstep, its Spanish unit and the probe),
-ra (run ahead), accent (the Accent SA and its text), so (the Speak-Out), mini (the Accent-mini), import (the Speak-Out
-import): only those blocks, on both sides -- for the controls, so each runs what its bug touches (the 3-minute gate).
+ra (run ahead), num (the number words), accent (the Accent SA and its text), so (the Speak-Out), mini (the
+Accent-mini), import (the Speak-Out import): only those blocks, on both sides -- for the controls, so each runs what
+its bug touches (the 3-minute gate).
 
 Options: --firmware <folder> (default $SSI263_FIRMWARE, else firmware/blazie; the Spanish unit there or in its
-spanish/ folder), --lib <reference library>, --chip <ssi263.dll bl.dll needs>, --abi <abi> (default arm64-v8a),
---aicom <folder> (default firmware/aicom-accent-sa).
+spanish/ folder), --lib <reference library>, --chip <ssi263.dll bl.dll needs>, --numbers-lib <the number words'
+reference library>, --abi <abi> (default arm64-v8a), --aicom <folder> (default firmware/aicom-accent-sa).
 """
 import argparse
 import ctypes
@@ -98,6 +105,8 @@ RA_CASES = [
     ("ra-stopped", LONG, 0, 0, 5),
     ("ra-after-stop", "Next message.", 0, 0, None),
 ]
+# the number words (the C program's num- cases): each language's text on and off, each on a fresh unit
+NUM_TEXTS = {"en": "It is 1,234,567 steps, 3.5 miles and $12.50.", "es": "Son 1.234.567 pasos y 3,5 kilos."}
 FILES = {"en": ("BL2ENG.BNS", "bl2_2003_warm.state"), "es": ("BL2SPA.BNS", "bl2spa_fresh.state")}
 AICOM = os.path.join(REPO, "firmware", "aicom-accent-sa")
 SPEAKOUT_HEX = os.path.join(REPO, "firmware", "gw-micro-speakout", "SPEAKOUT.HEX")
@@ -241,20 +250,23 @@ def accent_level():
 
 # ---- the reference: bl_voice, as sd_ssi263 drives it --------------------------------------------------------------
 class Ref:
-    def __init__(self, lib, data, spanish, run_ahead=0):
+    def __init__(self, lib, data, spanish, run_ahead=0, numbers_fn=None):
         fw, st = FILES["es" if spanish else "en"]
         err = ctypes.create_string_buffer(256)
         self.lib = lib
         self.run_ahead = run_ahead
+        self.numbers_fn = numbers_fn            # bl_numbers, from a library that has it: say(numbers=...) sets it
         self.v = lib.blv_create(os.path.join(data, fw).encode(), os.path.join(data, st).encode(), int(spanish),
                                 22050.0, 1, 0, err, 256)
         if not self.v:
             sys.exit("reference boot failed: %s" % err.value)
 
-    def say(self, text, rate, pitch, blocks, volume=100):
+    def say(self, text, rate, pitch, blocks, volume=100, numbers=None):
         lib = self.lib
         lib.blv_set(self.v, to100(rate), to100(pitch), 7, volume, 1)
         lib.blv_set_run_ahead(self.v, self.run_ahead)
+        if numbers is not None:
+            lib.blv_set_numbers(self.v, self.numbers_fn if numbers else None)
         lib.blv_speak(self.v, text.encode("utf-8"))
         pcm, done, out, n_blocks = ctypes.POINTER(ctypes.c_short)(), ctypes.c_int(0), [], 0
         while not done.value:
@@ -318,6 +330,43 @@ def reference(lib, data, run_ahead=True):
         got["spanish"] = (len(pcm) // 2, fnv(pcm))
         lib.blv_destroy(es.v)
     return got
+
+
+def numbers_reference(lib_path, data):
+    """The num- cases: bl_voice with the number words on and off, each on a fresh unit -- from lib_path, which
+    must carry bl_numbers beside bl_voice (the whole reference from that one library: bl_voice frees what bl_numbers
+    returns).  None when it is not there."""
+    if not os.path.isfile(lib_path):
+        return None
+    lib = load_reference(lib_path, None)
+    if not hasattr(lib, "bl_numbers"):
+        return None
+    lib.blv_set_numbers.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    fn = ctypes.cast(lib.bl_numbers, ctypes.c_void_p)
+    got = {}
+    for lang in ("en", "es"):
+        if not all(os.path.isfile(os.path.join(data, f)) for f in FILES[lang]):
+            continue
+        for name, on in (("num-" + lang, 1), ("num-%s-off" % lang, 0)):
+            ref = Ref(lib, data, lang == "es", numbers_fn=fn)
+            pcm = ref.say(NUM_TEXTS[lang], 0, 0, None, numbers=on)
+            got[name] = (len(pcm) // 2, fnv(pcm))
+            lib.blv_destroy(ref.v)
+    return got
+
+
+def numbers_heard(label, got):
+    """The number words heard: on and off (each on a fresh unit) sound different, in each language spoken."""
+    bad = 0
+    for lang in ("en", "es"):
+        on, off = got.get("num-" + lang), got.get("num-%s-off" % lang)
+        if lang == "es" and on is None and off is None:
+            continue
+        ok = on is not None and off is not None and on[1] != off[1]
+        print("%-5s %-8s num-%s differs from num-%s-off (the number words heard)" % ("ok" if ok else "FAIL", label,
+                                                                                     lang, lang))
+        bad += not ok
+    return bad
 
 
 # ---- the Accent SA's reference: the NVDA driver (accent_reference.py) -----------------------------------------------
@@ -698,6 +747,8 @@ def main():
                     else os.path.join(REPO, "build", "linux", "libssi263speech.so"))
     ap.add_argument("--chip", default=os.path.join(REPO, "src", "ssi263", "_bin", arch, "ssi263.dll") if WINDOWS
                     else None)
+    ap.add_argument("--numbers-lib", default=os.path.join(REPO, "build", "win", arch, "ssi263speech.dll") if WINDOWS
+                    else os.path.join(REPO, "build", "linux", "libssi263speech.so"))
     ap.add_argument("--adb", action="store_true")
     ap.add_argument("--abi", default="arm64-v8a")
     ap.add_argument("--aicom", default=AICOM)
@@ -708,6 +759,11 @@ def main():
         want = reference(load_reference(a.lib, a.chip), data) if block("bl") or block("ra") else {}
         if block("bl"):
             want["probe"] = want["default"]        # ssa_probe: a fresh unit speaks the first case as it did
+        numbers = block("num") and numbers_reference(a.numbers_lib, data)
+        if numbers:
+            want.update(numbers)
+        elif block("num"):
+            print("skip  the number words: no bl_numbers in %s (python src/csrc/build_ssi263speech.py)" % a.numbers_lib)
         accent_want, text_want = accent_reference() if block("accent") else ({}, {})
         want.update(accent_want)
         exe = build_desktop()
@@ -731,6 +787,8 @@ def main():
                 bad += capitals(label, got)
             if block("bl") and block("ra"):
                 bad += run_ahead_taken(label, got)
+            if numbers:
+                bad += numbers_heard(label, got)
             if speakout and block("so"):
                 bad += capitals(label, got, "s")
             if mini and block("mini"):

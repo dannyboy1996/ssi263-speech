@@ -7,7 +7,8 @@
  *                                           one line per case: "<name> <samples> <fnv-1a 64 of the PCM bytes>";
  *                                           with the Aicom folder (u2/u3/u4.BIN), the Accent SA's cases first; with
  *                                           the Accent-mini's driver, its cases; the Speak-Out's when the data folder
- *                                           has SPEAKOUT.HEX; the Braille Lite's, lockstep and run ahead
+ *                                           has SPEAKOUT.HEX; the Braille Lite's, lockstep and run ahead, and its
+ *                                           number words on and off (English, and Spanish when it is there)
  *     test_android_native --texts           stdin's lines as the Accent SA's front end sends them
  *     test_android_native --so-direct <SPEAKOUT.HEX>
  *                                           the Speak-Out's reference: so_voice driven directly (sov_create, sov_set,
@@ -28,7 +29,8 @@
  * maps SSIP (the reference), and the Accent SA's with the NVDA Accent driver itself (accent_reference.py), on the
  * desktop and over adb.  SSI263_ANDROID_TEST_BREAK in the environment puts a bug back, the controls: 1 breaks the rate
  * mapping (ssa_map.h), so the "fast" cases must differ; accent-pitch, accent-glide, accent-reuse and accent-step are
- * ssa_engine.h's ssa_accent_break 1, 2, 3 and 4.
+ * ssa_engine.h's ssa_accent_break 1, 2, 3 and 4; speakout-pitch, speakout-settings, run-ahead and numbers its
+ * ssa_voice_break 1, 2, 3 and 4.
  *
  * Built by the desktop compiler (test_android_native.py) and by build_android.sh --test (static, for a device).
  */
@@ -46,6 +48,9 @@
 static const char *HELLO = "Hello there. This is the Braille Lite, speaking on a phone.";
 static const char *LONG = "This is a long message for the stop test, with a comma or two, that keeps going well "
                           "past the moment the harness says stop. It has a second sentence as well.";
+/* the Braille Lite's number words: English's, and Spain's ("1.234.567" one number, "3,5" tres coma cinco) */
+static const char *NUM_EN = "It is 1,234,567 steps, 3.5 miles and $12.50.";
+static const char *NUM_ES = "Son 1.234.567 pasos y 3,5 kilos.";
 
 typedef struct {
     unsigned long long h;
@@ -549,7 +554,7 @@ int main(int argc, char **argv)
     ssa_accent_break = !brk ? 0 : !strcmp(brk, "accent-pitch") ? 1 : !strcmp(brk, "accent-glide") ? 2
                      : !strcmp(brk, "accent-reuse") ? 3 : !strcmp(brk, "accent-step") ? 4 : 0;
     ssa_voice_break = !brk ? 0 : !strcmp(brk, "speakout-pitch") ? 1 : !strcmp(brk, "speakout-settings") ? 2
-                    : !strcmp(brk, "run-ahead") ? 3 : 0;
+                    : !strcmp(brk, "run-ahead") ? 3 : !strcmp(brk, "numbers") ? 4 : 0;
     ssa_import_break = brk && !strcmp(brk, "import-hash");
     if (argc >= 2 && !strcmp(argv[1], "--texts")) return texts();
     if (argc >= 6 && !strcmp(argv[1], "--level"))
@@ -607,6 +612,26 @@ int main(int argc, char **argv)
         if (speak(e, SSA_ENGLISH, "Next message.", &ra, 100, 100, 4096, 0, &d)) return 1;
         report("ra-after-stop", &d);
         ssa_free(e);
+    }
+
+    /* the number words ("Read numbers as words", the driver's default: on), each case on a fresh unit -- so on and
+       off differ by the setting alone: the setting reaches bl_voice, on and off, English and Spanish */
+    if (block("num")) {
+        static const int voices[2] = {SSA_ENGLISH, SSA_SPANISH};
+        static const char *names[2][2] = {{"num-en", "num-en-off"}, {"num-es", "num-es-off"}};
+        ssa_settings off = s;
+        int k, on;
+        off.numbers = 0;
+        for (k = 0; k < 2; k++)
+            for (on = 1; on >= 0; on--) {
+                e = ssa_new(argv[1]);
+                ssa_configure(e, 22050, 1, 0);
+                if (ssa_has_voice(e, voices[k])) {
+                    if (speak(e, voices[k], k ? NUM_ES : NUM_EN, on ? &s : &off, 100, 100, 4096, 0, &d)) return 1;
+                    report(names[k][!on], &d);
+                }
+                ssa_free(e);
+            }
     }
 
     /* the import's check (ssa_probe): a unit of its own speaks the first case again, as the first case did; and the

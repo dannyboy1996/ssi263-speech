@@ -149,6 +149,11 @@ cat > "$STAGE/share/ssi263-speech/speech-dispatcher/ssi263.conf" <<'EOF'
 # phonemes, without the pauses where the unit reads its next line.  Only with SSI263ShortPauses 1.
 # SSI263RunAhead 0
 
+# Numbers read as words (1, default), as the NVDA add-on's "Custom number processing": "1,234,567" as one million two
+# hundred thirty four thousand..., and the Spanish unit in Spain's way ("1.234.567", "3,5" as tres coma cinco).  0: the
+# unit's own firmware reads them (digit by digit above its limit).
+# SSI263BrailleLiteNumbers 1
+
 # ---- the Accent SA and the Accent-mini (the NVDA Accent add-on's settings) ----
 
 # Inflection, 0-100 (default 100): 100 full intonation, 75, 50, 25, 0 monotone (the nearest of the five is taken).
