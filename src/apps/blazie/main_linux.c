@@ -1236,8 +1236,10 @@ int main(int argc, char **argv)
             g_use_evdev = evdev_open(&g_ev, dev[0] == '/' ? dev : NULL, grab, msg, sizeof msg) > 0;
             if (g_use_evdev)
                 say("Keys: %s%s.", msg, grab ? " (only this program gets them while it runs)" : "");
-            else if (strcmp(dev, "auto"))
+            else if (strcmp(dev, "auto") || g_ev.busy[0])
                 say("Keys: %s; the terminal's keys are used.", msg);
+            if (g_use_evdev && g_ev.busy[0])
+                say("Keys: %s is held by another program (BRLTTY?); its keys come through the terminal.", g_ev.busy);
         }
     }
     term_raw();
@@ -1277,11 +1279,14 @@ int main(int argc, char **argv)
                 ssize_t got = read(0, b, sizeof b);
                 if (got <= 0)
                     break;                      /* the terminal is gone */
-                if (!g_use_evdev) {             /* with the input devices, the terminal's copy of a key is dropped */
+                /* the input devices grabbed, nothing of theirs reaches the terminal: what does is another keyboard's
+                   (BRLTTY's characters from a braille keyboard it holds), the unit's.  Not grabbed, the terminal's
+                   copy of a key is dropped -- but the menu keys still work from it. */
+                if (!g_use_evdev || g_ev.grabbed) {
                     int k = term_dec_feed(&g_term, b, (int)got, now, ev, 256), j;
                     for (j = 0; j < k && !g_quit; j++)
                         key_in(&ev[j], now);
-                } else {                        /* ... but the menu keys still work from the terminal */
+                } else {
                     int k = term_dec_feed(&g_term, b, (int)got, now, ev, 256), j;
                     int tns = KINDS[g_kind].kind == EMU_TYPE_N_SPEAK;
                     for (j = 0; j < k; j++)

@@ -74,6 +74,18 @@ static int add_device(evdev_set *s, const char *path, int must, char *msg, int m
         close(fd);
         return 0;
     }
+    /* another program holding it for itself (BRLTTY can): it would give nothing, and its keys would never reach the
+       terminal either -- left alone, so the terminal's keys are used */
+    if (ioctl(fd, EVIOCGRAB, 1) < 0 && errno == EBUSY) {
+        char name[80] = "";
+        if (ioctl(fd, EVIOCGNAME(sizeof name), name) < 0 || !name[0])
+            snprintf(name, sizeof name, "%s", path);
+        name[sizeof name - 1] = 0;
+        snprintf(s->busy, sizeof s->busy, "%s", name);
+        close(fd);
+        return -2;
+    }
+    ioctl(fd, EVIOCGRAB, 0);
     s->fd[s->n] = fd;
     if (ioctl(fd, EVIOCGNAME(sizeof s->name[s->n]), s->name[s->n]) < 0)
         snprintf(s->name[s->n], sizeof s->name[s->n], "%s", path);
@@ -84,11 +96,14 @@ static int add_device(evdev_set *s, const char *path, int must, char *msg, int m
 
 int evdev_open(evdev_set *s, const char *path, int grab, char *msg, int msglen)
 {
-    int i, denied = 0, len;
+    int i, denied = 0, held = 0, len;
     memset(s, 0, sizeof *s);
     msg[0] = 0;
     if (path && *path) {
-        if (add_device(s, path, 1, msg, msglen) <= 0)
+        int r = add_device(s, path, 1, msg, msglen);
+        if (r == -2)
+            snprintf(msg, (size_t)msglen, "%s is held by another program (BRLTTY?)", s->busy);
+        if (r <= 0)
             return 0;
     } else {
         DIR *d = opendir("/dev/input");
@@ -101,13 +116,20 @@ int evdev_open(evdev_set *s, const char *path, int grab, char *msg, int msglen)
             if (!strncmp(e->d_name, "event", 5)) {
                 char p[300];
                 snprintf(p, sizeof p, "/dev/input/%s", e->d_name);
-                if (add_device(s, p, 0, msg, msglen) < 0)
+                int r = add_device(s, p, 0, msg, msglen);
+                if (r == -1)
                     denied = 1;
+                else if (r == -2)
+                    held = 1;
             }
         closedir(d);
         if (!s->n) {
-            snprintf(msg, (size_t)msglen, denied ? "the input devices cannot be read (the input group is needed: "
-                     "sudo usermod -aG input $USER, then log in again)" : "no keyboard found among the input devices");
+            if (held)
+                snprintf(msg, (size_t)msglen, "the keyboard %s is held by another program (BRLTTY?)", s->busy);
+            else
+                snprintf(msg, (size_t)msglen, denied ? "the input devices cannot be read (the input group is "
+                         "needed: sudo usermod -aG input $USER, then log in again)"
+                         : "no keyboard found among the input devices");
             return 0;
         }
     }

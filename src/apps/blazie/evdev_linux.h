@@ -20,6 +20,7 @@ typedef struct {
     int n;
     int grabbed;
     int shift, ctrl, alt;               /* the modifier keys down now (any device) */
+    char busy[80];                      /* a keyboard another program holds for itself (left alone) */
 } evdev_set;
 
 /* path: one device, or NULL (or "") for every keyboard that can be read.  0 when none could be opened, the reason
