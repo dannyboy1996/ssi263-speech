@@ -153,7 +153,8 @@ void SSIngerProcessor::timerCallback()
         int expected = slotStale;
         if (slots[i].state.compare_exchange_strong(expected, slotBuilding, std::memory_order_acq_rel)) {
             buildSlot(i, preparedRate);
-            slots[i].state.store(slotReady, std::memory_order_release);
+            /* Ready only if it built; a failed build stays stale and is retried. */
+            slots[i].state.store(slots[i].ok ? slotReady : slotStale, std::memory_order_release);
         }
     }
 }
@@ -210,7 +211,7 @@ void SSIngerProcessor::prepareToPlay(double sampleRate, int)
     for (int i = 0; i < 2; i++) {
         slots[i].state.store(slotBuilding);
         buildSlot(i, sampleRate);
-        slots[i].state.store(slotReady, std::memory_order_release);
+        slots[i].state.store(slots[i].ok ? slotReady : slotStale, std::memory_order_release);
     }
     active = slotForVoicesParam(apvts.getRawParameterValue(ids::voices)->load());
 }
@@ -272,13 +273,14 @@ void SSIngerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     /* Voices: swap to the other prebuilt system if it is ready; the one left
      * behind is rebuilt fresh on the message thread. */
     const int want = slotForVoicesParam(apvts.getRawParameterValue(ids::voices)->load());
-    if (want != active && slots[want].ok
-        && slots[want].state.load(std::memory_order_acquire) == slotReady) {
+    /* slotReady is only ever published after a successful build, so the
+     * state alone says the slot is safe to use. */
+    if (want != active && slots[want].state.load(std::memory_order_acquire) == slotReady) {
         slots[active].state.store(slotStale, std::memory_order_release);
         active = want;
     }
     Slot& s = slots[active];
-    if (!s.ok || s.state.load(std::memory_order_acquire) != slotReady) {
+    if (s.state.load(std::memory_order_acquire) != slotReady) {
         buffer.clear();
         return;
     }

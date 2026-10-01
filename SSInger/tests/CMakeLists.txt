@@ -14,7 +14,7 @@ target_include_directories(test_6850_midi PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/.."
   "${SSI263_CSRC_DIR}")
 target_compile_options(test_6850_midi PRIVATE
-  $<$<C_COMPILER_ID:GNU,Clang>:-std=c99 -Wall -Wextra -ffp-contract=off>)
+  $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-std=c99 -Wall -Wextra -ffp-contract=off>)
 if(UNIX)
   target_link_libraries(test_6850_midi PRIVATE m)
 endif()

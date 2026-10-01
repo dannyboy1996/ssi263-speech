@@ -75,7 +75,9 @@ jobs:
         run: |
           gh release download "$PLUGINVAL_VERSION" -R Tracktion/pluginval -p pluginval_Linux.zip -O pv.zip
           unzip -q pv.zip -d pv
-          echo "PLUGINVAL=$PWD/pv/pluginval" >> "$GITHUB_ENV"
+          PV="$(find "$PWD/pv" -type f -name pluginval | head -n 1)"
+          chmod +x "$PV"
+          echo "PLUGINVAL=$PV" >> "$GITHUB_ENV"
 
       # No arm64 Linux release of pluginval: build the same tag from source.
       - name: Cache pluginval (arm64 build)
@@ -110,13 +112,16 @@ jobs:
         run: |
           gh release download "$CLAP_VALIDATOR_VERSION" -R free-audio/clap-validator -p '*ubuntu-22.04.zip' -O cv.zip
           unzip -q cv.zip -d cv
+          # the zip wraps a tar.gz (keeps the executable bit)
+          for t in cv/*.tar.gz; do tar xzf "$t" -C cv; done
           chmod +x "$(find cv -type f -name clap-validator | head -n 1)"
           "$(find cv -type f -name clap-validator | head -n 1)" validate "$ART/CLAP/SSInger.clap"
 
-      - name: LV2 bundle is discoverable (lilv)
+      - name: LV2 bundle is discoverable (lilv) and an instrument
         run: |
           LV2_PATH="$PWD/$ART/LV2" lv2ls | tee lv2ls.txt
           grep -qx 'urn:ssi263-speech:ssinger' lv2ls.txt
+          grep -q 'lv2:InstrumentPlugin' "$ART"/LV2/SSInger.lv2/*.ttl
           LV2_PATH="$PWD/$ART/LV2" lv2info urn:ssi263-speech:ssinger | head -n 40
 
       - name: Pack bundles
@@ -251,7 +256,8 @@ jobs:
         run: |
           gh release download "$PLUGINVAL_VERSION" -R Tracktion/pluginval -p pluginval_macOS.zip -O pv.zip
           unzip -q pv.zip -d pv
-          echo "PLUGINVAL=$PWD/pv/pluginval.app/Contents/MacOS/pluginval" >> "$GITHUB_ENV"
+          xattr -dr com.apple.quarantine pv 2>/dev/null || true
+          echo "PLUGINVAL=$(find "$PWD/pv" -type f -path '*/MacOS/pluginval' | head -n 1)" >> "$GITHUB_ENV"
 
       - name: pluginval on the VST3
         run: |
@@ -267,6 +273,8 @@ jobs:
         run: |
           gh release download "$CLAP_VALIDATOR_VERSION" -R free-audio/clap-validator -p '*macos-universal.zip' -O cv.zip
           unzip -q cv.zip -d cv
+          # the zip wraps a tar.gz (keeps the executable bit)
+          for t in cv/*.tar.gz; do tar xzf "$t" -C cv; done
           CV="$(find cv -type f -name clap-validator | head -n 1)"
           chmod +x "$CV"
           xattr -dr com.apple.quarantine cv 2>/dev/null || true

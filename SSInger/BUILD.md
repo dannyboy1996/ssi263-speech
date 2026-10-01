@@ -77,7 +77,8 @@ cmake -S SSInger -B build/SSInger -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/SSInger --target SSInger_VST3 SSInger_CLAP SSInger_LV2 SSInger_Standalone
 ```
 
-A Raspberry Pi 5 (4 cores, 8 GB) takes about 25 minutes from clean;
+A Raspberry Pi 5 (4 cores, 8 GB) builds every format from clean in about
+6.5 minutes (measured, not counting the one-time download);
 `--parallel 2` if a smaller board runs out of memory.
 
 Options (`-D...=ON/OFF` at configure time):
@@ -213,10 +214,12 @@ screen-reader-friendly way to play SSInger, on every OS:
   On Windows the plug-in's own window is also accessible: each control is
   a named slider or combo box with a help text, grouped (MIDI, Chip,
   Output), reached with Tab.
-- **macOS (VoiceOver)**: JUCE's editor is accessible through VoiceOver, and
-  keyboard focus is enabled for the plug-in window so Tab works there too.
-  Logic's "Controls" view (the plug-in header's View menu) is the generic
-  alternative.
+- **macOS (VoiceOver)**: JUCE implements macOS accessibility for its
+  controls, so the same named sliders and combo boxes should read in
+  VoiceOver, and keyboard focus is enabled for the plug-in window so Tab
+  can reach them (not yet tried on a Mac with VoiceOver). Logic's
+  "Controls" view (the plug-in header's View menu) is the generic
+  alternative and needs nothing from JUCE.
 - **Linux**: JUCE has no screen-reader support on Linux (no AT-SPI
   bridge), so the plug-in's own window is silent to Orca. Use the host's
   generic controls: REAPER's "UI" button, Ardour's "Edit with generic
