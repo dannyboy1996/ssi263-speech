@@ -7,6 +7,46 @@
 
 namespace ids = ssinger_ids;
 
+namespace {
+
+/* Value text a DAW's generic parameter view (REAPER's, Ardour's, Logic's
+ * Controls view) shows and a screen reader speaks: units, not 0..1. Each
+ * parser takes the text back, with or without the unit. */
+juce::String semitoneText(float v, int)
+{
+    return (v > 0.0f ? "+" : "") + juce::String(v, 1) + " st";
+}
+
+juce::String clockText(float v, int)
+{
+    const double mhz = std::pow(2.0, v / 12.0);
+    return semitoneText(v, 0) + " (" + juce::String(mhz, 3) + " MHz)";
+}
+
+float leadingNumber(const juce::String& t)
+{
+    return t.trim().retainCharacters("+-0123456789.").getFloatValue();
+}
+
+juce::String volumeText(float v, int)
+{
+    if (v <= 0.0f)
+        return "-inf dB";
+    return juce::String(juce::Decibels::gainToDecibels(v), 1) + " dB";
+}
+
+float volumeFromText(const juce::String& t)
+{
+    const auto s = t.trim();
+    if (s.startsWithIgnoreCase("-inf"))
+        return 0.0f;
+    if (s.endsWithIgnoreCase("db"))
+        return juce::Decibels::decibelsToGain(leadingNumber(s));
+    return leadingNumber(s);
+}
+
+} // namespace
+
 SSIngerProcessor::SSIngerProcessor()
     : AudioProcessor(BusesProperties()
                          .withOutput("Output", juce::AudioChannelSet::stereo(), true)
@@ -15,19 +55,21 @@ SSIngerProcessor::SSIngerProcessor()
 {
     ssi263_default_params(&engDefaults);
     std::memcpy(engRom, ssi263_default_rom(), sizeof(engRom));
+    tmp.assign(1024, 0.0);
+    startTimerHz(10);
 }
 
 SSIngerProcessor::~SSIngerProcessor()
 {
-    if (busOk) {
-        ssinger_bus_free(&bus);
-        busOk = false;
-    }
+    stopTimer();
+    const juce::ScopedLock sl(buildLock);
+    freeSlots();
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout SSIngerProcessor::createLayout()
 {
     using PID = juce::ParameterID;
+    using FloatAttr = juce::AudioParameterFloatAttributes;
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
     /* MIDI front end. */
     layout.add(std::make_unique<juce::AudioParameterInt>(
@@ -57,41 +99,68 @@ juce::AudioProcessorValueTreeState::ParameterLayout SSIngerProcessor::createLayo
         juce::StringArray{ "Linear", "Log (:L:)" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         PID{ ids::bendRange, 1 }, "Bend range (st)",
-        juce::NormalisableRange<float>(1.0f, 48.0f, 0.5f), 24.0f));
+        juce::NormalisableRange<float>(1.0f, 48.0f, 0.5f), 24.0f,
+        FloatAttr().withLabel("st")
+            .withStringFromValueFunction([](float v, int) { return juce::String(v, 1) + " st"; })
+            .withValueFromStringFunction(leadingNumber)));
     /* System. */
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         PID{ ids::clockSt, 1 }, "Master clock (st)",
-        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f));
+        juce::NormalisableRange<float>(-24.0f, 24.0f, 0.1f), 0.0f,
+        FloatAttr().withLabel("st")
+            .withStringFromValueFunction(clockText)
+            .withValueFromStringFunction(leadingNumber)));
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         PID{ ids::carrier, 1 }, "Carrier",
         juce::StringArray{ "Internal", "External (sidechain)" }, 0));
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         PID{ ids::volume, 1 }, "Volume",
-        juce::NormalisableRange<float>(0.0f, 1.5f, 0.01f), 0.8f));
+        juce::NormalisableRange<float>(0.0f, 1.5f, 0.01f), 0.8f,
+        FloatAttr().withLabel("dB")
+            .withStringFromValueFunction(volumeText)
+            .withValueFromStringFunction(volumeFromText)));
     return layout;
 }
 
-void SSIngerProcessor::rebuildBus(double sampleRate, int nvoices)
+/* Message thread (or the host's prepare thread), never the audio thread:
+ * the only place that allocates. */
+void SSIngerProcessor::buildSlot(int i, double sampleRate)
 {
-    if (busOk)
-        ssinger_bus_free(&bus);
-    busOk = ssinger_bus_init(&bus, sampleRate, nvoices, &engDefaults, engRom) != 0;
-    voicesCache = nvoices;
-    if (busOk)
-        applyParams();
+    Slot& s = slots[i];
+    if (s.ok)
+        ssinger_bus_free(&s.bus);
+    /* Parameters reach it on its first block (processBlock -> applyParams). */
+    s.ok = ssinger_bus_init(&s.bus, sampleRate, i == 0 ? 1 : 4, &engDefaults, engRom) != 0;
 }
 
-void SSIngerProcessor::applyParams()
+void SSIngerProcessor::freeSlots()
 {
-    if (!busOk)
-        return;
-    auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
-
-    int wantVoices = (int)get(ids::voices) == 0 ? 1 : 4;
-    if (wantVoices != bus.nvoices) {
-        rebuildBus(bus.sample_rate, wantVoices);
-        return; /* rebuildBus re-enters applyParams */
+    for (auto& s : slots) {
+        if (s.ok)
+            ssinger_bus_free(&s.bus);
+        s.ok = false;
+        s.state.store(slotStale);
     }
+}
+
+/* Rebuild whichever slot the audio thread left behind. */
+void SSIngerProcessor::timerCallback()
+{
+    const juce::ScopedLock sl(buildLock);
+    if (preparedRate <= 0.0)
+        return;
+    for (int i = 0; i < 2; i++) {
+        int expected = slotStale;
+        if (slots[i].state.compare_exchange_strong(expected, slotBuilding, std::memory_order_acq_rel)) {
+            buildSlot(i, preparedRate);
+            slots[i].state.store(slotReady, std::memory_order_release);
+        }
+    }
+}
+
+void SSIngerProcessor::applyParams(ssinger_bus_t& bus)
+{
+    auto get = [this](const char* id) { return apvts.getRawParameterValue(id)->load(); };
 
     auto& cfg = bus.fw.cfg;
     cfg.base_channel = juce::jlimit(0, 15, (int)get(ids::phonBase) - 1);
@@ -136,7 +205,14 @@ void SSIngerProcessor::applyParams()
 
 void SSIngerProcessor::prepareToPlay(double sampleRate, int)
 {
-    rebuildBus(sampleRate, 1);
+    const juce::ScopedLock sl(buildLock);
+    preparedRate = sampleRate;
+    for (int i = 0; i < 2; i++) {
+        slots[i].state.store(slotBuilding);
+        buildSlot(i, sampleRate);
+        slots[i].state.store(slotReady, std::memory_order_release);
+    }
+    active = slotForVoicesParam(apvts.getRawParameterValue(ids::voices)->load());
 }
 
 void SSIngerProcessor::releaseResources()
@@ -152,30 +228,39 @@ bool SSIngerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
     return true;
 }
 
-void SSIngerProcessor::feedMessage(const juce::MidiMessage& m)
+/* Render [from, to) of the block. The carrier input and the output share
+ * the host's channel memory (JUCE processes in place), so each carrier
+ * sample is read before its output sample is written. */
+void SSIngerProcessor::renderSpan(ssinger_bus_t& bus, juce::AudioBuffer<float>& out,
+                                  const juce::AudioBuffer<float>& carrier, int from, int to)
 {
-    auto* d = m.getRawData();
-    for (int i = 0; i < m.getRawDataSize(); i++)
-        ssinger_bus_midi_byte(&bus, d[i]);
-}
-
-void SSIngerProcessor::renderChunk(juce::AudioBuffer<float>& out, int from, int to)
-{
-    int n = to - from;
-    if (n <= 0)
-        return;
-    if ((long)tmp.size() < n + 1)
-        tmp.resize((size_t)n + 1);
-    ssinger_bus_render(&bus, n, tmp.data());
-    ssinger_bus_slew_filters(&bus, n / bus.sample_rate);
-    ssinger_bus_service_all(&bus);
-    int nch = out.getNumChannels();
-    for (int ch = 0; ch < nch; ch++) {
-        float* dst = out.getWritePointer(ch, from);
+    constexpr int maxCh = 2; /* isBusesLayoutSupported: mono or stereo out */
+    const int nch = juce::jmin(maxCh, out.getNumChannels());
+    const int ncar = carrierCache == 1 ? juce::jmin(nch, carrier.getNumChannels()) : 0;
+    const float vol = volumeCache;
+    while (from < to) {
+        const int n = juce::jmin(to - from, (int)tmp.size());
+        float* dst[maxCh] = {};
+        const float* car[maxCh] = {};
+        for (int ch = 0; ch < nch; ch++)
+            dst[ch] = out.getWritePointer(ch, from);
+        for (int ch = 0; ch < ncar; ch++)
+            car[ch] = carrier.getReadPointer(ch, from);
+        ssinger_bus_run(&bus, n, tmp.data());
         for (int i = 0; i < n; i++) {
-            float y = (float)(tmp[(size_t)i] * volumeCache);
-            dst[i] += (float)std::tanh(y);
+            const float v = (float)std::tanh((float)(tmp[(size_t)i] * vol));
+            for (int ch = 0; ch < nch; ch++) {
+                if (ch < ncar) {
+                    /* External carrier (sidechain monitor; TP1/TP2 filter
+                     * injection is Phase 2 -- RESEARCH.md section 5.4). */
+                    const float c = car[ch][i];
+                    dst[ch][i] = (float)std::tanh(v * 0.5f + c * 0.5f * vol);
+                } else {
+                    dst[ch][i] = v;
+                }
+            }
         }
+        from += n;
     }
 }
 
@@ -183,38 +268,40 @@ void SSIngerProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                     juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
-    if (!busOk) {
+
+    /* Voices: swap to the other prebuilt system if it is ready; the one left
+     * behind is rebuilt fresh on the message thread. */
+    const int want = slotForVoicesParam(apvts.getRawParameterValue(ids::voices)->load());
+    if (want != active && slots[want].ok
+        && slots[want].state.load(std::memory_order_acquire) == slotReady) {
+        slots[active].state.store(slotStale, std::memory_order_release);
+        active = want;
+    }
+    Slot& s = slots[active];
+    if (!s.ok || s.state.load(std::memory_order_acquire) != slotReady) {
         buffer.clear();
         return;
     }
-    applyParams();
+    applyParams(s.bus);
 
     auto out = getBusBuffer(buffer, false, 0);
-    out.clear();
+    const auto carrier = getTotalNumInputChannels() > 0 ? getBusBuffer(buffer, true, 0)
+                                                        : juce::AudioBuffer<float>();
+    const int numSamples = buffer.getNumSamples();
 
-    juce::MidiBuffer::Iterator it(midiMessages);
-    juce::MidiMessage m;
-    int pos = 0, last = 0;
-    while (it.getNextEvent(m, pos)) {
-        renderChunk(out, last, pos);
-        feedMessage(m);
+    int last = 0;
+    for (const auto meta : midiMessages) {
+        const int pos = juce::jlimit(last, numSamples, meta.samplePosition);
+        renderSpan(s.bus, out, carrier, last, pos);
+        for (int i = 0; i < meta.numBytes; i++)
+            ssinger_bus_midi_byte(&s.bus, meta.data[i]);
         last = pos;
     }
-    renderChunk(out, last, buffer.getNumSamples());
+    renderSpan(s.bus, out, carrier, last, numSamples);
 
-    /* External carrier (sidechain monitor; TP1/TP2 filter injection is
-     * Phase 2 -- RESEARCH.md section 5.4). */
-    if (carrierCache == 1 && getTotalNumInputChannels() > 0) {
-        auto car = getBusBuffer(buffer, true, 0);
-        int nch = juce::jmin(out.getNumChannels(), car.getNumChannels());
-        int n = juce::jmin(buffer.getNumSamples(), car.getNumSamples());
-        for (int ch = 0; ch < nch; ch++) {
-            float* dst = out.getWritePointer(ch);
-            const float* src = car.getReadPointer(ch);
-            for (int i = 0; i < n; i++)
-                dst[i] = (float)std::tanh(dst[i] * 0.5f + src[i] * 0.5f * volumeCache);
-        }
-    }
+    /* Input-only channels past the outputs carry no output. */
+    for (int ch = out.getNumChannels(); ch < buffer.getNumChannels(); ch++)
+        buffer.clear(ch, 0, numSamples);
 }
 
 juce::AudioProcessorEditor* SSIngerProcessor::createEditor()
@@ -230,8 +317,15 @@ void SSIngerProcessor::getStateInformation(juce::MemoryBlock& destData)
 
 void SSIngerProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        apvts.replaceState(juce::ValueTree::fromXml(*xml));
+    if (auto xml = getXmlFromBinary(data, sizeInBytes)) {
+        if (xml->hasTagName(apvts.state.getType())) {
+            apvts.replaceState(juce::ValueTree::fromXml(*xml));
+            /* Tell the host every value moved (CLAP: params rescan; VST3 and
+             * AU re-read on their own), so its generic parameter view and a
+             * screen reader show the restored values, not the old ones. */
+            updateHostDisplay(ChangeDetails().withProgramChanged(true));
+        }
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -84,9 +84,17 @@ typedef struct ssinger_bus {
     float ff_cur[SG_NVOICES_MAX]; /* continuous, what the chip has */
     int ff_tgt[SG_NVOICES_MAX];   /* what the translator asked for */
     int ff_out[SG_NVOICES_MAX];   /* last R4 value sent to the chip */
+    long svc_phase;               /* samples since the last service tick */
 } ssinger_bus_t;
 
 #define SG_FF_SLEW_PER_SEC 2550.0 /* full 0..255 sweep in ~100 ms */
+
+/* Service tick: the firmware's A/R service and the filter slew run every
+ * SG_SERVICE_SAMPLES output samples, counted from power-on, never at the
+ * host's block edges -- so a song renders the same at any block size
+ * (64, 512, 4096, or REAPER's offline render). 32 samples is 0.7 ms at
+ * 44.1 kHz, 0.33 ms at 96 kHz. */
+#define SG_SERVICE_SAMPLES 32
 
 /* Sink: translator SC-02 writes -> 74LS245 buffer -> engine. Amplitude
  * latches exactly as the translator sends it (velocity -> Amplitude):
@@ -345,6 +353,31 @@ static long ssinger_bus_render(ssinger_bus_t *b, long n, double *out)
         got = ssi263_run(b->chip[v], n, b->render_tmp);
         for (i = 0; i < got; i++)
             out[i] += b->render_tmp[i] / b->nvoices;
+    }
+    return n;
+}
+
+/* Render n samples (mixed mono) with the firmware loop running on the
+ * service tick (SG_SERVICE_SAMPLES): A/R sustain and filter slew happen at
+ * the same sample positions whatever n is, so splitting a span into any
+ * pieces gives the same samples. Feed MIDI bytes between calls at their
+ * sample positions. Never allocates (each chip pass is <= 32 samples, far
+ * under render_cap). This is the plugin's render loop; the tests run it. */
+static long ssinger_bus_run(ssinger_bus_t *b, long n, double *out)
+{
+    long done = 0;
+    while (done < n) {
+        long k = SG_SERVICE_SAMPLES - b->svc_phase;
+        if (k > n - done)
+            k = n - done;
+        ssinger_bus_render(b, k, out + done);
+        done += k;
+        b->svc_phase += k;
+        if (b->svc_phase >= SG_SERVICE_SAMPLES) {
+            b->svc_phase = 0;
+            ssinger_bus_slew_filters(b, SG_SERVICE_SAMPLES / b->sample_rate);
+            ssinger_bus_service_all(b);
+        }
     }
     return n;
 }

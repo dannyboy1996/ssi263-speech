@@ -1,12 +1,64 @@
-# Vendored / fetched components
+# Third-party pieces and their licences
 
-## JUCE 9.0.3 — fetched at configure time, not vendored
+Nothing third-party is vendored in this folder: CMake fetches JUCE and
+clap-juce-extensions at configure time (into the git-ignored `build/`), and
+the optional 6502 core is cloned here by hand. This file lists every piece
+that goes into an SSInger binary, and every tool that only checks one.
 
-`CMakeLists.txt` pulls `juce-framework/JUCE` tag `9.0.3` (published
-2026-09-28, the current latest) via FetchContent. JUCE is AGPLv3 /
-commercial dual-licensed; nothing of JUCE is copied into this tree.
+## In the plug-in binaries
 
-## floooh `chips` `m6502.h` — drop-in, MIT
+| Piece | Version | Licence | In which binaries |
+|---|---|---|---|
+| SSInger's own code (`plugin/`, `emu/`, `tests/`) and the SSI-263 engine (`../src/csrc/ssi263*.c`) | this repo | MIT | all |
+| [JUCE](https://github.com/juce-framework/JUCE) | 9.0.3 (tag, fetched) | AGPLv3, or the commercial JUCE 9 licence | all |
+| Steinberg VST3 SDK (inside JUCE: `juce_audio_processors_headless/format_types/VST3_SDK`) | 3.8.0 | MIT (since VST3 SDK 3.8) | VST3 |
+| Apple AudioUnitSDK (inside JUCE: `juce_audio_plugin_client/AU/AudioUnitSDK`) | as bundled by JUCE 9.0.3 | Apache-2.0 | AU (macOS) |
+| LV2 headers, and serd / sord / sratom / lilv (inside JUCE: `.../format_types/LV2_SDK`) | as bundled by JUCE 9.0.3 | ISC | LV2 |
+| [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) | commit `55525c98` (2026-09-12, JUCE 9 support) | MIT | CLAP |
+| [CLAP](https://github.com/free-audio/clap) and [clap-helpers](https://github.com/free-audio/clap-helpers) (submodules of clap-juce-extensions) | as pinned by that commit | MIT | CLAP |
+| JUCE's own bundled libraries that SSInger's modules compile in: zlib (zlib), libpng (PNG Reference Library v2), HarfBuzz (Old MIT), SheenBidi (Apache-2.0), lunasvg + plutovg (MIT), libwebp (BSD-3-Clause), FLAC / Ogg / Vorbis / Opus (BSD-3-Clause) | as bundled by JUCE 9.0.3 | as listed | all |
+
+JUCE keeps a complete, versioned inventory of its bundled dependencies in
+`JUCE.spdx.json` at the root of the fetched JUCE tree
+(`build/<dir>/_deps/juce-src/`). JUCE's ASIO support (Windows) is off, so
+Steinberg's ASIO SDK is not compiled in.
+
+Not used: the AAX SDK that JUCE also ships (no AAX target: BUILD.md, "Not
+built: AAX"); JUCE's web browser and curl (turned off).
+
+## What licence a binary carries
+
+The source in this repo is MIT. A binary built with JUCE under its AGPLv3
+option is **AGPLv3 as a whole**, in every format: VST3, AU, CLAP, LV2 and
+Standalone alike (or under JUCE's commercial licence, if whoever builds it
+holds one). Every other piece above is under a permissive licence that
+AGPLv3 accepts (MIT, ISC, BSD, zlib, libpng, Apache-2.0), so no format
+adds a conflict, and the same terms work on Windows, macOS and Linux.
+Distributing those binaries means offering the corresponding source (this
+repository at the commit built), as AGPLv3 asks.
+
+Notes, none of them a blocker:
+
+- Before VST3 SDK 3.8 the SDK was GPLv3 / proprietary; JUCE 9.0.3 bundles
+  3.8.0, which is MIT.
+- Apple's AudioUnitSDK is Apache-2.0, which is compatible with (A)GPLv3.
+- "VST" is a Steinberg trademark and the VST3 usage guidelines
+  (`VST3_Usage_Guidelines.pdf` in the SDK) ask for the VST logo/notice
+  where the format is advertised; "Audio Units" and "AU" are Apple's.
+- A Developer ID signature and notarization (macOS) and PACE signing (AAX)
+  are not licences; they are distribution steps that need accounts
+  (BUILD.md).
+
+## Only in CI, never shipped
+
+| Tool | Licence | Used for |
+|---|---|---|
+| [pluginval](https://github.com/Tracktion/pluginval) v1.0.4 (Tracktion) | GPL-3.0 | VST3 and AU validation |
+| [clap-validator](https://github.com/free-audio/clap-validator) 0.4.1 | MIT | CLAP validation |
+| `auval` | Apple, part of macOS | AU validation |
+| `lv2ls` / `lv2info` (lilv-utils) | ISC | LV2 discovery check |
+
+## floooh `chips` `m6502.h` — drop-in, MIT, not built by default
 
 The 6502 core is **not** vendored here to keep the diff small. To enable
 real 6502 execution on the emulated bus:

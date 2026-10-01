@@ -1,6 +1,8 @@
 # SSInger — SC-02 singing voice after the Robovox patent
 
-A JUCE (9.0.3) VST3/Standalone instrument that recreates the Robovox system
+A JUCE (9.0.3) instrument (VST3, CLAP, AU on macOS, LV2 on Linux, and a
+standalone app; Windows, macOS universal, Linux x86-64 and arm64) that
+recreates the Robovox system
 from EP0396141A2 ("System for and method of synthesizing singing in real
 time", Schneider / Ott / Jalass): a 6502 driving one to four Votrax SC-02
 (= SSI-263) speech chips through a 6850 ACIA MIDI interface. The product
@@ -16,13 +18,14 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 | Path | What it is |
 |---|---|
 | `RESEARCH.md` | Patent mapping, 1998-tour deltas, SC-02 register map, emulator decisions, VST parameter table, open questions |
-| `CMakeLists.txt` | JUCE 9.0.3 VST3 + Standalone build (JUCE via FetchContent) |
+| `CMakeLists.txt` | JUCE 9.0.3 build, every format per OS (JUCE and clap-juce-extensions via FetchContent) |
 | `plugin/` | `SSIngerProcessor` (APVTS + audio/MIDI glue); `SSIngerEditor`, the settings window, built for keyboard and screen-reader use (WCAG 2.2 AA applied to a plugin: named controls with real values, grouped, Tab order, focus ring, contrast; see SSIngerEditor.h) |
 | `emu/mc6850.h` | Clean-room MC6850 ACIA model (MIDI subset: 8N1, Rx IRQ, RDRF/TDRE/OVRN) |
 | `emu/ssinger_bus.h` | System bus: 6502 socket, 2 KB RAM (6116 footprint), ROM socket, ACIA, 2x74LS245 SC-02 buffer, mode switch |
 | `emu/ssinger_firmware.h` | Clean-room translator: patent embodiment 1 (phoneme ch N, pitch ch N+1), inflection @ A=440 Hz, wheels, modes |
 | `tests/` | Offline (no-JUCE) C tests: 6850 framing/IRQ, translator vectors, SSI-263 smoke render |
-| `third_party/README.md` | Vendoring notes: JUCE, floooh `chips` m6502, why not MAME |
+| `third_party/README.md` | Every third-party piece and its licence (JUCE, VST3/AU/LV2 SDKs, CLAP), floooh `chips` m6502, why not MAME |
+| `../.github/workflows/ssinger.yml` | CI: builds on Windows, macOS (universal), Linux x86-64 + arm64; C tests, pluginval, auval, clap-validator; bundles as artifacts |
 
 ## Phase 1 status (this commit)
 
@@ -45,6 +48,16 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
 
 ## Build
 
+Full instructions per OS (Windows/MSVC, macOS/Apple clang universal,
+Linux/GCC), the install folder for every format, the macOS Gatekeeper
+step, and how to use SSInger with a screen reader in each DAW are in
+[`BUILD.md`](BUILD.md). In short, from the repo root:
+
+```
+cmake -S SSInger -B build/SSInger -DCMAKE_BUILD_TYPE=Release
+cmake --build build/SSInger --config Release --target SSInger_VST3
+```
+
 Tests first (no network needed):
 
 ```
@@ -53,31 +66,21 @@ cmake --build build/SSInger-tests --config Release
 ctest --test-dir build/SSInger-tests -C Release
 ```
 
-VST3 (needs network once for JUCE 9.0.3 + a C++20 toolchain):
-
-```
-cmake -S SSInger -B build/SSInger -DCMAKE_BUILD_TYPE=Release
-cmake --build build/SSInger --target SSInger_VST3 --config Release
-```
-
-Artifacts land in `build/SSInger/SSInger_artefacts/Release/`:
-`VST3/SSInger.vst3` (the plugin bundle — copy the whole folder to
-your system's VST3 folder; on Windows that is the VST3 folder inside
-Program Files / Common Files) and `Standalone/SSInger.exe` (play
-it without a DAW). Full instructions, prerequisites, and the "ways to
-build it wrong" table are in [`BUILD.md`](BUILD.md). Verified 2026-09-29
-with JUCE 9.0.3 (latest): VST3 links, `GetPluginFactory` exported,
-`moduleinfo.json` lists the plugin as Instrument/Synth/Vocal, and the
-offline C tests pass, including an end-to-end sung render through the
-MIDI → 6850 → translator → SC-02 path.
+Every control is a host parameter with a plain name and value text, so a
+DAW's generic parameter view (REAPER + OSARA's FX parameter list, Logic's
+Controls view, Ardour's generic controls) plays SSInger fully; on Linux,
+where JUCE has no screen-reader support, that is the way in.
 
 ## Licenses
 
 Our code (including the clean-room 6850 and translator): MIT, like the
-rest of this repository. JUCE (AGPLv3/commercial), floooh `chips` (MIT)
-keep their own terms — see `third_party/README.md`. Plainly: the source
-here is MIT; binaries built with JUCE are AGPLv3 (JUCE's terms set the
-binary licence), unless built under JUCE's commercial licence. The
+rest of this repository. JUCE (AGPLv3/commercial), the VST3 SDK (MIT),
+Apple's AudioUnitSDK (Apache-2.0), the LV2 headers (ISC),
+clap-juce-extensions and CLAP (MIT) and floooh `chips` (MIT) keep their own
+terms — see `third_party/README.md`. Plainly: the source here is MIT;
+binaries built with JUCE are AGPLv3 (JUCE's terms set the binary licence)
+in every format and on every OS, unless built under JUCE's commercial
+licence. The
 Robovox patent EP0396141A2 is withdrawn; the original Robovox
 firmware/Atari software is lost, so the translator here is a new
 implementation of the patent text.

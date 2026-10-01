@@ -408,9 +408,9 @@ static void test_engine_smoke(void)
     ssinger_bus_free(&b);
 }
 
-/* Mirrors SSIngerProcessor::renderChunk order (event, render, service).
- * Amplitude latches like the hardware: velocity writes R3 at once, no
- * VST-side slew. */
+/* Mirrors SSIngerProcessor's render loop (events, then ssinger_bus_run with
+ * the service tick inside). Amplitude latches like the hardware: velocity
+ * writes R3 at once, no VST-side slew. */
 static void test_vst_render_path(void)
 {
     ssinger_bus_t b;
@@ -427,8 +427,7 @@ static void test_vst_render_path(void)
     for (i = 0; i < 3; i++)
         ssinger_bus_midi_byte(&b, non[i]);
     for (k = 0; k < 86; k++) {
-        ssinger_bus_render(&b, 512, out);
-        ssinger_bus_service_all(&b);
+        ssinger_bus_run(&b, 512, out);
         for (i = 0; i < 512; i++) {
             e += out[i] * out[i];
             if (k == 0)
@@ -719,6 +718,161 @@ static void test_filter_slew(void)
     ssinger_bus_free(&b);
 }
 
+/* ---- host conditions (any DAW, any OS) ------------------------------- */
+
+/* A short sung phrase with a filter sweep (patent map: bend = R4), as
+ * timestamped MIDI, the way a DAW hands it over. */
+typedef struct {
+    long pos; /* sample position at 44.1 kHz; scaled for other rates */
+    uint8_t b[3];
+} song_ev_t;
+
+static const song_ev_t song[] = {
+    { 1000, { 0x91, 57, 100 } },  /* pitch A3 */
+    { 1000, { 0x90, 45, 110 } },  /* phoneme */
+    { 20000, { 0xE0, 0, 0x10 } }, /* bend down: filter slews */
+    { 30000, { 0x90, 50, 110 } },
+    { 30500, { 0x80, 45, 0 } },
+    { 40000, { 0xE0, 0, 0x70 } }, /* bend up */
+    { 45000, { 0x91, 64, 90 } },
+    { 60000, { 0x80, 50, 0 } },
+    { 61000, { 0x81, 57, 0 } },
+};
+#define SONG_N ((int)(sizeof(song) / sizeof(song[0])))
+
+/* SSIngerProcessor::processBlock, minus JUCE: per host block, render up to
+ * each event, feed its bytes, render the rest -- through ssinger_bus_run. */
+static void host_render(ssinger_bus_t *b, int block, double rate_scale,
+                        long total, double *out)
+{
+    long t = 0;
+    int e = 0, i;
+    while (t < total) {
+        long end = t + block, last = t;
+        if (end > total)
+            end = total;
+        while (e < SONG_N && (long)(song[e].pos * rate_scale) < end) {
+            long pos = (long)(song[e].pos * rate_scale);
+            if (pos > last)
+                ssinger_bus_run(b, pos - last, out + last);
+            for (i = 0; i < 3; i++)
+                ssinger_bus_midi_byte(b, song[e].b[i]);
+            last = pos > last ? pos : last;
+            e++;
+        }
+        if (end > last)
+            ssinger_bus_run(b, end - last, out + last);
+        t = end;
+    }
+}
+
+/* The same song at any host block size gives the same samples. Regression:
+ * the filter slew and A/R service ran at block edges, so a bend at 512
+ * samples/block and at 4096 rendered differently (max diff 1.6, the R4
+ * glide stepping every 93 ms at 4096). */
+static void test_block_size_invariance(void)
+{
+    static double ref[44100 * 2], got[44100 * 2];
+    const int blocks[] = { 1, 7, 64, 1000, 4096, 8192 };
+    const long total = 44100 * 2;
+    ssinger_bus_t b;
+    ssi263_params p;
+    int k;
+    long i, first;
+    double e = 0.0;
+    ssi263_default_params(&p);
+    CHECK(ssinger_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "blocksize init");
+    host_render(&b, 512, 1.0, total, ref);
+    CHECK(b.render_cap == 4096, "run never grows the scratch buffer (%ld)", b.render_cap);
+    ssinger_bus_free(&b);
+    for (i = 0; i < total; i++)
+        e += ref[i] * ref[i];
+    CHECK(sqrt(e / total) > 0.02, "song sings (rms %f)", sqrt(e / total));
+    for (k = 0; k < (int)(sizeof(blocks) / sizeof(blocks[0])); k++) {
+        CHECK(ssinger_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "blocksize init %d", blocks[k]);
+        host_render(&b, blocks[k], 1.0, total, got);
+        ssinger_bus_free(&b);
+        first = -1;
+        for (i = 0; i < total && first < 0; i++)
+            if (got[i] != ref[i])
+                first = i;
+        CHECK(first < 0, "block %d renders the same as 512 (first diff at sample %ld)", blocks[k], first);
+    }
+}
+
+/* 44.1 / 48 / 96 kHz: the chip keeps its own time, sings at a like level,
+ * and every sample is finite and in range. */
+static void test_sample_rates(void)
+{
+    static double out[96000 * 2];
+    const double rates[] = { 44100.0, 48000.0, 96000.0 };
+    double rms[3];
+    int r;
+    for (r = 0; r < 3; r++) {
+        ssinger_bus_t b;
+        ssi263_params p;
+        long total = (long)(rates[r] * 2), i, bad = 0;
+        double e = 0.0, pk = 0.0;
+        ssi263_default_params(&p);
+        CHECK(ssinger_bus_init(&b, rates[r], 1, &p, ssi263_default_rom()), "rate %.0f init", rates[r]);
+        host_render(&b, 480, rates[r] / 44100.0, total, out);
+        for (i = 0; i < total; i++) {
+            if (!(out[i] == out[i]) || out[i] > 1e6 || out[i] < -1e6)
+                bad++;
+            e += out[i] * out[i];
+            if (fabs(out[i]) > pk)
+                pk = fabs(out[i]);
+        }
+        rms[r] = sqrt(e / total);
+        CHECK(bad == 0, "rate %.0f: all samples finite (%ld bad)", rates[r], bad);
+        CHECK(pk < 4.0, "rate %.0f: peak in range (%f)", rates[r], pk);
+        CHECK(fabs(ssi263_time(b.chip[0]) - 2.0) < 0.01, "rate %.0f: chip time follows the host (%f s)",
+              rates[r], ssi263_time(b.chip[0]));
+        ssinger_bus_free(&b);
+    }
+    CHECK(rms[1] > rms[0] * 0.8 && rms[1] < rms[0] * 1.25, "48k level like 44.1k (%f vs %f)", rms[1], rms[0]);
+    CHECK(rms[2] > rms[0] * 0.8 && rms[2] < rms[0] * 1.25, "96k level like 44.1k (%f vs %f)", rms[2], rms[0]);
+}
+
+/* No notes: the chip's own idle floor only (measured -79 dBFS peak at the
+ * power-on registers, the carrier bleed of test_vst_render_path), never a
+ * held tone; and after the last release it falls to that floor or below. */
+static void test_idle_floor(void)
+{
+    static double out[96000];
+    const double rates[] = { 44100.0, 48000.0, 96000.0 };
+    int r;
+    for (r = 0; r < 3; r++) {
+        ssinger_bus_t b;
+        ssi263_params p;
+        long n = (long)rates[r], i;
+        double pk = 0.0;
+        ssi263_default_params(&p);
+        CHECK(ssinger_bus_init(&b, rates[r], 1, &p, ssi263_default_rom()), "idle init");
+        ssinger_bus_run(&b, n, out);
+        for (i = 0; i < n; i++)
+            if (fabs(out[i]) > pk)
+                pk = fabs(out[i]);
+        CHECK(pk < 3.2e-4, "rate %.0f: idle under -70 dBFS (peak %g)", rates[r], pk);
+        ssinger_bus_free(&b);
+    }
+    {
+        static double song_out[44100 * 3];
+        ssinger_bus_t b;
+        ssi263_params p;
+        long total = 44100 * 3, i;
+        double pk = 0.0;
+        ssi263_default_params(&p);
+        CHECK(ssinger_bus_init(&b, 44100.0, 1, &p, ssi263_default_rom()), "release init");
+        host_render(&b, 512, 1.0, total, song_out);
+        for (i = 44100 * 2; i < total; i++)
+            if (fabs(song_out[i]) > pk)
+                pk = fabs(song_out[i]);
+        CHECK(pk < 3.2e-4, "a second after the last release: under -70 dBFS (peak %g)", pk);
+        ssinger_bus_free(&b);
+    }
+}
+
 /* Phoneme channel likewise falls back across overlapping notes. */
 static void test_phoneme_mono_priority(void)
 {
@@ -765,6 +919,9 @@ int main(void)
     test_new_note_follows_clock();
     test_filter_slew();
     test_vst_render_path();
+    test_block_size_invariance();
+    test_sample_rates();
+    test_idle_floor();
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;

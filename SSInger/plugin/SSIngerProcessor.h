@@ -13,6 +13,9 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <atomic>
+#include <vector>
+
 #include "emu/ssinger_bus.h"
 
 /* Parameter IDs, shared by the processor and the editor. */
@@ -33,7 +36,7 @@ inline constexpr const char* carrier = "carrier";
 inline constexpr const char* volume = "volume";
 }
 
-class SSIngerProcessor : public juce::AudioProcessor {
+class SSIngerProcessor : public juce::AudioProcessor, private juce::Timer {
 public:
     SSIngerProcessor();
     ~SSIngerProcessor() override;
@@ -67,20 +70,36 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 private:
-    ssinger_bus_t bus{};
-    bool busOk = false;
+    /* Two emulated systems, built off the audio thread: slot 0 is SEQ (one
+     * chip), slot 1 the quad tour rig. Switching Voices swaps the active
+     * slot on the audio thread (no allocation, no lock); the slot left
+     * behind is marked stale and rebuilt fresh on the message thread
+     * (timerCallback), so the next switch lands on a powered-on system the
+     * way the old in-place rebuild did. */
+    enum SlotState { slotReady = 0, slotStale = 1, slotBuilding = 2 };
+    struct Slot {
+        ssinger_bus_t bus{};
+        bool ok = false;
+        std::atomic<int> state{ slotStale };
+    };
+    Slot slots[2];
+    int active = 0;                    /* audio thread only */
+    double preparedRate = 0.0;         /* 0 until prepareToPlay */
+    juce::CriticalSection buildLock;   /* prepare/release vs timer rebuilds; never the audio thread */
     ssi263_params engDefaults{};
     unsigned char engRom[SSI263_ROM_BYTES]{};
-    std::vector<double> tmp;
+    std::vector<double> tmp;           /* mono render scratch, sized once in the constructor */
 
-    int voicesCache = 0;
     float volumeCache = 0.8f;
     int carrierCache = 0;
 
-    void rebuildBus(double sampleRate, int nvoices);
-    void applyParams();
-    void renderChunk(juce::AudioBuffer<float>& out, int from, int to);
-    void feedMessage(const juce::MidiMessage& m);
+    static int slotForVoicesParam(float choice) { return (int)choice == 0 ? 0 : 1; }
+    void buildSlot(int i, double sampleRate);
+    void freeSlots();
+    void timerCallback() override;
+    void applyParams(ssinger_bus_t& bus);
+    void renderSpan(ssinger_bus_t& bus, juce::AudioBuffer<float>& out, const juce::AudioBuffer<float>& carrier,
+                    int from, int to);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SSIngerProcessor)
 };
