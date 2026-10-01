@@ -187,7 +187,7 @@ leaves a unit that cannot keep files -- its first file loses its first letter, a
 so the program offers to set it up again when it next starts it (below). Closed while it still asks, it is not set
 up either, and is offered the same way.
 
-**Why the questions (0.7.1).** The units shipped set up, but this is the first start a Type 'n Speak owner met after
+**Why the questions.** The units shipped set up, but this is the first start a Type 'n Speak owner met after
 the cold reset its help file describes, and testers liked hearing the unit's own setup. The 0.6 and 0.7 previews
 sent the keys in a way the firmware took as its warm reset: it read one key early, and the three it then checks
 (each a different one of Ctrl, Alt, Delete) ended with a key coming up. The warm reset sets up the flash but not the

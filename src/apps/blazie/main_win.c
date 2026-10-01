@@ -166,8 +166,14 @@ static int offer_setup(int kind, const char *fw, const char *st)
     char msg[4000], lost[300] = "", err[300], before[MAX_PATH + 20];
     tns_rescue_report r;
     int answer;
+    emu_unit *old;
     if (tns_needs_setup(st, &r) != 1)
         return 1;
+    EnterCriticalSection(&g_lock);          /* the running unit (already saved) switched off: the minute's save, */
+    old = g_unit;                           /* which runs while a message box is up, must not write it over the */
+    g_unit = NULL;                          /* state set up here */
+    LeaveCriticalSection(&g_lock);
+    emu_destroy(old);
     if (r.lost_flash)
         snprintf(lost, sizeof lost, ", and %d it lost when moving them to flash (their text was never written: "
                  "only their names are left)", r.lost_flash);

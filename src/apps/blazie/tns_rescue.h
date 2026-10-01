@@ -1,8 +1,8 @@
 /* tns_rescue.h -- a saved Type 'n Speak that was never set up, told apart and set up anew (the Type 'n Speak's real
  * cold reset; Timothy, Jayson).
  *
- * Before 0.7.1 the emulator's first start of a Type 'n Speak missed the unit's cold reset (tns_board.c): the unit
- * came up with its flash set up but no RAM file system and no folders.  On such a unit a new file's first character
+ * In the 0.6 and 0.7 previews the emulator's first start of a Type 'n Speak missed the unit's cold reset
+ * (tns_board.c): the unit came up with its flash set up but no RAM file system and no folders.  On such a unit a new file's first character
  * was never stored (the first file went into the program's last byte) and a file moved to flash was lost: an entry
  * in folder 0, the deleted mark, and its text never written (bl_files.h blf_lost_get).  A unit whose file system or
  * folder question was answered n (tns_setup.h) is the same.  The states saved by the 0.6 and 0.7 previews are such

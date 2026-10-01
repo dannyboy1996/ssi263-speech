@@ -75,7 +75,7 @@ int  tns_memory(const tns_unit *u, int which, const unsigned char **bytes);
 long tns_program_end(const char *firmware);
 
 /* Tests' must-fail control (an app never sets it): nonzero, a cold start sends the keys the emulator sent before
-   0.7.1, which the firmware takes as its warm reset (no file system, no folders). */
+   this fix (the 0.6 and 0.7 previews), which the firmware takes as its warm reset (no file system, no folders). */
 extern int tns_cold_break;
 
 #ifdef __cplusplus

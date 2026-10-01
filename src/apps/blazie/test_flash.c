@@ -101,15 +101,16 @@ static void tns_checks(const char *fw)
     char d[300], path[64];
     tns_run_t a, b;
     int yes = tns_setup_yes_code(tns_setup_yes(fw)) & 0x7F, k;   /* y; the Spanish unit's yes is s */
-    double span, at[TNS_SETUP_ANSWERS], ready = tns_setup_ready_at(1);
+    double span, at[4], done;
     static const double again[] = {3.0, 6.0};
     snprintf(path, sizeof path, "test_flash.%d.state", (int)_getpid());
-    /* from cold: its cold reset's questions (tns_setup.h): the file system y y, the flash y y -- the erase, 32 s --
-       then the folders, ...; saved when it is ready (persist: at 2 s, while the unit still asks) */
-    for (k = 0; k < TNS_SETUP_ANSWERS; k++)
+    /* from cold: its cold reset's first four questions (tns_setup.h): the file system y y, the flash y y -- the
+       erase, 32 s, done a little before the folder question; saved then (persist: at 2 s, while the unit still asks;
+       the rest of the setup is test_files.c's) */
+    for (k = 0; k < 4; k++)
         at[k] = tns_setup_answer_at(k, 1);
-    if (!tns_run(fw, NULL, yes, at, TNS_SETUP_ANSWERS, ready + 1.0, path, !strcmp(brk, "persist") ? 2.0 : ready,
-                 &a))
+    done = tns_setup_answer_at(4, 1) - 2.0;
+    if (!tns_run(fw, NULL, yes, at, 4, done + 1.0, path, !strcmp(brk, "persist") ? 2.0 : done, &a))
         exit(1);
     snprintf(d, sizeof d, "%d chip erase after the flash's y, y (0: the firmware refused the chip's ID and never "
              "asked)", a.erases);

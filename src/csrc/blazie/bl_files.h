@@ -115,7 +115,7 @@ int blf_move(blf_fs *fs, int i, int folder, char *err, int errlen);
 int blf_add_folder(blf_fs *fs, const char *name, int type, char *err, int errlen);
 
 /* Flash files the unit lost: entries marked deleted (folder 0) whose blocks are all still marked used and that no
-   live entry shares.  A Type 'n Speak whose folders were never set up (the emulator's first start before 0.7.1, which
+   live entry shares.  A Type 'n Speak whose folders were never set up (the 0.6 and 0.7 previews' first start, which
    missed the unit's cold reset) wrote a file moved to flash as such an entry -- in folder 0, the deleted mark -- and
    removed it from RAM without writing its text to its blocks (measured: they stay erased, FFh): the name is all that
    is left.  The firmware's own delete frees the blocks with the mark, and a rename leaves a live entry on the same

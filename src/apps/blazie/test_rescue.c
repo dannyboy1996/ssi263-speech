@@ -214,6 +214,10 @@ int main(int argc, char **argv)
                  a && orig && n1 == n0 && !memcmp(a, orig, (size_t)n0) ? "the old unit's, byte for byte" : "DIFFERENT");
         check("the old state kept beside it", a && orig && n1 == n0 && !memcmp(a, orig, (size_t)n0), d);
         free(a);
+        /* the unit as its own factory setup left it (the rescue's) is not told apart */
+        got = tns_needs_setup(old, NULL);
+        snprintf(d, sizeof d, "never set up: %s", got == 1 ? "yes" : got ? "?" : "no");
+        check("a factory-set-up unit is not told apart", got == 0, d);
         /* the unit itself: notes opened and moved to flash with its own command */
         memset(&s, 0, sizeof s);
         s.t = 8.0;
@@ -225,14 +229,6 @@ int main(int argc, char **argv)
         }
     }
     free(orig);
-
-    /* a unit as it leaves the factory now is not told apart */
-    if (tns_factory_setup(fw, fresh, err, sizeof err)) {
-        got = tns_needs_setup(fresh, &r);
-        snprintf(d, sizeof d, "never set up: %s", got == 1 ? "yes" : got ? "?" : "no");
-        check("a factory unit is set up", got == 0, d);
-        remove(fresh);
-    }
     if (argc > 2) {                         /* a preview's saved unit: told apart, read only */
         got = tns_needs_setup(argv[2], &r);
         snprintf(d, sizeof d, "%s: never set up: %s; %d RAM files, %d lost flash files", argv[2],

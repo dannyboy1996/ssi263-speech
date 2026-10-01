@@ -192,8 +192,9 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
                                 r"^idle sounds: 1 FAILED$"])):
         CHECKS.append(check("Blazie emulator: idle channel CONTROL (%s, must fail)" % brk, IDLE + ["--break=" + brk],
                             expect_fail=True, fail_marks=marks))
-    # the Type 'n Speak from cold (firmware/blazie/tns/, when the builder has it): its reset to defaults, its
-    # question heard, y answered, its memory kept
+    # the Type 'n Speak from cold (firmware/blazie/tns/, when the builder has it): its cold reset's first question
+    # heard, y answered; from its factory setup (its seven questions answered) a key's latency and the options menu;
+    # its memory kept
     TNS_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie", "tns")
     for name in ("TNSENG.TNS", "TNSSPA.TNS"):
         if os.path.isfile(os.path.join(TNS_DIR, name)):
