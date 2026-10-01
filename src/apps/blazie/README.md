@@ -13,7 +13,7 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `main_win.c` | The Windows shell: the window, the menu (firmware, idle channel, keep open, pop and tick, sample rate, serial port, help), the keyboard, waveOut. |
 | `serial_win.c`, `.h` | The unit's serial port on a Windows COM port: the port list, and a thread moving bytes and setting the port as the firmware programs it. The portable half is `../../csrc/blazie/bl_serial.c`. |
 | `tns_keymap_win.c`, `.h` | A Windows key to the Type 'n Speak's key code (measured on the running firmware). |
-| `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
+| `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static), the boards on MAME's Z180 (`../../csrc/cpu/z180_mame.cpp`), with the licence files beside them. |
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
 | `test_clock.c` | The clock controller alone, then the English Braille Lite and Type 'n Speak setting and reading the time and date with their own commands, the clock going on and kept over a switch-off; and i-chord held through p-chord l's restart. `TEST_CLOCK_BREAK` / `TEST_CLOCK_HOLD_BREAK` put one bug back for run_tests' must-fail controls. |
@@ -150,6 +150,9 @@ Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the uni
 It asks once: answered, the flash is initialised and saved with the rest, and the unit starts without the question
 from then on (closed while it still asks, it asks again next time, as the unit would).
 
+A state holds no CPU registers (the unit starts from it as from power-on), so the states saved by the builds before
+0.7, on z180emu's Z180, load and run on MAME's unchanged: the same RAM, flash and clock, the same format.
+
 ## The file flash
 
 Both units keep their files in a 29F016-style flash chip, 2 MB as the firmware manages it (`../../csrc/blazie/flash29.c`;
@@ -160,6 +163,15 @@ through the speech chip every ~2 s meanwhile (each click: R4 F0, R1 F0, R2 FE, R
 flash -- the Type 'n Speak's first start, the Braille Lite's reset -- is 32 s of clicks, then "flash initialized" or
 "ready". A Braille Lite state is 768 KB (256 KB RAM + the flash's first 512 KB) while the rest of the flash is erased,
 2.25 MB once files reach it; both load.
+
+## Licence
+
+MIT (`LICENSE` beside the program), so it can be ported (to another screen-reader platform, a Linux device, ...),
+with Casso's MIT notice (`licenses/Casso-MIT.txt`: the chip model draws on it). The boards run on MAME's Z180 core
+(`../../csrc/cpu/z180_mame.cpp`), which keeps its BSD-3-Clause licence (`licenses/MAME-Z180-core-BSD-3-Clause.txt`).
+`build_app.py` puts all three beside the program. Since 0.7 no z180emu (GPL) is in the program or its tests:
+`python tools/check_no_gpl.py nvda/dist/blazie-emu` (run_tests runs it). The firmware keeps its own terms and is not
+part of the program.
 
 ## Not yet
 

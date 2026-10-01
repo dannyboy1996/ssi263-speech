@@ -587,7 +587,9 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         "It runs Blazie Engineering's own firmware on an emulated board with an emulated SSI-263 "
                         "speech chip. The firmware is shared with permission. This program is not a product of "
                         "Blazie Engineering.\n\n"
-                        "Z180 core: z180emu (GPL-2.0-or-later), so this program is GPL.", "About", MB_OK);
+                        "Licence: MIT (see LICENSE beside the program), with Casso's MIT notice, which the chip "
+                        "model draws on. The Z180 core is MAME's and keeps its BSD-3-Clause licence. Both "
+                        "notices are in the licenses folder.", "About", MB_OK);
             return 0;
         }
         break;

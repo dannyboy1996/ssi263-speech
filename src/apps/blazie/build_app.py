@@ -1,6 +1,6 @@
 """Build the Blazie emulator for Windows, into nvda/dist/blazie-emu/:
 
-  blazie_emu.exe   the app (one static program: the chip, the board with z180emu, the host, the shell)
+  blazie_emu.exe   the app (one static program: the chip, the boards on MAME's Z180, the host, the shell)
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
   test_clock.exe     the clock controller and the keys held while the unit starts (Jayson), headless
@@ -9,13 +9,20 @@
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
   test_idle.exe    the idle channel against Tomi's unit (its board built with bl_idle.c's test hooks)
+  LICENSE, licenses/  the project's MIT, MAME's BSD-3-Clause notice for the Z180 core, Casso's MIT
 
-w64devkit gcc, x64 (paths.local W64DEVKIT), z180emu from third_party/z180emu.  The firmware is NOT copied: a release
-puts firmware\\ beside the program; run from the source tree, the program finds firmware/blazie/ itself.
+The boards run on MAME's Z180 (src/csrc/cpu/z180_mame.cpp, BSD-3-Clause), built as build_board.py builds the release
+bl.dll: every source compiled on its own, the board with -DBL_Z180_MAME, linked by g++ with libstdc++ and libgcc
+static.  No z180emu (GPL) in any program here (Tomi: the emulator MIT for 0.7): python tools/check_no_gpl.py
+nvda/dist/blazie-emu.  A test's must-fail control gets its define on just the file that reads it.
+
+w64devkit gcc, x64 (paths.local W64DEVKIT).  The firmware is NOT copied: a release puts firmware\\ beside the program;
+run from the source tree, the program finds firmware/blazie/ itself.
 
     python src/apps/blazie/build_app.py
 """
 import os
+import shutil
 import subprocess
 import sys
 
@@ -25,85 +32,103 @@ sys.path.insert(0, REPO)
 from tools import repo_paths  # noqa: E402
 
 CSRC = os.path.join(REPO, "src", "csrc")
+BLAZIE = os.path.join(CSRC, "blazie")
+CPU = os.path.join(CSRC, "cpu")
 OUT = os.path.join(REPO, "nvda", "dist", "blazie-emu")
 CHIP = ["-O2", "-std=c99", "-ffp-contract=off", "-Wall"]
-BOARD = ["-O3", "-fcommon", "-std=gnu89", "-ffp-contract=off", "-w"]
+# the boards and host as the release bl.dll's (build_board.py's build_mame_dll); MAME's core as its C++17
+INC = ["-I" + BLAZIE, "-I" + CPU, "-I" + CSRC]
+BOARD = ["-O3", "-std=gnu89", "-ffp-contract=off", "-DBL_Z180_MAME", "-w"] + INC
+MAME_CXX = ["-O3", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-ffp-contract=off", "-Wall"] + INC
 APP = ["-O2", "-std=c99", "-Wall", "-Wextra", "-Wno-unused-parameter", "-Wno-format-truncation"]
+LINK = ["-static", "-static-libstdc++", "-static-libgcc", "-s"]
+
+# the board's files (each its own object, as bl.dll's) and the define each control puts on just the file reading it
+BOARD_FILES = ("bl_board", "flash29", "bl_serial", "bl_idle", "bl_clock", "bl_host", "tns_board")
+CONTROLS = {
+    "flash_break": {"bl_board": "BLAZIE_FLASH_BREAK", "tns_board": "BLAZIE_FLASH_BREAK"},
+    "cut_rx": {"bl_serial": "BL_SERIAL_CUT_RX"},
+    "hooks": {"bl_idle": "BLI_TEST_HOOKS"},
+}
+LICENCES = (("LICENSE", os.path.join(REPO, "LICENSE")),
+            (os.path.join("licenses", "MAME-Z180-core-BSD-3-Clause.txt"),
+             os.path.join(CPU, "mame_z180", "LICENSE-BSD-3-Clause.txt")),
+            (os.path.join("licenses", "Casso-MIT.txt"), os.path.join(REPO, "third_party", "casso", "LICENSE")))
 
 
 def main():
-    z180 = repo_paths.Z180_CORE
     bindir = repo_paths.bin_dir("W64DEVKIT", path_fallback=True)
-    gcc = os.path.join(bindir, "gcc.exe")
+    gcc, gxx = os.path.join(bindir, "gcc.exe"), os.path.join(bindir, "g++.exe")
     env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+    # a fresh folder: an object or program left by an older build (z180emu's bl_unity) must never come back in
+    if os.path.isdir(OUT):
+        shutil.rmtree(OUT)
     obj = os.path.join(OUT, "obj")
-    os.makedirs(obj, exist_ok=True)
-    zinc = ["-I" + z180, "-I" + os.path.join(z180, "z180"), "-fmacro-prefix-map=%s=." % z180]
-    units = [
-        (os.path.join(CSRC, "ssi263.c"), CHIP),
-        (os.path.join(CSRC, "ssi263dsp.c"), CHIP),
-        (os.path.join(CSRC, "blazie", "bl_unity.c"), BOARD + zinc),
-        (os.path.join(CSRC, "blazie", "bl_host.c"), BOARD),
-        (os.path.join(CSRC, "blazie", "tns_board.c"), BOARD),
-        (os.path.join(HERE, "emu_unit.c"), APP),
-        (os.path.join(HERE, "chords.c"), APP),
-        (os.path.join(HERE, "main_win.c"), APP),
-        (os.path.join(HERE, "tns_keymap_win.c"), APP),
-        (os.path.join(HERE, "serial_win.c"), APP),
-    ]
-    objs = []
-    for src, flags in units:
-        o = os.path.join(obj, os.path.basename(src) + ".o")
-        subprocess.run([gcc] + flags + ["-c", src, "-o", o], env=env, check=True)
-        objs.append(o)
-    subprocess.run([gcc, "-static", "-s", "-mwindows", "-o", os.path.join(OUT, "blazie_emu.exe")] + objs
-                   + ["-lwinmm", "-lsetupapi", "-lm"], env=env, check=True)
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_chords.exe"),
-                                  os.path.join(HERE, "test_chords.c"), os.path.join(HERE, "chords.c")],
-                   env=env, check=True)
+    os.makedirs(obj)
+
+    def run(argv):
+        subprocess.run(argv, env=env, check=True)
+
+    def compile_c(src, flags, name=None, defines=()):
+        o = os.path.join(obj, (name or os.path.splitext(os.path.basename(src))[0]) + ".o")
+        run([gcc] + flags + ["-D" + d for d in defines] + ["-c", src, "-o", o])
+        return o
+
+    def link(exe, objs, libs=("-lm",), extra=()):
+        run([gxx] + LINK + list(extra) + ["-o", os.path.join(OUT, exe)] + list(objs) + list(libs))
+
+    core = []
+    for name in ("z180_mame", "z180_asci"):
+        o = os.path.join(obj, name + ".o")
+        run([gxx] + MAME_CXX + ["-c", os.path.join(CPU, name + ".cpp"), "-o", o])
+        core.append(o)
+    chip = [compile_c(os.path.join(CSRC, "ssi263.c"), CHIP), compile_c(os.path.join(CSRC, "ssi263dsp.c"), CHIP)]
+
+    def board(control=None):
+        """The board's objects; with a control, its define on just the files that read it."""
+        defs = CONTROLS.get(control, {})
+        objs = []
+        for f in BOARD_FILES:
+            src = os.path.join(BLAZIE, f + ".c")
+            if f in defs:
+                objs.append(compile_c(src, BOARD, name="%s_%s" % (f, control), defines=(defs[f],)))
+            else:
+                o = os.path.join(obj, f + ".o")
+                objs.append(o if os.path.isfile(o) else compile_c(src, BOARD))
+        return objs + core
+
+    emu = compile_c(os.path.join(HERE, "emu_unit.c"), APP)
+    chords = compile_c(os.path.join(HERE, "chords.c"), APP)
+    unit = chip + board() + [emu, chords]
+    shell = [compile_c(os.path.join(HERE, f), APP) for f in ("main_win.c", "tns_keymap_win.c", "serial_win.c")]
+    link("blazie_emu.exe", unit + shell, libs=("-lwinmm", "-lsetupapi", "-lm"), extra=("-mwindows",))
+    link("test_chords.exe", [compile_c(os.path.join(HERE, "test_chords.c"), APP), chords], libs=())
     # the unit, headless (run_tests passes it the firmware)
-    unit = [o for o in objs if not o.endswith(("main_win.c.o", "tns_keymap_win.c.o", "serial_win.c.o"))]
-    subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_emu_unit.exe"),
-                    os.path.join(HERE, "test_emu_unit.c")] + unit + ["-lm"], env=env, check=True)
+    link("test_emu_unit.exe", [compile_c(os.path.join(HERE, "test_emu_unit.c"), ["-O2"])] + unit)
     # the clock controller and the keys held while the unit starts (Jayson), headless
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_clock.exe"),
-                                  os.path.join(HERE, "test_clock.c")] + unit + ["-lm"], env=env, check=True)
+    link("test_clock.exe", [compile_c(os.path.join(HERE, "test_clock.c"), APP)] + unit)
     # the file flash (test_flash.c), and its control: the boards built with BLAZIE_FLASH_BREAK (the Type 'n Speak's
     # chip answers a 29F040's ID; the Braille Lite's banks all on one 512 KB)
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_flash.exe"),
-                                  os.path.join(HERE, "test_flash.c")] + unit + ["-lm"], env=env, check=True)
-    brk_bl = os.path.join(obj, "bl_unity_flash_break.o")
-    brk_tns = os.path.join(obj, "tns_board_flash_break.o")
-    subprocess.run([gcc] + BOARD + zinc + ["-DBLAZIE_FLASH_BREAK", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"),
-                                           "-o", brk_bl], env=env, check=True)
-    subprocess.run([gcc] + BOARD + ["-DBLAZIE_FLASH_BREAK", "-c", os.path.join(CSRC, "blazie", "tns_board.c"),
-                                    "-o", brk_tns], env=env, check=True)
-    unit_brk = [brk_bl if o.endswith("bl_unity.c.o") else brk_tns if o.endswith("tns_board.c.o") else o for o in unit]
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_flash_break.exe"),
-                                  os.path.join(HERE, "test_flash.c")] + unit_brk + ["-lm"], env=env, check=True)
+    flash = compile_c(os.path.join(HERE, "test_flash.c"), APP)
+    link("test_flash.exe", [flash] + unit)
+    link("test_flash_break.exe", [flash] + chip + board("flash_break") + [emu, chords])
     # the serial port plugged in, and its control: the same board with the receive path cut (bl_serial.c)
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_serial.exe"),
-                                  os.path.join(HERE, "test_serial.c")] + unit + ["-lm"], env=env, check=True)
-    cut = os.path.join(obj, "bl_unity_cut_rx.o")
-    subprocess.run([gcc] + BOARD + zinc + ["-DBL_SERIAL_CUT_RX", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"),
-                                           "-o", cut], env=env, check=True)
-    unit_cut = [cut if o.endswith("bl_unity.c.o") else o for o in unit]
-    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_serial_cut.exe"),
-                                  os.path.join(HERE, "test_serial.c")] + unit_cut + ["-lm"], env=env, check=True)
+    serial = compile_c(os.path.join(HERE, "test_serial.c"), APP)
+    unit_cut = chip + board("cut_rx") + [emu, chords]
+    link("test_serial.exe", [serial] + unit)
+    link("test_serial_cut.exe", [serial] + unit_cut)
     # the Windows side end to end through a named pipe (serial_win.c), and its control on the cut board
-    win = os.path.join(obj, "serial_win.c.o")
-    for exe, board in (("test_serial_win.exe", unit), ("test_serial_win_cut.exe", unit_cut)):
-        subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, exe),
-                                      os.path.join(HERE, "test_serial_win.c"), win] + board
-                       + ["-lsetupapi", "-lm"], env=env, check=True)
+    serial_win = compile_c(os.path.join(HERE, "test_serial_win.c"), APP)
+    win = os.path.join(obj, "serial_win.o")
+    for exe, objs in (("test_serial_win.exe", unit), ("test_serial_win_cut.exe", unit_cut)):
+        link(exe, [serial_win, win] + objs, libs=("-lsetupapi", "-lm"))
     # the idle channel's sounds against the unit's (run_tests passes the firmware); its board built with the test hooks
     # its must-fail controls use (bl_idle.c, BLI_TEST_HOOKS)
-    hooks = os.path.join(obj, "bl_unity_hooks.o")
-    subprocess.run([gcc] + BOARD + zinc + ["-DBLI_TEST_HOOKS", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"), "-o", hooks],
-                   env=env, check=True)
-    subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_idle.exe"), os.path.join(HERE, "test_idle.c"), hooks]
-                   + [o for o in objs if o.endswith(("ssi263.c.o", "ssi263dsp.c.o", "bl_host.c.o"))] + ["-lm"],
-                   env=env, check=True)
+    link("test_idle.exe", [compile_c(os.path.join(HERE, "test_idle.c"), ["-O2"])] + chip + board("hooks"))
+    # the licences: MIT (ours), MAME's BSD-3-Clause for the Z180 core, Casso's MIT (the chip model draws on it)
+    for dst, src in LICENCES:
+        os.makedirs(os.path.dirname(os.path.join(OUT, dst)) or OUT, exist_ok=True)
+        shutil.copyfile(src, os.path.join(OUT, dst))
     print("built %s" % OUT)
 
 

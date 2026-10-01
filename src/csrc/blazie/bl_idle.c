@@ -1,6 +1,6 @@
 /* bl_idle.c -- the Braille Lite's idle channel as Tomi's unit sounds (see bl_idle.h; the numbers: bl_idle_table.h,
- * generated from src/hosts/blazie_idle.py).  Compiled into the board's translation unit (bl_unity.c), so every
- * program that links the board has it.
+ * generated from src/hosts/blazie_idle.py).  Every build of the board links it: its own object beside the board on
+ * MAME's Z180 (bl.dll, the Linux library, the emulator app), inside bl_unity.c on the z180emu reference.
  *
  * Per sample of a block: the block's events (chip writes, channel power) at their samples, then
  *   gate   how much of the channel is heard (0..1, 2 ms ramps; 30 ms after speech with BLI_OPEN_OFF)

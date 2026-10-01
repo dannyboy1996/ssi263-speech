@@ -14,6 +14,6 @@ sha256 of every file as vendored. Only `z180/` is here: the Braille Lite board i
 | `z180/z180.c`, `.h` | `cpu_inject_call_z180()` | a test-harness hook (a CALL injected at the current PC); not used by the library |
 | `z180/z180.c` | reading or writing `TRDR` clears `CNTR`'s `EF` | the Z180's CSI/O as its manual has it: the Blazie units' clock controller clocks bytes through it (`src/csrc/cpu/z180_legacy.c` completes the transfers, `src/csrc/blazie/bl_clock.c`); upstream never set `EF`, so nothing that ran before changes |
 
-The build scripts compile this copy (`build_linux.sh`, `build_android.sh`, `src/csrc/blazie/build_board.py`,
-`src/apps/blazie/build_app.py`); `paths.local`'s `Z180EMU` is still used for the harness `bns.c`/`bns_live.exe`
+The development references compile this copy (`LEGACY=1 build_linux.sh`,
+`src/csrc/blazie/build_board.py --legacy-tests`; since 0.7 the emulator app, `src/apps/blazie/build_app.py`, is on MAME's Z180); `paths.local`'s `Z180EMU` is still used for the harness `bns.c`/`bns_live.exe`
 (the NVDA add-on's pipe fallback), which is not vendored.

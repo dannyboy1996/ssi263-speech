@@ -165,6 +165,12 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]))
     CHECKS.append(check("Blazie emulator: the Spanish unit, headless", [os.path.join(EMU, "test_emu_unit.exe"), "bl",
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
+    # MIT since 0.7 (Tomi: the emulator MIT): the program, its tests and their objects on MAME's Z180, no z180emu;
+    # the audit's must-fail control is the no-GPL audit CONTROL below (and a z180emu build of this folder fails it)
+    CHECKS.append(check("Blazie emulator: no z180emu, no GPL (tools/check_no_gpl.py)",
+                        [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "check_no_gpl.py"), EMU],
+                        ok=lambda out: bool(re.search(r"^ok +blazie-emu: no z180emu or Unicorn engine, no GPL notice "
+                                                      r"\((\d{2,}) files searched\)$", out, re.M))))
     # its idle channel against Tomi's unit (src/csrc/blazie/bl_idle.c, src/hosts/blazie_idle.py): the noise's level at
     # every volume, keep open off/until/always, the pop after a click-off and none before, the click, the 10 Hz tick;
     # each control puts one bug back and must fail on exactly the checks that see it

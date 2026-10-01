@@ -282,10 +282,17 @@ void tns_destroy(tns_unit *u)
     free(u);
 }
 
+/* as bl_board.c's run_cycles: built with BL_Z180_MAME (MAME's core, ../cpu/z180_mame.cpp -- the emulator's, 0.7),
+   whole steps; otherwise z180emu's legacy slice (a development reference only) */
+#ifdef BL_Z180_MAME
+#define TNS_RUN_SLICE z180_run
+#else
+#define TNS_RUN_SLICE z180_run_legacy
+#endif
 void tns_run(tns_unit *u, unsigned long long cycles)
 {
     while (cycles > 0) {
-        unsigned long long done = z180_run_legacy(u->cpu, cycles > SLICE ? SLICE : cycles);
+        unsigned long long done = TNS_RUN_SLICE(u->cpu, cycles > SLICE ? SLICE : cycles);
         cycles = done >= cycles ? 0 : cycles - done;
     }
 }
