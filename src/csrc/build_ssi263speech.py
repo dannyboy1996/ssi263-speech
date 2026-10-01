@@ -1,15 +1,15 @@
-"""Build ssi263speech.dll, the native voices as one Windows library, 32- and 64-bit -- a development stand-in for the
-release build of the same sources -- and the SAPI engine's native serve host beside it.
+"""Build ssi263speech.dll, the release voice library for Windows, 32- and 64-bit,
+and the SAPI engine's native test host beside it.
 
     python src/csrc/build_ssi263speech.py [x64|x86 ...]      # both by default
 
 Into build/win/<arch>/:
 
   ssi263speech.dll   the chip, the Braille Lite (board on MAME's Z180, host, voice, number words), the Accent SA
-                     (board on MAME's 8085, host, voice) and, once their sources are in the tree, the Speak-Out (MAME's
+                     (board on MAME's 8085, host, voice), the Speak-Out (MAME's
                      V40) and the Accent-mini (MAME's 8086) -- behind voices.h, the voice table.  It exports the ssv_
                      table and every voice API (blv_, asv_, sov_, amv_, ssi263_); the SAPI engine (sapi/ssi263_sapi.cpp)
-                     loads it with LoadLibrary from its own folder, so a release build of the same exports drops in.
+                     loads it with LoadLibrary from its own folder.
   ssi263_serve.exe   sapi/ssi_serve.c: the SAPI pipe protocol (OSP4) over that DLL, loaded the way the SAPI engine
                      loads it -- sapi/ssi_serve.py ported, so sapi/test_native.py can hold the two to each other over
                      the wire.  A test and build tool (its --list makes the installer's voices.txt); never installed.
@@ -49,7 +49,10 @@ FRONT = ["-O2", "-std=c99", "-ffp-contract=off", "-Wall"] + inc("")
 
 
 def units():
-    """(flags, source) for the library, and the -D flags voices.c gets for the engines that are there."""
+    """(flags, source) for all release voices; a missing voice is a build failure."""
+    for source in ("speakout/so_voice.c", "accentmini/am_voice.c"):
+        if not os.path.isfile(os.path.join(SRC, source)):
+            raise SystemExit("Required release voice source missing: " + source)
     u = [(CHIP, "ssi263.c"), (CHIP, "ssi263dsp.c"), (MAME, "cpu/z180_mame.cpp"), (MAME, "cpu/z180_asci.cpp")]
     u += [(BOARD, "blazie/%s.c" % n) for n in ("bl_board", "flash29", "bl_serial", "bl_idle", "bl_clock", "bl_host",
                                                 "bl_voice", "bl_firmware", "bl_state")]

@@ -1,4 +1,4 @@
-"""Shared by build_speakout.py and build_blazie.py.
+"""Shared by all three NVDA add-on builders.
 
 Since 0.2 the add-ons ship no numpy and no VC runtime: every native file is a static
 w64devkit build that imports only KERNEL32 and msvcrt, in both 32- and 64-bit, so one
@@ -70,6 +70,35 @@ def copy_mame_notices(eng, *cores):
 _built_boards = set()
 
 
+def build_native_voices():
+    """Build the complete shared Windows voice library once per release invocation."""
+    if "native-voices" not in _built_boards:
+        subprocess.run([sys.executable, os.path.join(REPO, "src", "csrc", "build_ssi263speech.py")], check=True)
+        _built_boards.add("native-voices")
+
+
+def copy_native_voices(eng):
+    """The unified library and all linked CPU notices, with both architectures checked."""
+    build_native_voices()
+    check_core(os.path.join(REPO, "src"), unified=True)
+    for arch in ("x64", "x86"):
+        dest = os.path.join(eng, "bin", arch)
+        os.makedirs(dest, exist_ok=True)
+        dll = os.path.join(REPO, "build", "win", arch, "ssi263speech.dll")
+        check_native(dll, arch)
+        shutil.copy2(dll, dest)
+    copy_mame_notices(eng, "z180", "nec", "i86", "i8085")
+
+
+def copy_native_binding(eng):
+    """The Speak-Out/Accent ctypes layer; no research engine or Python firmware host."""
+    copy_native_voices(eng)
+    with open(os.path.join(eng, "__init__.py"), "w", encoding="utf-8") as f:
+        f.write('"""Private native voice bindings for this add-on."""\n')
+    for name in ("ssi263speech.py", "ssi263_rates.py"):
+        shutil.copy2(os.path.join(REPO, "nvda", "shared", name), eng)
+
+
 def build_board(script):
     """Separate processes avoid the three board builders' identical Python module names."""
     if script not in _built_boards:
@@ -80,25 +109,27 @@ def build_board(script):
 # The C chip must match chip.py before anything ships: tools/check_native_core.py on
 # each architecture's Python (A/R timing and chip time exact, PCM identical).
 CHECK_PYTHONS = ("PYTHON64", "PYTHON32")          # keys in paths.local; both are required
-_checked = []
+_checked = set()
 
 
-def check_core(engine):
-    if _checked:
+def check_core(engine, unified=False):
+    if unified in _checked:
         return
     # nothing ships from a tree that names someone's own folders
     r = subprocess.run([sys.executable, os.path.join(REPO, "tools", "check_no_machine_paths.py")],
                        capture_output=True, text=True)
     if r.returncode:
         sys.exit("machine paths in tracked files:\n" + r.stdout[-2000:])
-    for key in CHECK_PYTHONS:
+    for key, arch in zip(CHECK_PYTHONS, ("x64", "x86")):
         py = repo_paths.python(key)
+        dll = (os.path.join(REPO, "build", "win", arch, "ssi263speech.dll") if unified else
+               os.path.join(engine, "ssi263", "_bin", arch, "ssi263.dll"))
         r = subprocess.run([py, os.path.join(os.path.dirname(engine), "tools", "check_native_core.py")],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=dict(os.environ, SSI263_LIB=dll))
         print(r.stdout.strip())
         if r.returncode:
             sys.exit("the C chip no longer matches chip.py (%s): %s" % (py, r.stderr[-2000:]))
-    _checked.append(True)
+    _checked.add(unified)
 
 
 def copy_engine(engine, eng):

@@ -2,7 +2,7 @@
 import os
 import shutil
 import sys
-from build_common import read_manifest, check_native, copy_engine, copy_mame_notices, build_board, rm, zip_build
+from build_common import read_manifest, check_native, copy_engine, copy_native_voices, build_board, rm, zip_build
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MANIFEST, VERSION = read_manifest(os.path.join(HERE, "blazie"))
@@ -30,12 +30,7 @@ def main():
                      ("blazie_idle.py", "blazie_idle.py")):
         shutil.copy2(os.path.join(ENGINE, "hosts", src), os.path.join(eng, dst))
     native = os.path.join(HERE, "dist", "blazie-lib")
-    for arch in ("x86", "x64"):
-        dest = os.path.join(eng, "bin", arch)
-        os.makedirs(dest)
-        dll = os.path.join(native, arch, "bl.dll")
-        check_native(dll, arch, imports=("ssi263.dll",))
-        shutil.copy2(dll, dest)
+    copy_native_voices(eng)
     exe = os.path.join(native, "bl_live_mame.exe")
     check_native(exe, "x86")
     shutil.copy2(exe, os.path.join(eng, "bns_live.exe"))
@@ -47,7 +42,6 @@ def main():
     for name in ("BL2SPA.BNS", "bl2spa_fresh.state"):
         if os.path.isfile(os.path.join(spa, name)):
             shutil.copy2(os.path.join(spa, name), eng)
-    copy_mame_notices(eng, "z180")
     shutil.copytree(os.path.join(HERE, "blazie", "locale"), os.path.join(BUILD, "locale"))
     with open(os.path.join(BUILD, "manifest.ini"), "w", encoding="utf-8") as f:
         f.write(MANIFEST)

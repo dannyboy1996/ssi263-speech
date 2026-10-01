@@ -77,7 +77,7 @@ EXE = os.path.join(_ENGINE_DIR, "bns_live.exe")
 # 0.7: the unit in-process (bl.dll: the Z180, the board and the host lockstep in C, for this Python's bitness):
 # no child process and no pipe. SSI263_BLAZIE_PIPE=1 explicitly selects the MAME
 # pipe reference for development comparisons; a native failure never selects it silently.
-DLL = os.path.join(_ENGINE_DIR, "bin", "x64" if sys.maxsize > 2 ** 32 else "x86", "bl.dll")
+DLL = os.path.join(_ENGINE_DIR, "bin", "x64" if sys.maxsize > 2 ** 32 else "x86", "ssi263speech.dll")
 FIRMWARE = os.path.join(_ENGINE_DIR, "BL2ENG.BNS")
 STATE = os.path.join(_ENGINE_DIR, "bl2_2003_warm.state")
 # The Spanish Braille Lite 2000 (ONCE's BL2SPA.BNS) from a full-reset snapshot; optional: the voice is offered only
