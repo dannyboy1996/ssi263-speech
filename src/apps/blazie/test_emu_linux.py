@@ -12,6 +12,9 @@ The checks:
   tns            the Type 'n Speak from cold: it speaks, y y answered, then F4 says the host's time
   memory         the date and time set through the unit's own commands (typed as keys), the memory saved to the
                  program's folder (--autosave) and started from again: the unit still holds 2015-09-30
+  serial         the program run as a person runs it (in a pseudo-terminal, no sound card), its serial port on a
+                 pseudo-terminal: s-chord's XON ENQ arrive at 19200 bit/s, ACK is answered with 'C' -- and NAK
+                 (the control) is not
   held           an input device's keys: p-chord, l, i-chord held through the restart -- the cold reset's question
 The control: BLAZIE_KEYS_BREAK=1 swaps dots 1 and 4 in every chord; clock-keys and clock-letters must then FAIL
 (tools/linux_tests.sh judges it by its marks).
@@ -54,6 +57,63 @@ def rms(out, frm, to):
 def said_time(out):
     m = re.search(r"^clock: (.*)$", out, re.M)
     return (m is not None and m.group(1).endswith(": yes")), (m.group(1) if m else "no clock line")
+
+
+def serial_handshake(exe, fw, cfg, reply):
+    """The program as a person runs it (a terminal: a pseudo-terminal here; --no-sound, so the system clock paces
+    it), its serial port on a pseudo-terminal from its settings; s-chord typed; this script, on the line's other
+    end, answers the unit's ENQ with `reply` at once (test_serial.c's handshake).  (bytes up to the ENQ, bytes after
+    the reply, the line's speed then)."""
+    import pty
+    import select
+    import termios
+    import time
+    import tty
+    os.makedirs(cfg)
+    with open(os.path.join(cfg, "blazie_emu.ini"), "w") as f:
+        f.write("[input]\nevdev = off\n\n[serial]\nport = pty\n")
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execv(exe, [exe, "--firmware", fw, "--config", cfg, "--unit", "bl-en", "--no-sound"])
+    first, after, speed, ser = bytearray(), bytearray(), "?", None
+    speeds = {getattr(termios, "B%d" % b): str(b) for b in (9600, 19200)}
+
+    def pump(sec, into=None, until=None):
+        end = time.time() + sec
+        while time.time() < end and not (until and until in into):
+            r, _, _ = select.select([fd] + ([ser] if ser is not None else []), [], [], 0.002)
+            if fd in r:
+                try:
+                    os.read(fd, 4096)
+                except OSError:
+                    return
+            if ser is not None and ser in r:
+                into.extend(os.read(ser, 256))
+    try:
+        pump(3.0)
+        ser = os.open(os.path.join(cfg, "serial"), os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+        tty.setraw(ser)
+        pump(5.0, first)                        # the greeting over
+        os.write(fd, b"dsj ")                   # s-chord: storage
+        pump(3.0, first, b"\x05")
+        os.write(ser, reply)
+        pump(2.0, after)
+        speed = speeds.get(termios.tcgetattr(ser)[4], "other")
+        os.write(fd, b"\x1b[23~")               # F11, then 0: exit
+        pump(1.0, after)
+        os.write(fd, b"0\n")
+        pump(3.0, after)
+    except OSError as e:
+        speed = "error: %s" % e
+    finally:
+        try:
+            os.kill(pid, 15)
+            os.waitpid(pid, 0)
+        except OSError:
+            pass
+        if ser is not None:
+            os.close(ser)
+    return bytes(first), bytes(after), speed
 
 
 def main():
@@ -126,6 +186,14 @@ def main():
             check("memory: started again from it", started and m is not None and m.group(1) == "2015-09-30"
                   and g > 0.01, "%s; the clock %s; rms %.4f" % ("from the saved memory" if started else
                                                                "NOT from the saved memory", m.group(1) if m else "?", g))
+
+        if want("serial"):
+            ack = serial_handshake(exe, fw, os.path.join(tmp, "serial-ack"), b"\x06")
+            nak = serial_handshake(exe, fw, os.path.join(tmp, "serial-nak"), b"\x15")
+            check("serial port on a pseudo-terminal", ack[0].endswith(b"\x11\x05") and b"C" in ack[1]
+                  and ack[2] == "19200" and nak[0].endswith(b"\x11\x05") and b"C" not in nak[1],
+                  "s-chord sent [%s] at %s bit/s; ACK answered [%s], NAK (the control) [%s]"
+                  % (ack[0].hex(" "), ack[2], ack[1].hex(" "), nak[1].hex(" ")))
 
         if want("held"):
             # an input device (evdev): p-chord, l, then i-chord (dots 2 4 and space) held while the unit restarts

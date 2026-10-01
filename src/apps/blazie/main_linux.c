@@ -96,7 +96,7 @@ static int g_n_menu_bl, g_n_menu_tns;
 static unsigned char g_tns_held[0x80];           /* the Type 'n Speak's keys down now (an input device's) */
 static tty_link *g_tty;
 static volatile sig_atomic_t g_quit;
-static int g_headless, g_print_actions, g_flash_instant;
+static int g_headless, g_print_actions, g_flash_instant, g_no_sound;
 static struct termios g_term_saved;
 static int g_term_raw;
 
@@ -492,8 +492,8 @@ static void audio_start(void)
     const char *dev = ini_get(g_ini, "sound", "device", "default");
     char device[128];
     snprintf(device, sizeof device, "%s", dev);
-    g_audio = audio_open(device, g_rate, g_rate * g_block_ms / 1000, NBLOCKS, err, sizeof err);
-    if (!g_audio)
+    g_audio = g_no_sound ? NULL : audio_open(device, g_rate, g_rate * g_block_ms / 1000, NBLOCKS, err, sizeof err);
+    if (!g_audio && !g_no_sound)
         say("No sound: %s.  The unit runs on, silent ([sound] device in the settings chooses another device).", err);
     g_audio_stop = 0;
     if (pthread_create(&g_audio_thread, NULL, audio_main, NULL) == 0) {
@@ -1087,6 +1087,7 @@ static void usage(void)
     printf("blazie_emu -- a Blazie Braille Lite 2000 or Type 'n Speak, running its own firmware.\n\n"
            "  blazie_emu [--unit bl-en|bl-es|tns-en|tns-es] [--firmware DIR] [--config DIR]\n"
            "  blazie_emu --show-keys          what this keyboard sends (for the key settings)\n"
+           "  blazie_emu --no-sound           no sound card: the unit runs on silent, paced by the system clock\n"
            "  blazie_emu --help\n\n"
            "Headless (no sound card, no terminal; the tests):\n"
            "  --wav FILE | --null   render --seconds S of the unit (to FILE, or nowhere)\n"
@@ -1129,6 +1130,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--print-actions")) g_print_actions = 1;
         else if (!strcmp(a, "--clock-check")) clock_check = 1;
         else if (!strcmp(a, "--show-keys")) show = 1;
+        else if (!strcmp(a, "--no-sound")) g_no_sound = 1;
         else if (!strcmp(a, "--ram-has") && val && n_ram < 16) ram_texts[n_ram++] = TAKE();
         else if (!strcmp(a, "--rms") && val && n_win < 16) {
             const char *r = TAKE();
