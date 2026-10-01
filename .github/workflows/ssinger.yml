@@ -51,9 +51,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-22.04        # glibc 2.35: Ubuntu 22.04, Debian 12 and later can run it
             arch: x86_64
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             arch: arm64
     env:
       PLATFORM: linux-${{ matrix.arch }}
@@ -99,7 +99,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pv-arm64
-          key: pluginval-${{ env.PLUGINVAL_VERSION }}-linux-arm64-v1
+          key: pluginval-${{ env.PLUGINVAL_VERSION }}-${{ matrix.runner }}-v1   # per runner: a 24.04 build needs glibc 2.38
 
       - name: Build pluginval from source (arm64)
         if: matrix.arch == 'arm64' && steps.pvcache.outputs.cache-hit != 'true'
