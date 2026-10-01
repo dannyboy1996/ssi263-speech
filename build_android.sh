@@ -89,7 +89,7 @@ objects() {
     cc --target="$TARGET" $CHIP -c -o "$O/ssi263dsp.o" "$SRC/ssi263dsp.c"
     cxx --target="$TARGET" $Z180CXX -c -o "$O/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
     cxx --target="$TARGET" $Z180CXX -c -o "$O/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
-    for f in bl_board flash29 bl_serial bl_idle bl_host bl_voice bl_firmware bl_state; do
+    for f in bl_board flash29 bl_serial bl_idle bl_clock bl_host bl_voice bl_firmware bl_state; do
         cc --target="$TARGET" $BOARD -c -o "$O/$f.o" "$SRC/blazie/$f.c"
     done
     cxx --target="$TARGET" $MAME -c -o "$O/i8085_mame.o" "$SRC/cpu/i8085_mame.cpp"
@@ -102,7 +102,7 @@ objects() {
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
 }
 ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o"
-BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_host.o bl_voice.o"
+BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_clock.o bl_host.o bl_voice.o"
 
 build_abi() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"

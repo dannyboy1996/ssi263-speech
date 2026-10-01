@@ -161,9 +161,11 @@ int main(int argc, char **argv)
             fclose(f);
         }
         again = run(fw, path, 0, 0, 0.0, 2.0, NULL);
+        /* the memory, then the clock controller (bl_clock.h) */
         snprintf(d, sizeof d, "%ld bytes (want %ld); booted from it: rms %.4f over the first 2 s", size,
-                 g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L, again);
-        check("switched off and on", size == (g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L) && again > 0.01, d);
+                 (g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L) + BLC_SAVE_SIZE, again);
+        check("switched off and on", size == (g_kind == EMU_TYPE_N_SPEAK ? 5242880L : 786432L) + BLC_SAVE_SIZE
+                                     && again > 0.01, d);
         remove(path);
         free(buf);
     }

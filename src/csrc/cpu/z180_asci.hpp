@@ -82,17 +82,31 @@ private:
     uint8_t m_tx_data;
 };
 
-// The clocked serial port.  The Braille Lite firmware never uses it; its registers read back, and it never
-// requests an interrupt.
+// The clocked serial port, with an external clock only (cpu.h z180_csio_clock: the device on the far end clocks each
+// byte; the Blazie units' clock controller does).  EF is set when a byte has moved and cleared by reading or writing
+// TRDR; the interrupt request is EF and EIE, a level.  The Z180's own clock (SS < 111) is not modelled.
 class z180_csio {
 public:
     void reset() { m_cntr = 0x07; m_trdr = 0; }
     uint8_t cntr_r() const { return m_cntr; }
     void cntr_w(uint8_t data) { m_cntr = (uint8_t)((m_cntr & 0x80) | (data & 0x7f)); }
-    uint8_t trdr_r() const { return m_trdr; }
-    void trdr_w(uint8_t data) { m_trdr = data; }
-    int check_interrupt() const { return 0; }
+    uint8_t trdr_r() { m_cntr &= 0x7f; return m_trdr; }
+    void trdr_w(uint8_t data) { m_cntr &= 0x7f; m_trdr = data; }
+    int check_interrupt() const { return (m_cntr & 0xc0) == 0xc0; }
     void clear_interrupt() {}
+    // the external clock's 8 bits: TRDR out (TE), `in` into TRDR (RE); returns the bits that were armed
+    int clock(uint8_t in, uint8_t *sent)
+    {
+        int armed = m_cntr & 0x30;
+        if (!armed)
+            return 0;
+        if ((armed & 0x10) && sent)
+            *sent = m_trdr;
+        if (armed & 0x20)
+            m_trdr = in;
+        m_cntr = (uint8_t)((m_cntr & ~0x30) | 0x80);
+        return armed;
+    }
 
 private:
     uint8_t m_cntr = 0x07, m_trdr = 0;

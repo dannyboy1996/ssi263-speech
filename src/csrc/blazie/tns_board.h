@@ -10,6 +10,8 @@
  *   bit 2 = 0 power switch off; FFh when idle.  80h (read): watchdog.  B0h (write): power/control latch.
  *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the 4 MB 29F016, the low 5 bits pick
  *   the page.
+ *   C3h (write): the 8255's control word; port C bit 4 calls the clock controller, which the firmware talks to over
+ *   the Z180's CSI/O (bl_clock.h; on with tns_clock_on).
  *   Memory: the firmware image from physical 00000h; RAM everywhere else, including 0-3FFFFh past the image's end
  *   (a new file's text starts right after the program).
  *
@@ -50,8 +52,17 @@ int  tns_serial_write(tns_unit *u, const unsigned char *bytes, int n);
 int  tns_serial_space(const tns_unit *u);
 int  tns_serial_read(tns_unit *u, unsigned char *out, int cap, bl_serial_status *status);
 
-/* the RAM (1 MB) and the file flash (4 MB), as a switched-off unit keeps them; 1 on success */
+/* the RAM (1 MB) and the file flash (4 MB), as a switched-off unit keeps them (and the clock controller when it is
+   on); 1 on success */
 int  tns_save_state(const tns_unit *u, const char *path);
+
+/* The clock controller on the CSI/O (bl_clock.h), called through the 8255 at C3h: as bl_board.h's bl_clock_on,
+   bl_clock_time and bl_clock_wall. */
+int  tns_clock_on(tns_unit *u, const blc_time *now, long long unix_now);
+int  tns_clock_time(const tns_unit *u, int alarm, blc_time *t);
+void tns_clock_wall(tns_unit *u, long long unix_now);
+/* tests: which 0, the 1 MB address space's RAM (the program at its start); which 1, the 4 MB file flash; the size */
+int  tns_memory(const tns_unit *u, int which, const unsigned char **bytes);
 
 #ifdef __cplusplus
 }

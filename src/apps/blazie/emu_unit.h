@@ -13,6 +13,7 @@
 #define BLAZIE_EMU_UNIT_H
 
 #include "../../csrc/blazie/bl_serial.h"
+#include "../../csrc/blazie/bl_clock.h"
 
 typedef struct emu_unit emu_unit;
 
@@ -32,9 +33,24 @@ void emu_render(emu_unit *u, short *out, int n);
 /* a key: for the Braille Lite a chord (chords.h bits), for the Type 'n Speak a key event (tns_board.h: bit 7 =
    down); 0 if the unit's key queue is full */
 int emu_key(emu_unit *u, int key);
-/* saves what the unit keeps while switched off (its files and settings), in the state format emu_create reads;
-   1 on success */
-int emu_save(const emu_unit *u, const char *path);
+/* The Braille Lite's keys physically down now (chords.h bits; 0 when none), as they go down and come up, beside
+   emu_key's chord when the last one comes up: the unit reads keys held while it starts (power-on, or its own restart
+   after p-chord l): i-chord held is the cold reset, and so on (bl_board.h bl_keys_down).  No effect on the Type 'n
+   Speak, whose keys go down and up through emu_key. */
+void emu_keys_down(emu_unit *u, int bits);
+/* saves what the unit keeps while switched off (its files and settings, its clock), in the state format emu_create
+   reads; 1 on success */
+int emu_save(emu_unit *u, const char *path);
+/* The unit's clock controller (../../csrc/blazie/bl_clock.h): emu_create switches it on, going on from the clock
+   saved in the state (plus the time the unit was switched off: the controller keeps time on its battery) or, with
+   none saved, starting at the host's local time -- the year as the unit can hold it (1989-2020: a later year becomes
+   the latest one with the same calendar).  The time then passes in the unit's own time.  emu_clock_time: the
+   clock's (alarm 0) or the alarm's (1) fields. */
+int emu_clock_time(const emu_unit *u, int alarm, blc_time *t);
+/* tests: the unit's RAM as its 1 MB address space (the Braille Lite's 00000-3FFFF unused: the ROM); its size */
+int emu_memory(const emu_unit *u, const unsigned char **ram);
+/* tests: the host's time emu_create and emu_save use, in seconds since 1970 read as local time (-1: the real one) */
+void emu_fake_host_time(long long seconds);
 void emu_set_whine(emu_unit *u, int whine);
 /* The Braille Lite's idle channel as the unit sounds (../../csrc/blazie/bl_idle.h), in place of emu_set_whine's:
    sound 0 none, 1 hiss, 2 whine, 3 as the unit (the hiss at even volumes, the whine at odd), at the measured level,
@@ -64,6 +80,9 @@ int emu_serial_read(emu_unit *u, unsigned char *out, int cap, bl_serial_status *
 #define EMU_QUICK_TURBO 8.0
 #define EMU_QUICK_LIMIT_S 1.0
 void emu_set_quick(emu_unit *u, int on);
+/* Quick response also ends when the Braille Lite firmware restarts (p-chord l): its start reads the keys held at the
+   unit's own pace.  emu_restart_break: the tests' control (an app never sets it), nonzero keeps the old rule. */
+extern int emu_restart_break;
 /* chip time in seconds (tests) */
 double emu_time(const emu_unit *u);
 

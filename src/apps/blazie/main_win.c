@@ -485,6 +485,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (wp < 256 && g_keymap[wp]) {
             EnterCriticalSection(&g_lock);
             chord_down(&g_chord, g_keymap[wp]);
+            if (g_unit)
+                emu_keys_down(g_unit, g_chord.down);   /* held: the unit sees them as it starts (i-chord: cold reset) */
             LeaveCriticalSection(&g_lock);
             return 0;
         }
@@ -494,6 +496,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             int chord;
             EnterCriticalSection(&g_lock);
             chord = chord_up(&g_chord, g_keymap[wp]);
+            if (g_unit)
+                emu_keys_down(g_unit, g_chord.down);
             if (chord && g_unit)
                 emu_key(g_unit, chord);
             LeaveCriticalSection(&g_lock);
@@ -505,6 +509,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_KILLFOCUS:
         EnterCriticalSection(&g_lock);
         chord_reset(&g_chord);              /* a chord half-pressed when the window lost the keyboard is dropped */
+        if (g_unit)
+            emu_keys_down(g_unit, 0);
         LeaveCriticalSection(&g_lock);
         tns_release_all();                  /* and the Type 'n Speak's held keys come up */
         break;
@@ -567,6 +573,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             MessageBoxA(w, "Braille Lite, while this window is in front:\n\n"
                         "F D S = dots 1 2 3\nJ K L = dots 4 5 6\nSpace bar = space\nA or ; = advance bar\n\n"
                         "Press the keys of a chord together; it goes to the unit when you let go of them.\n"
+                        "Keys held while the unit starts are read as it starts: p-chord, l restarts it; "
+                        "hold i-chord at once for the cold reset.\n"
                         "The keys can be changed in blazie_emu.ini, section [keys].\n"
                         "Alt opens this program's menu; Alt+F4 closes it.\n\n"
                         "Type 'n Speak: the whole keyboard is the unit's, Alt and the function keys included.\n"

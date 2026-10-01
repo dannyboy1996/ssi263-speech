@@ -44,6 +44,7 @@ IMAGE = re.compile(rb"\xF3\xC3..\xFFCOPYRIGHT", re.S)
 NAMES = re.compile(r"(?i)\.(bns|tns|state|hex|bin|dvc|rom)$")
 INTEL_HEX = re.compile(rb"\A(?::[0-9A-Fa-f]{10,}\r?\n){4}")       # four Intel HEX records at the start
 STATE_SIZE = 786432                         # bl_save_state's: battery-backed RAM + file flash
+CLOCK_TAIL = 64                             # ... and the clock controller after them, when the emulator saved it
 AICOM_DIR = "assets/aicom/"
 ALLOWED = {
     "8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad": "u2.BIN",
@@ -75,7 +76,8 @@ def scan(label, data, hits, allowed, depth=0, name=""):
         hits.append("%s: a Braille Lite ROM image" % label)
     if INTEL_HEX.match(data):
         hits.append("%s: an Intel HEX image" % label)
-    if depth > 0 and len(data) == STATE_SIZE:
+    if depth > 0 and (len(data) == STATE_SIZE or (len(data) == STATE_SIZE + CLOCK_TAIL
+                                                  and data[STATE_SIZE:STATE_SIZE + 8] == b"BLCLOCK1")):
         hits.append("%s: a unit's state, by its size" % label)
     if depth < 2 and data[:4] == b"PK\x03\x04":
         with zipfile.ZipFile(io.BytesIO(data)) as z:

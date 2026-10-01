@@ -7,9 +7,9 @@
  * lives here now, unchanged, so the board sees only cpu.h.
  *
  * Provided: z180_create, z180_destroy, z180_reset, z180_run_legacy, z180_set_irq, z180_cycles, z180_steps, z180_pc,
- * z180_regs_get.  NOT provided: z180_step and z180_run (the corrected path), which z180emu cannot give faithfully
- * (NMI is sampled at slice entry; a burst DMA chunk takes the budget; SLP ends the slice).  They come with MAME's
- * core.  z180emu has no destructor: z180_destroy frees this adapter, not the core's own allocation (a known limit).
+ * z180_regs_get, z180_asci_get, z180_csio_clock, z180_csio_cntr.  NOT provided: z180_step and z180_run (the
+ * corrected path), which z180emu cannot give faithfully (NMI is sampled at slice entry; a burst DMA chunk takes the
+ * budget; SLP ends the slice).  They come with MAME's core.  z180emu has no destructor: z180_destroy frees this adapter, not the core's own allocation (a known limit).
  */
 #include "z180/z80common.h"
 #undef logerror
@@ -76,8 +76,10 @@ static unsigned long long zcycles_now(void)
     return zcur->cyc_base + (unsigned long long)(zcur->cur_slice - cpu_icount_z180((device_t *)zcur->dev));
 }
 
+static void zcsio_level(z180 *c);           /* after z180.c: its state is defined there */
+
 /* The step boundary (CONTRACT.md 1, phase D): steps, then the ASCI's catch-up and its request level, then the
-   board.  Moved here from bl_board.c unchanged. */
+   CSI/O's request level, then the board.  Moved here from bl_board.c unchanged, but for the CSI/O. */
 void debugger_instruction_hook(device_t *device, offs_t curpc)
 {
     z180 *c = zcur;
@@ -113,11 +115,42 @@ void debugger_instruction_hook(device_t *device, offs_t curpc)
             }
         }
     }
+    zcsio_level(c);
     if (c->bus.boundary)
         c->bus.boundary(c->bus.ctx, (uint32_t)curpc);
 }
 
 #include "z180/z180.c"
+
+/* The CSI/O's interrupt request is a level, EF and EIE (z180emu keeps the registers but never completes a transfer:
+   z180_csio_clock does, for a board whose device drives the external clock).  Nothing set EF before that existed,
+   so the request stays down for every run that has no such device. */
+static void zcsio_level(z180 *c)
+{
+    struct z180_state *cs = get_safe_token((device_t *)c->dev);
+    cs->int_pending[Z180_INT_CSIO] = (UINT8)((cs->IO_CNTR & (Z180_CNTR_EF | Z180_CNTR_EIE))
+                                             == (Z180_CNTR_EF | Z180_CNTR_EIE));
+}
+
+int z180_csio_clock(z180 *c, uint8_t in, uint8_t *sent)
+{
+    struct z180_state *cs = get_safe_token((device_t *)c->dev);
+    int armed = cs->IO_CNTR & (Z180_CNTR_TE | Z180_CNTR_RE);
+    if (!armed)
+        return 0;
+    if ((armed & Z180_CNTR_TE) && sent)
+        *sent = cs->IO_TRDR;
+    if (armed & Z180_CNTR_RE)
+        cs->IO_TRDR = in;
+    cs->IO_CNTR = (UINT8)((cs->IO_CNTR & ~(Z180_CNTR_TE | Z180_CNTR_RE)) | Z180_CNTR_EF);
+    zcsio_level(c);
+    return armed;
+}
+
+uint8_t z180_csio_cntr(const z180 *c)
+{
+    return get_safe_token((device_t *)c->dev)->IO_CNTR;
+}
 
 /* ---- cpu.h ---------------------------------------------------------------------------------------------------- */
 static struct address_space zmemspace = {zmem_read, zmem_write, zmem_fetch};

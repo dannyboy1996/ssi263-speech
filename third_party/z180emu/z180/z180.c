@@ -1102,6 +1102,7 @@ UINT8 z180_readcontrol(struct z180_state *cpustate, offs_t port)
 
 		case Z180_TRDR:
 			data = cpustate->IO_TRDR & Z180_TRDR_RMASK;
+			cpustate->IO_CNTR &= ~Z180_CNTR_EF; /* reading TRDR clears EF (and the CSI/O request) */
 			logerror("Z180 '%s' TRDR   rd $%02x ($%02x)\n", cpustate->device->m_tag, data, cpustate->io[port]);
 			break;
 
@@ -1666,6 +1667,7 @@ void z180_writecontrol(struct z180_state *cpustate, offs_t port, UINT8 data)
 		case Z180_TRDR:
 			LOG("Z180 '%s' TRDR   wr $%02x ($%02x)\n", cpustate->device->m_tag, data,  data & Z180_TRDR_WMASK);
 			cpustate->IO_TRDR = (cpustate->IO_TRDR & ~Z180_TRDR_WMASK) | (data & Z180_TRDR_WMASK);
+			cpustate->IO_CNTR &= ~Z180_CNTR_EF; /* so does writing it */
 			break;
 
 		case Z180_TMDR0L:

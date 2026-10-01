@@ -41,12 +41,12 @@ $CC $CHIP -c -o "$OUT/obj/ssi263.o" "$SRC/ssi263.c"
 $CC $CHIP -c -o "$OUT/obj/ssi263dsp.o" "$SRC/ssi263dsp.c"
 $CXX $MAME -c -o "$OUT/obj/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
 $CXX $MAME -c -o "$OUT/obj/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
-for f in bl_board flash29 bl_serial bl_idle bl_host bl_voice bl_firmware bl_state; do
+for f in bl_board flash29 bl_serial bl_idle bl_clock bl_host bl_voice bl_firmware bl_state; do
     $CC $BOARD -c -o "$OUT/obj/$f.o" "$SRC/blazie/$f.c"
 done
 CHIP_OBJS="$OUT/obj/ssi263.o $OUT/obj/ssi263dsp.o"
 # the board alone (test_bl_board), and the board with its host and voice (the library)
-BOARD_OBJS="$OUT/obj/bl_board.o $OUT/obj/flash29.o $OUT/obj/bl_serial.o $OUT/obj/bl_idle.o $OUT/obj/z180_mame.o $OUT/obj/z180_asci.o"
+BOARD_OBJS="$OUT/obj/bl_board.o $OUT/obj/flash29.o $OUT/obj/bl_serial.o $OUT/obj/bl_idle.o $OUT/obj/bl_clock.o $OUT/obj/z180_mame.o $OUT/obj/z180_asci.o"
 LIB_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj/bl_voice.o $OUT/obj/bl_firmware.o $OUT/obj/bl_state.o"
 
 # only the API is exported (SSI263_API / BL_API mark it); the Z180 core and the C++ runtime stay inside

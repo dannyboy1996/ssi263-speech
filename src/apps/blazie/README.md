@@ -16,6 +16,7 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
+| `test_clock.c` | The clock controller alone, then the English Braille Lite and Type 'n Speak setting and reading the time and date with their own commands, the clock going on and kept over a switch-off; and i-chord held through p-chord l's restart. `TEST_CLOCK_BREAK` / `TEST_CLOCK_HOLD_BREAK` put one bug back for run_tests' must-fail controls. |
 | `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
@@ -33,6 +34,19 @@ sends them; auto-repeat is left to the unit.
 
 The Braille Lite's key port: dot 1 = bit 0 .. dot 6 = bit 5, space = bit 6, and bit 7 for the advance bar (silent in the main
 menu, as moving a display would be; still to be confirmed on the unit).
+
+**Keys held while the Braille Lite starts.** A chord goes to the unit when its keys come up, but the keys you are
+holding down are also on the unit's key port while you hold them, and the firmware looks there as it starts: i-chord
+held is the cold reset ("initialize file system?", then the flash, the folders, and "delete all data in file area"),
+all seven keys the warm reset, space a silent start, and so on (the Help file's list). The unit starts when it is
+switched on and when p-chord, l restarts it. So: p-chord, l, then press and hold i-chord at once, until the unit asks
+its first question. The firmware reads the keys about 0.45 s after l comes up (0.1 s to restart, 0.35 s into the
+start): hold the chord by then. A chord the start has read is not sent again when you let go of it. Settings > Quick
+key response ends at the restart, so the start keeps the unit's own pace.
+
+**p-chord, l** (switch languages) is the Braille Lite 2000's other firmware bank: the firmware switches the program
+flash's bank (port E0h bit 4), checks that a program is there, and restarts into it. The emulator holds the same
+firmware in both banks, so the unit restarts in the same language, its files and settings kept.
 
 ## Settings
 
@@ -105,10 +119,30 @@ Never in the repository. A release puts `firmware\` beside the program (`BL2ENG.
 speech off). Run from the source tree, the program finds
 `firmware/blazie/` itself; `firmware_dir=` in `[unit]` overrides both.
 
+## The clock
+
+The time and date come from the units' clock controller, a separate chip the firmware calls over the Z180's clocked
+serial port (`../../csrc/blazie/bl_clock.h` says what was measured). Before it was modelled, the firmware found no
+clock: it said "reset clock, first date, then time", the time stood still and the year read 1999 (Jayson).
+
+The first time a unit starts, its clock is set from this PC's clock. It then runs in the unit's own time, is kept in
+the saved state, and goes on by the time the program was closed, as the unit's battery kept it. Set it with the
+unit's own commands: on the Braille Lite o-chord, s, d (the date, m m d d y y) and o-chord, s, t (the time, h h m m,
+then a or p); o-chord, t and o-chord, d read them. On the Type 'n Speak F9, s, d and F9, s, t; F4 and F5 read them.
+
+**The year: 1989 to 2020 only.** The controller holds the year in 5 bits counted from 1989, and the 2003 firmware
+sends a year as two digits plus 11: from 2021 on the number spills into the field that holds the hour. A real unit
+does the same: typing 26 as the year sets the hour to 5 and leaves the year as it was. So the emulator starts the
+clock in the latest year up to 2020 with the same calendar (2026 is 2015's: 1 January on a Thursday, no 29 February),
+and the weekdays the unit gives are this year's. To set the date yourself, use that year too.
+
+The alarm (o-chord, s, a) is the controller's as well: it goes off at the start of the minute set, with x for any
+hour, day or month, while the unit is running.
+
 ## What the unit keeps
 
-As a real unit keeps its battery-backed RAM and file flash while switched off, the program saves them on exit (and
-when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or `spanish.state`, and starts from
+As a real unit keeps its battery-backed RAM, its file flash and its clock while switched off, the program saves them
+on exit (and when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or `spanish.state`, and starts from
 them next time. The first time, and after Firmware > Back to the factory state, it starts from the shipped state; the
 Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the unit's own reset to its defaults
 (without it blank RAM leaves the volume at 0), and the unit asks to initialise its flash: y, then y (Spanish: s).

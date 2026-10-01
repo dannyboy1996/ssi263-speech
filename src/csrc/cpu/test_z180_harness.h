@@ -126,4 +126,42 @@ static void report(const char *name, int ok, const char *detail)
         failures++;
 }
 
+/* The CSI/O with an external clock (cpu.h z180_csio_clock), on either path (`run`): a byte clocked in while RE and
+   EIE are armed is the CSI/O interrupt (IM 2, vector IL + 0Ch); the handler's TRDR read gives the byte and clears EF;
+   RE has cleared, so the next clocks move nothing; then TE: the clocks take TRDR out. */
+static void t_csio(uint64_t (*run)(z180 *, uint64_t))
+{
+    machine *m = new_machine();
+    char d[200];
+    int armed, idle, tx;
+    uint8_t sent = 0;
+    org(m, 0);
+    ld_sp(m, 0x8F00);
+    db(m, 4, 0x3E, 0x40, 0xED, 0x47);           /* LD A,40h; LD I,A */
+    out0(m, 0x33, 0x00);                        /* IL = 0: the CSI/O's vector at 400Ch */
+    db(m, 2, 0xED, 0x5E);                       /* IM 2 */
+    out0(m, 0x0A, 0x67);                        /* CNTR: EIE, RE, SS = 111 (external clock) */
+    db(m, 3, 0xFB, 0x18, 0xFE);                 /* EI; JR $ */
+    m->mem[0x400C] = 0x00;
+    m->mem[0x400D] = 0x02;
+    org(m, 0x200);                              /* the handler */
+    db(m, 3, 0xED, 0x38, 0x0B);                 /* IN0 A,(TRDR) */
+    st_a(m, 0x9000);
+    db(m, 3, 0xED, 0x38, 0x0A);                 /* IN0 A,(CNTR) */
+    st_a(m, 0x9001);
+    out0(m, 0x0B, 0x3C);                        /* TRDR = 3Ch */
+    out0(m, 0x0A, 0x17);                        /* CNTR: TE, SS = 111 */
+    db(m, 1, 0x76);                             /* HALT */
+    run(m->cpu, 2000);
+    armed = z180_csio_clock(m->cpu, 0xA5, NULL);
+    run(m->cpu, 2000);
+    idle = m->mem[0x9001] & 0x20 ? -1 : 0;      /* RE still armed would show here */
+    tx = z180_csio_clock(m->cpu, 0x00, &sent);
+    sprintf(d, "in with %02Xh armed: the handler read %02X, CNTR %02X (EF, RE clear?); out: %02Xh armed, %02X",
+            armed, m->mem[0x9000], m->mem[0x9001], tx, sent);
+    report("csio", armed == 0x20 && m->mem[0x9000] == 0xA5 && !(m->mem[0x9001] & 0xA0) && !idle && tx == 0x10
+                   && sent == 0x3C && z180_csio_clock(m->cpu, 0x00, &sent) == 0, d);
+    free_machine(m);
+}
+
 #endif

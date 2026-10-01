@@ -2,7 +2,23 @@ diff --git a/z180/z180.c b/z180/z180.c
 index 1553150..508d52f 100644
 --- a/z180/z180.c
 +++ b/z180/z180.c
-@@ -2215,6 +2215,12 @@ void z180_set_asci_irq(device_t *device, int channel, int state) {
+@@ -1102,6 +1102,7 @@ UINT8 z180_readcontrol(struct z180_state *cpustate, offs_t port)
+ 
+ 		case Z180_TRDR:
+ 			data = cpustate->IO_TRDR & Z180_TRDR_RMASK;
++			cpustate->IO_CNTR &= ~Z180_CNTR_EF; /* reading TRDR clears EF (and the CSI/O request) */
+ 			logerror("Z180 '%s' TRDR   rd $%02x ($%02x)\n", cpustate->device->m_tag, data, cpustate->io[port]);
+ 			break;
+ 
+@@ -1666,6 +1667,7 @@ void z180_writecontrol(struct z180_state *cpustate, offs_t port, UINT8 data)
+ 		case Z180_TRDR:
+ 			LOG("Z180 '%s' TRDR   wr $%02x ($%02x)\n", cpustate->device->m_tag, data,  data & Z180_TRDR_WMASK);
+ 			cpustate->IO_TRDR = (cpustate->IO_TRDR & ~Z180_TRDR_WMASK) | (data & Z180_TRDR_WMASK);
++			cpustate->IO_CNTR &= ~Z180_CNTR_EF; /* so does writing it */
+ 			break;
+ 
+ 		case Z180_TMDR0L:
+@@ -2215,6 +2217,12 @@ void z180_set_asci_irq(device_t *device, int channel, int state) {
  		cpustate->int_pending[Z180_INT_ASCI1] = state;
  }
  
@@ -15,7 +31,7 @@ index 1553150..508d52f 100644
  void z180_set_dreq0(device_t *device, int state) {
  	struct z180_state *cpustate = get_safe_token(device);
  	if (state)
-@@ -3208,6 +3214,22 @@ void cpu_string_export_z180(device_t *device, int device_state_entry, char *stri
+@@ -3208,6 +3216,22 @@ void cpu_string_export_z180(device_t *device, int device_state_entry, char *stri
  	}
  }
  
