@@ -166,8 +166,14 @@ jobs:
         run: |
           gh release download $env:PLUGINVAL_VERSION -R Tracktion/pluginval -p pluginval_Windows.zip -O pv.zip
           Expand-Archive pv.zip -DestinationPath pv
-          .\pv\pluginval.exe --strictness-level $env:STRICTNESS --timeout-ms 300000 --output-dir pluginval-logs --validate "$env:ART/VST3/SSInger.vst3"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # pluginval.exe is a GUI-subsystem program: PowerShell would not
+          # wait for it or see its exit code, so start it and wait.
+          $p = Start-Process -FilePath .\pv\pluginval.exe -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput pluginval-stdout.txt `
+            -ArgumentList @('--strictness-level', $env:STRICTNESS, '--timeout-ms', '300000',
+                            '--output-dir', 'pluginval-logs', '--validate', "$env:ART/VST3/SSInger.vst3")
+          Get-Content pluginval-stdout.txt -Tail 60
+          if ($p.ExitCode -ne 0) { throw "pluginval failed ($($p.ExitCode))" }
 
       - name: clap-validator on the CLAP
         shell: pwsh
