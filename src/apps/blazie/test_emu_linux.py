@@ -89,7 +89,10 @@ def serial_handshake(exe, fw, cfg, reply):
                 except OSError:
                     return
             if ser is not None and ser in r:
-                into.extend(os.read(ser, 256))
+                try:
+                    into.extend(os.read(ser, 256))
+                except OSError:                 # EIO: the program closed its pseudo-terminal as it exited (F11, 0)
+                    return
     try:
         pump(3.0)
         ser = os.open(os.path.join(cfg, "serial"), os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)

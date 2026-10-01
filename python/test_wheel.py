@@ -62,7 +62,8 @@ def main():
     wheel = os.path.abspath(sys.argv[1])
     fw = os.path.abspath(sys.argv[2]) if len(sys.argv) > 2 else ""
     bad = 0
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:   # this process holds its bl.dll
+    keep = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}   # 3.10+ (Debian 11 has 3.9)
+    with tempfile.TemporaryDirectory(**keep) as tmp:   # this process holds its bl.dll
         venv = os.path.join(tmp, "v")
         subprocess.run([sys.executable, "-m", "venv", venv], check=True)
         py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python")
