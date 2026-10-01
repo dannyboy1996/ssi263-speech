@@ -113,7 +113,7 @@ def build_mame_dll(arch, bindir, env, extra, chip_dll):
     os.makedirs(obj, exist_ok=True)
     inc = ["-I" + HERE, "-I" + cpu, "-I" + os.path.dirname(HERE)]
     objects = []
-    for name in ("z180_mame", "z180_asci", "bl_board", "flash29", "bl_serial", "bl_idle",
+    for name in ("z180_mame", "z180_asci", "bl_board", "flash29", "bl_serial", "bl_idle", "bl_clock",
                  "bl_host", "bl_voice", "bl_firmware", "bl_state"):
         cpp = name.startswith("z180_")
         src = os.path.join(cpu if cpp else HERE, name + (".cpp" if cpp else ".c"))
