@@ -53,13 +53,11 @@ static char *join_path(const char *dir, const char *rel)
     return p;
 }
 
-static unsigned char *read_file(const char *dir, const char *rel, size_t *n)
+static unsigned char *read_path(const char *path, size_t *n)
 {
-    char *path = join_path(dir, rel);
     FILE *f = path ? fopen(path, "rb") : NULL;
     unsigned char *data = NULL;
     long len;
-    free(path);
     *n = 0;
     if (!f) return NULL;
     if (fseek(f, 0, SEEK_END) == 0 && (len = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0
@@ -71,10 +69,18 @@ static unsigned char *read_file(const char *dir, const char *rel, size_t *n)
     return data;
 }
 
+/* File k of a source: its bytes (in memory, or read from its path: *owned then says to free them), NULL if neither. */
+static const unsigned char *source_bytes(const ssv_source *src, int k, size_t *n, unsigned char **owned)
+{
+    *owned = NULL;
+    if (src->data[k]) { *n = src->size[k]; return src->data[k]; }
+    return *owned = read_path(src->path[k], n);
+}
+
 /* ---- the engines: create, set, speak, render, cancel, destroy -------------------------------------------------------
    A unit is the voice API's own object; set takes the utterance's settings just before speak. */
 typedef struct {
-    void *(*create)(const ssv_info *info, const char *fwdir, const ssv_boot *b, char *err, int errlen);
+    void *(*create)(const ssv_info *info, const ssv_source *src, const ssv_boot *b, char *err, int errlen);
     void (*set)(void *u, const ssv_settings *s);
     int (*speak)(void *u, const char *utf8, int pitch_offset);
     int (*render)(void *u, const short **pcm, int *done);
@@ -84,18 +90,11 @@ typedef struct {
 
 /* the Braille Lite: blazie.py (rate, pitch, volume, tone, short pauses, number words, run ahead; inflection and whine
    are the unit's boot) */
-static void *eng_bl_create(const ssv_info *info, const char *fwdir, const ssv_boot *b, char *err, int errlen)
+static void *eng_bl_create(const ssv_info *info, const ssv_source *src, const ssv_boot *b, char *err, int errlen)
 {
-    char *fw = join_path(fwdir, info->files[0]), *st = join_path(fwdir, info->files[1]);
-    bl_voice *v = NULL;
-    if (fw && st)
-        v = blv_create(fw, st, strcmp(info->lang, "es") ? BLV_LATIN1 : BLV_CP850, (double)b->sample_rate,
-                       b->inflection != 0, b->whine, err, errlen);
-    else
-        snprintf(err, errlen, "out of memory");
-    free(fw);
-    free(st);
-    return v;
+    if (!src->path[0] || !src->path[1]) { snprintf(err, errlen, "the Braille Lite's files: no path"); return NULL; }
+    return blv_create(src->path[0], src->path[1], strcmp(info->lang, "es") ? BLV_LATIN1 : BLV_CP850,
+                      (double)b->sample_rate, b->inflection != 0, b->whine, err, errlen);
 }
 static void eng_bl_set(void *u, const ssv_settings *s)
 {
@@ -114,20 +113,22 @@ static void eng_bl_cancel(void *u) { blv_cancel((bl_voice *)u); }
 static void eng_bl_destroy(void *u) { blv_destroy((bl_voice *)u); }
 
 /* the Accent SA: accentmini.py's "sa" voice (rate, pitch, inflection, volume, number words) */
-static void *eng_as_create(const ssv_info *info, const char *fwdir, const ssv_boot *b, char *err, int errlen)
+static void *eng_as_create(const ssv_info *info, const ssv_source *src, const ssv_boot *b, char *err, int errlen)
 {
     size_t n[3];
-    unsigned char *rom[3];
+    const unsigned char *rom[3];
+    unsigned char *owned[3];
     as_voice *v = NULL;
     int k;
+    (void)info;
     for (k = 0; k < 3; k++)
-        rom[k] = read_file(fwdir, info->files[k], &n[k]);
+        rom[k] = source_bytes(src, k, &n[k], &owned[k]);
     if (rom[0] && rom[1] && rom[2])
         v = asv_create(rom[0], n[0], rom[1], n[1], rom[2], n[2], (double)b->sample_rate, err, errlen);
     else
         snprintf(err, errlen, "could not read the Accent SA's ROMs");
     for (k = 0; k < 3; k++)
-        free(rom[k]);
+        free(owned[k]);
     return v;
 }
 static void eng_as_set(void *u, const ssv_settings *s)
@@ -141,12 +142,13 @@ static void eng_as_destroy(void *u) { asv_destroy((as_voice *)u); }
 
 #ifdef SSV_HAVE_SPEAKOUT
 /* the Speak-Out: speakout.py (rate, pitch, tone A-Z, volume, join phrases, short pauses) */
-static void *eng_so_create(const ssv_info *info, const char *fwdir, const ssv_boot *b, char *err, int errlen)
+static void *eng_so_create(const ssv_info *info, const ssv_source *src, const ssv_boot *b, char *err, int errlen)
 {
-    char *fw = join_path(fwdir, info->files[0]);
-    so_voice *v = fw ? sov_create(fw, (double)b->sample_rate, err, errlen) : NULL;
-    free(fw);
-    return v;
+    (void)info;
+    if (src->data[0])
+        return sov_create_hex((const char *)src->data[0], src->size[0], (double)b->sample_rate, err, errlen);
+    if (!src->path[0]) { snprintf(err, errlen, "the Speak-Out's SPEAKOUT.HEX: no path"); return NULL; }
+    return sov_create(src->path[0], (double)b->sample_rate, err, errlen);
 }
 static void eng_so_set(void *u, const ssv_settings *s)
 {
@@ -160,12 +162,13 @@ static void eng_so_destroy(void *u) { sov_destroy((so_voice *)u); }
 
 #ifdef SSV_HAVE_ACCENTMINI
 /* the Accent-mini: accentmini.py's "mini" voice (rate, pitch, inflection, volume, number words, voice characteristic) */
-static void *eng_am_create(const ssv_info *info, const char *fwdir, const ssv_boot *b, char *err, int errlen)
+static void *eng_am_create(const ssv_info *info, const ssv_source *src, const ssv_boot *b, char *err, int errlen)
 {
-    char *fw = join_path(fwdir, info->files[0]);
-    am_voice *v = fw ? amv_create(fw, (double)b->sample_rate, err, errlen) : NULL;
-    free(fw);
-    return v;
+    (void)info;
+    if (src->data[0])
+        return amv_create_mem(src->data[0], src->size[0], (double)b->sample_rate, err, errlen);
+    if (!src->path[0]) { snprintf(err, errlen, "the Accent-mini's SPKEMS.DVC: no path"); return NULL; }
+    return amv_create(src->path[0], (double)b->sample_rate, err, errlen);
 }
 static void eng_am_set(void *u, const ssv_settings *s)
 {
@@ -259,6 +262,21 @@ static int valid_rate(int r) { return r == 11025 || r == 22050 || r == 44100 ? r
 
 SSV_API ssv_voice *ssv_create(int i, const char *fwdir, const ssv_boot *b, char *err, int errlen)
 {
+    ssv_source src;
+    ssv_voice *v;
+    int k;
+    if (i < 0 || i >= NVOICES) { snprintf(err, errlen, "no voice %d", i); return NULL; }
+    memset(&src, 0, sizeof src);
+    for (k = 0; k < 4 && VOICES[i].files[k]; k++)
+        if (!(src.path[k] = join_path(fwdir, VOICES[i].files[k]))) { snprintf(err, errlen, "out of memory"); break; }
+    v = k == 4 || !VOICES[i].files[k] ? ssv_create_from(i, &src, b, err, errlen) : NULL;
+    for (k = 0; k < 4; k++)
+        free((char *)src.path[k]);
+    return v;
+}
+
+SSV_API ssv_voice *ssv_create_from(int i, const ssv_source *src, const ssv_boot *b, char *err, int errlen)
+{
     ssv_boot d;
     ssv_voice *v;
     const ssv_engine *e;
@@ -273,7 +291,7 @@ SSV_API ssv_voice *ssv_create(int i, const char *fwdir, const ssv_boot *b, char 
     v->index = i;
     v->rate = d.sample_rate;
     v->e = e;
-    v->u = e->create(&VOICES[i], fwdir, &d, err, errlen);
+    v->u = e->create(&VOICES[i], src, &d, err, errlen);
     if (!v->u) { free(v); return NULL; }
     return v;
 }

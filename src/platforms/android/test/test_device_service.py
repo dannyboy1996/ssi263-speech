@@ -10,13 +10,20 @@ JNI bridge, the APK's Accent SA ROMs and the framework's hand-over.
   each must equal the driver's (which jumps to the pitch with snap_pitch), and the last must be byte-identical to the
   first.
 - The Braille Lite (when its English firmware is imported on the device): against bl_voice on the desktop, driven the
-  way the speech-dispatcher module maps SSIP (test_android_native.py's reference).
+  way the speech-dispatcher module maps SSIP (test_android_native.py's reference); then with the EXPERIMENTAL run ahead
+  on (SettingsActivity's setrunahead hook, as its check box), against bl_voice running ahead, and not the lockstep's.
+- The GW Micro Speak-Out (when its SPEAKOUT.HEX is imported on the device): against so_voice driven directly on the
+  desktop (test_android_native --so-direct) from the device's own HEX, at the app's defaults, the request's rate and
+  pitch mapped as ssa_engine.c maps them; and the capital's pitches as the Accent SA's.
+- The Aicom Accent-mini (built in, when this build carries it): against am_voice driven directly (--am-direct), the
+  same way.
 
 Each voice is chosen for the run through SettingsActivity's setvoice hook, as the Voice button would, and the choice
-the device had before (or none) is put back afterwards.
+the device had before (or none) is put back afterwards, as is run ahead.
 
-    python test_device_service.py [--rate 2.0] [--aloud] [--voice accent|braillelite|both]
-                                  (a debug build installed; ANDROID_SERIAL picks the device)
+    python test_device_service.py [--rate 2.0] [--aloud] [--voice accent|braillelite|speakout|accentmini|both|all]
+                                  (a debug build installed; ANDROID_SERIAL picks the device; both = the Accent SA and
+                                  the Braille Lite, as before 0.7.5)
 
 --aloud also speaks the sentence through the service on the device's speaker.  Options as test_android_native.py:
 --firmware, --lib, --chip.
@@ -39,7 +46,9 @@ PKG = "com.ssi263speech.tts"
 PREFS = "/data/user_de/0/%s/shared_prefs/ssi263speech.xml" % PKG
 TEXT = {"braillelite": "Hello there. This is the Braille Lite, speaking on a phone.",
         "accent": "Hello there. This is the Accent SA, speaking on a phone."}
-VOICE = {"braillelite": 0, "accent": 2}                 # SsiNative.ENGLISH, ACCENT_SA
+TEXT["speakout"] = "Hello there. This is the Speak-Out, speaking on a phone."
+TEXT["accentmini"] = "Hello there. This is the Accent-mini, speaking on a phone."
+VOICE = {"braillelite": 0, "accent": 2, "speakout": 3, "accentmini": 4}   # SsiNative's indices
 CAPITAL = "B"
 SETTINGS = os.path.join(T.REPO, "src", "platforms", "android", "app", "src", "main", "kotlin", "com", "ssi263speech",
                         "tts", "SsiSettings.kt")
@@ -59,6 +68,19 @@ def saved_voice():
     r = adb("shell", "run-as", PKG, "cat", PREFS)
     m = re.search(rb'<int name="voice" value="(-?\d+)"', r.stdout or b"")
     return int(m.group(1)) if m else -1
+
+
+def saved_run_ahead():
+    """The run-ahead setting the device holds now: 1, 0, or -1 when never set."""
+    r = adb("shell", "run-as", PKG, "cat", PREFS)
+    m = re.search(rb'<boolean name="run_ahead" value="(true|false)"', r.stdout or b"")
+    return -1 if not m else int(m.group(1) == b"true")
+
+
+def set_run_ahead(v):
+    adb("shell", "am", "force-stop", PKG, check=True)
+    adb("shell", "am", "start", "-W", "-n", PKG + "/.SettingsActivity", "--ei", "setrunahead", str(v), check=True)
+    time.sleep(1.0)
 
 
 def set_voice(v):
@@ -135,9 +157,97 @@ def accent(a):
     return bad
 
 
+_exe = []
+
+
+def desktop_program():
+    """test_android_native for the desktop (its --so-direct and --am-direct references), built once."""
+    if not _exe:
+        _exe.append(T.build_desktop())
+    return _exe[0]
+
+
+def direct(mode, firmware, lines):
+    """One fresh unit per case (the service runs each request in a fresh process): the reference's (samples, hash)."""
+    got = {}
+    for line in lines:
+        r = subprocess.run([desktop_program(), mode, firmware], input=line, capture_output=True, text=True)
+        if r.returncode:
+            sys.exit("test_android_native %s failed: %s" % (mode, r.stderr.strip()))
+        got.update(T.parse(r.stdout))
+    return got
+
+
+def run_cases(a, voice, want, label):
+    set_voice(VOICE[voice])
+    bad = 0
+    got = render(TEXT[voice], a.rate, 1.0, a.aloud)
+    bad += line(got == want["sentence"], "%s through the platform TTS, rate %.2f" % (label, a.rate), got,
+                want["sentence"])
+    caps = {}
+    for name, pitch in (("cap-100", 1.0), ("cap-150", 1.5), ("cap-120", 1.2), ("cap-75", 0.75), ("cap-100-again", 1.0)):
+        caps[name] = render(CAPITAL, 1.0, pitch)
+        ref = want[name if name != "cap-100-again" else "cap-100"]
+        bad += line(caps[name] == ref, "%s, %r at pitch %.2f (%s)" % (label, CAPITAL, pitch, name), caps[name], ref)
+    bad += line(caps["cap-150"] != caps["cap-100"] and caps["cap-120"] != caps["cap-100"]
+                and caps["cap-75"] != caps["cap-100"],
+                "%s: the capital's raised and lowered pitch sound different from 1.0" % label, caps["cap-150"])
+    bad += line(caps["cap-100-again"] == caps["cap-100"],
+                "%s: 1.0 again is byte-identical to the first (the pitch came back)" % label, caps["cap-100-again"])
+    return bad
+
+
+def pulled(path, tmp, name):
+    r = adb("exec-out", "run-as", PKG, "cat", path)
+    if r.returncode or not r.stdout:
+        return None
+    out = os.path.join(tmp, name)
+    with open(out, "wb") as f:
+        f.write(r.stdout)
+    return out
+
+
+def speakout(a):
+    """The Speak-Out, against so_voice driven directly from the device's own HEX."""
+    tmp = tempfile.mkdtemp(prefix="ssi263-device-so-")
+    try:
+        hexf = pulled("/data/user_de/0/%s/files/unit/SPEAKOUT.HEX" % PKG, tmp, "SPEAKOUT.HEX")
+        if not hexf:
+            print("skip  Speak-Out: no SPEAKOUT.HEX imported on the device")
+            return 0
+        volume, pct = default_volume(), int(round(a.rate * 100))
+        lines = []
+        for name, text, rate, pitch in (("sentence", TEXT["speakout"], pct, 100), ("cap-100", CAPITAL, 100, 100),
+                                        ("cap-150", CAPITAL, 100, 150), ("cap-120", CAPITAL, 100, 120),
+                                        ("cap-75", CAPITAL, 100, 75)):
+            r, p, off = T.speakout_settings(50, 50, rate, pitch)
+            lines.append("%s 22050 %d %d 8 %d 1 1 %d 0 %s\n" % (name, r, p, volume, off, text.encode("utf-8").hex()))
+        want = direct("--so-direct", hexf, lines)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return run_cases(a, "speakout", want, "Speak-Out")
+
+
+def accent_mini(a):
+    """The Accent-mini (built in), against am_voice driven directly from the repository's SPKEMS.DVC (the APK's)."""
+    if not os.path.isfile(T.MINI_DVC):
+        print("skip  Accent-mini: no firmware/aicom-accent-mini/SPKEMS.DVC here")
+        return 0
+    level, volume, pct = T.accent_level(), default_volume(), int(round(a.rate * 100))
+    lines = []
+    for name, text, rate, pitch in (("sentence", TEXT["accentmini"], pct, 100), ("cap-100", CAPITAL, 100, 100),
+                                    ("cap-150", CAPITAL, 100, 150), ("cap-120", CAPITAL, 100, 120),
+                                    ("cap-75", CAPITAL, 100, 75)):
+        lines.append("%s 1 22050 %d 50 100 %d 1 5 %d 0 %s\n" % (name, T.on_top(50, rate), volume * level // 100,
+                                                               T.accent_pitch(50, pitch) - 50,
+                                                               text.encode("utf-8").hex()))
+    want = direct("--am-direct", T.MINI_DVC, lines)
+    return run_cases(a, "accentmini", want, "Accent-mini")
+
+
 def device_unit(tmp, spanish):
     """The unit's files from the device's storage (a debug build: run-as), into `tmp`."""
-    names = T.FILES["en"] + (T.FILES["es"] if spanish else [])
+    names = list(T.FILES["en"]) + (list(T.FILES["es"]) if spanish else [])
     for name in names:
         r = adb("exec-out", "run-as", PKG, "cat", "/data/user_de/0/%s/files/unit/%s" % (PKG, name))
         if r.returncode or not r.stdout:
@@ -158,7 +268,10 @@ def braille_lite(a):
         return 0
     spanish = b"BL2SPA.BNS" in (r.stdout or b"")
     set_voice(VOICE["braillelite"])
+    set_run_ahead(0)
     got = render(TEXT["braillelite"], a.rate, 1.0, a.aloud)    # a fresh process: the unit's first utterance
+    set_run_ahead(1)                                            # EXPERIMENTAL run ahead, as its check box
+    got_ra = render(TEXT["braillelite"], a.rate, 1.0)
     if spanish:
         set_voice(1)                                            # SsiNative.SPANISH
         got_es = render(T.SPANISH, 1.0, 1.0)
@@ -182,6 +295,12 @@ def braille_lite(a):
                            default_volume())
         want = (len(want_pcm) // 2, T.fnv(want_pcm))
         bad += line(got == want, "Braille Lite through the platform TTS, rate %.2f" % a.rate, got, want)
+        ra = T.Ref(lib, data, False, run_ahead=1)
+        pcm = ra.say(TEXT["braillelite"], T.ssip_from_percent(int(round(a.rate * 100))), 0, None, default_volume())
+        want_ra = (len(pcm) // 2, T.fnv(pcm))
+        bad += line(got_ra == want_ra, "Braille Lite with run ahead on, rate %.2f" % a.rate, got_ra, want_ra)
+        bad += line(got_ra != got, "Braille Lite: run ahead's audio is not the lockstep's (the setting reached it)",
+                    got_ra)
         if spanish:
             pcm = T.Ref(lib, data, True).say(T.SPANISH, 0, 0, None, default_volume())
             want = (len(pcm) // 2, T.fnv(pcm))
@@ -195,21 +314,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rate", type=float, default=2.0)
     ap.add_argument("--aloud", action="store_true")
-    ap.add_argument("--voice", choices=("accent", "braillelite", "both"), default="both")
+    ap.add_argument("--voice", choices=("accent", "braillelite", "speakout", "accentmini", "both", "all"),
+                    default="both")
     ap.add_argument("--firmware", default=os.environ.get("SSI263_FIRMWARE") or os.path.join(T.REPO, "firmware", "blazie"))
     ap.add_argument("--firmware-from-repo", action="store_true",
                     help="the Braille Lite reference from --firmware's shipped state, not the device's own unit files")
     ap.add_argument("--lib", default=None)
     ap.add_argument("--chip", default=None)
     a = ap.parse_args()
-    before = saved_voice()
+    before, before_ra = saved_voice(), saved_run_ahead()
     bad = 0
     try:
-        if a.voice in ("accent", "both"):
+        if a.voice in ("accent", "both", "all"):
             bad += accent(a)
-        if a.voice in ("braillelite", "both"):
+        if a.voice in ("braillelite", "both", "all"):
             bad += braille_lite(a)
+        if a.voice in ("speakout", "all"):
+            bad += speakout(a)
+        if a.voice in ("accentmini", "all"):
+            bad += accent_mini(a)
     finally:
+        set_run_ahead(before_ra)                # the device's own run ahead back (-1: never set)
         set_voice(before)                       # the device's own choice back (-1: none)
         adb("shell", "am", "force-stop", PKG)
     print("device service: %s" % ("FAILED" if bad else "PASS"))

@@ -1,12 +1,16 @@
 #!/bin/sh
 # Build the Android app's native library, libssi263speech.so: the SSI-263 chip, the Braille Lite board (on MAME's
-# Z180 core), the Braille Lite host and voice, the Aicom Accent SA's board, host and voice on MAME's 8085 core (C++17,
-# with a static libc++ inside the one .so) -- the same sources and flags as build_linux.sh -- plus the app's front end
+# Z180 core), the Braille Lite host and voice, the Aicom Accent SA's board, host and voice on MAME's 8085 core, the GW
+# Micro Speak-Out's board, host and voice on MAME's V40 core, and -- when src/csrc/accentmini/am_voice.c is in the
+# tree -- the Aicom Accent-mini's (C++17 cores, with a static libc++ inside the one .so) -- the same sources and flags
+# as build_linux.sh -- plus the app's front end
 # (src/platforms/android/app/src/main/cpp), cross-built with the NDK's clang and dropped where Gradle packages
 # prebuilt libraries.  Then it stages what the APK carries besides code: the Accent SA's ROMs (Aicom's, the one
 # firmware the app ships: Tomi, 2026-09-30) and the licences: the project's MIT, and MAME's BSD-3-Clause notices for
-# the Z180 and 8085 cores.  No GPL code (src/platforms/android/test/check_apk_no_firmware.py audits the APK).
-# Not the Braille Lite's firmware: the app's users import their own.
+# the Z180, 8085 and V40 cores (and the 8086's with the Accent-mini).  No GPL code
+# (src/platforms/android/test/check_apk_no_firmware.py audits the APK).
+# Not the Braille Lite's firmware nor the Speak-Out's: the app's users import their own.  The Accent-mini's SPKEMS.DVC
+# (Aicom's, beside the Accent SA's ROMs) only in a build with the Accent-mini.
 #
 #   sh build_android.sh                  arm64-v8a, armeabi-v7a and x86_64
 #   sh build_android.sh arm64-v8a        one ABI
@@ -66,6 +70,16 @@ ACCENT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/
 SPEAKOUT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/speakout -I$SRC"
 CPP="$APP/cpp"
 AICOM="$ROOT/firmware/aicom-accent-sa"
+AICOM_MINI="$ROOT/firmware/aicom-accent-mini"
+# The voices' table (src/csrc/voices.c, the SAPI engine's too) gets the engines whose sources are in the tree, as
+# src/csrc/build_ssi263speech.py builds it: the Speak-Out (so_voice.h) and the Accent-mini (am_voice.h, Aicom's
+# SPKEMS.DVC on an emulated PC; its driver is then staged beside the Accent SA's ROMs).
+MINI=0
+HAVE="-DSSV_HAVE_SPEAKOUT"
+if [ -f "$SRC/accentmini/am_voice.c" ]; then
+    MINI=1
+    HAVE="$HAVE -DSSV_HAVE_ACCENTMINI"
+fi
 
 target() {
     case "$1" in
@@ -100,29 +114,27 @@ objects() {
     cc --target="$TARGET" $FRONT -c -o "$O/as_voice.o" "$SRC/accentsa/as_voice.c"
     cc --target="$TARGET" $FRONT -c -o "$O/numwords.o" "$SRC/numwords.c"
     cc --target="$TARGET" $FRONT -c -o "$O/accent_text.o" "$SRC/accent_text.c"
+    cc --target="$TARGET" $FRONT -c -o "$O/numwords_es.o" "$SRC/numwords_es.c"
+    cc --target="$TARGET" $FRONT -I"$SRC/blazie" -c -o "$O/bl_numbers.o" "$SRC/blazie/bl_numbers.c"
+    cc --target="$TARGET" $FRONT $HAVE -c -o "$O/voices.o" "$SRC/voices.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
-    # The Speak-Out (MAME's V40, src/csrc/speakout: its board, host and voice), compiled only, into its own folder so
-    # that the library above (every object in obj/) does not take it in yet: a front end links these with obj/'s
-    # numwords.o and chip objects (so_voice.h lists them).
-    S="$OUT/$ABI/obj_speakout"
-    rm -rf "$S"
-    mkdir -p "$S"
-    cxx --target="$TARGET" $MAME -c -o "$S/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
+    cc --target="$TARGET" $FRONT -c -o "$O/ssa_import.o" "$CPP/ssa_import.c"
+    # The Speak-Out (MAME's V40, src/csrc/speakout: its board, host and voice; so_voice.h lists them)
+    cxx --target="$TARGET" $MAME -c -o "$O/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
     for f in so_board so_icu so_scu so_hex so_host; do
-        cc --target="$TARGET" $SPEAKOUT -c -o "$S/$f.o" "$SRC/speakout/$f.c"
+        cc --target="$TARGET" $SPEAKOUT -c -o "$O/$f.o" "$SRC/speakout/$f.c"
     done
-    cc --target="$TARGET" $FRONT -c -o "$S/so_voice.o" "$SRC/speakout/so_voice.c"
-    # the Accent-mini (src/csrc/accentmini: am_voice on MAME's 8086), compiled only, in its own folder: not linked
-    # into the library yet (it needs accent_text.o and numwords.o above)
-    rm -rf "$OUT/$ABI/obj_am"; mkdir -p "$OUT/$ABI/obj_am"
-    cxx --target="$TARGET" $MAME -c -o "$OUT/$ABI/obj_am/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
-    for f in pc86/pc86 accentmini/am_host accentmini/am_voice; do
-        cc --target="$TARGET" $ACCENT -I$SRC/pc86 -c -o "$OUT/$ABI/obj_am/${f##*/}.o" "$SRC/$f.c"
-    done
+    cc --target="$TARGET" $FRONT -c -o "$O/so_voice.o" "$SRC/speakout/so_voice.c"
+    # The Accent-mini (MAME's 8086 on the PC around it, src/csrc/pc86, and src/csrc/accentmini's host and voice), when
+    # its sources are in the tree
+    if [ "$MINI" = 1 ]; then
+        cxx --target="$TARGET" $MAME -c -o "$O/i86_mame.o" "$SRC/cpu/i86_mame.cpp"
+        for f in pc86/pc86 accentmini/am_host accentmini/am_voice; do
+            cc --target="$TARGET" $ACCENT -I$SRC/pc86 -c -o "$O/${f##*/}.o" "$SRC/$f.c"
+        done
+    fi
 }
-ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o accent_text.o"
-BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_clock.o bl_host.o bl_voice.o"
 
 build_abi() {
     ABI="$1"; TARGET="$(target "$ABI")"; O="$OUT/$ABI/obj"
@@ -150,9 +162,8 @@ build_test() {
     objects "$ABI"
     cc --target="$TARGET" $FRONT -I"$CPP" -c -o "$O/test_android_native.o" \
         "$ROOT/src/platforms/android/test/test_android_native.c"
-    cxx --target="$TARGET" -static-libstdc++ -o "$OUT/$ABI/test_android_native" "$O/test_android_native.o" \
-        "$O/ssa_engine.o" "$O/ssa_map.o" "$O/ssi263.o" "$O/ssi263dsp.o" \
-        $(for f in $BL_OBJS $ACCENT_OBJS; do echo "$O/$f"; done) -lm
+    # every object the library has (objects() makes no JNI bridge), with the test's main
+    cxx --target="$TARGET" -static-libstdc++ -o "$OUT/$ABI/test_android_native" "$O"/*.o -lm
     rm -f "$O/test_android_native.o"
     echo "  -> build/android/$ABI/test_android_native"
 }
@@ -168,6 +179,12 @@ stage_assets() {
         [ -f "$AICOM/$f" ] || { echo "missing $AICOM/$f"; exit 1; }
         cp "$AICOM/$f" "$A/aicom/"
     done
+    # The Accent-mini's driver (Aicom's, firmware/AICOM.txt), only in a build that has the voice; the APK check lets
+    # it through by its sha256 as it does the ROMs.
+    if [ "$MINI" = 1 ]; then
+        [ -f "$AICOM_MINI/SPKEMS.DVC" ] || { echo "missing $AICOM_MINI/SPKEMS.DVC"; exit 1; }
+        cp "$AICOM_MINI/SPKEMS.DVC" "$A/aicom/"
+    fi
     # No firmware: the app is where it can NOT ship, so its users import their own (SettingsActivity).  A developer
     # build may carry it, by asking: SSI263_ANDROID_BUNDLE_FIRMWARE=1 (never a release).
     if [ "${SSI263_ANDROID_BUNDLE_FIRMWARE:-0}" = 1 ]; then
@@ -190,6 +207,10 @@ stage_assets() {
     cp "$ROOT/firmware/AICOM.txt" "$A/licenses/Aicom-Accent-SA-notice.txt"
     cp "$SRC/cpu/mame_z180/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-Z180-core-BSD-3-Clause.txt"
     cp "$SRC/cpu/mame_i8085/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-8085-core-BSD-3-Clause.txt"
+    cp "$SRC/cpu/mame_nec/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-NEC-V40-core-BSD-3-Clause.txt"
+    if [ "$MINI" = 1 ]; then
+        cp "$SRC/cpu/mame_i86/LICENSE-BSD-3-Clause.txt" "$A/licenses/MAME-8086-core-BSD-3-Clause.txt"
+    fi
     cp "$ROOT/third_party/casso/LICENSE" "$A/licenses/Casso-MIT.txt"
     ls -R "$A" | head -20
 }

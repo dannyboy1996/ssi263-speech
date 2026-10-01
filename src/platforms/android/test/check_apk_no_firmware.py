@@ -1,11 +1,13 @@
-"""An APK must carry no firmware but Aicom's Accent SA ROMs (Tomi, 2026-09-30: store builds carry only Aicom's content;
-the Blazie firmware and states, and GW Micro's Speak-Out firmware, never).
+"""An APK must carry no firmware but Aicom's (Tomi, 2026-09-30: store builds carry only Aicom's content; the Blazie
+firmware and states, and GW Micro's Speak-Out firmware, never: their users import them, 0.7.5).
 
-Allowed, by sha256 and nothing else -- exactly these three files, the built-in voice (firmware/AICOM.txt):
+Allowed, by sha256 and nothing else -- exactly these files, the built-in voices (firmware/AICOM.txt): the Accent SA's
+three ROMs, and the Accent-mini's driver (build_android.sh stages it when src/csrc/accentmini/am_voice.c is there):
 
-    u2.BIN  8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad   (8085 program ROM, 64 KB)
-    u3.BIN  248dd6fb6d08f6b4316ce38f83fd330e55dde80ead4b26a652ba228e6b46859a   (dictionary, part 1, 32 KB)
-    u4.BIN  7c12a8cf56a573cd83c928d61cd49e90b3afc810279e8ee54852d7b90042d155   (dictionary, part 2, 32 KB)
+    u2.BIN      8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad   (8085 program ROM, 64 KB)
+    u3.BIN      248dd6fb6d08f6b4316ce38f83fd330e55dde80ead4b26a652ba228e6b46859a   (dictionary, part 1, 32 KB)
+    u4.BIN      7c12a8cf56a573cd83c928d61cd49e90b3afc810279e8ee54852d7b90042d155   (dictionary, part 2, 32 KB)
+    SPKEMS.DVC  6b99fea4cc5534ee1f693b141df9d734057f116d0a36972e3949d86db00cbe79   (the Accent-mini's DOS driver)
 
 Refused, in any file, an archive's members included: a Braille Lite ROM image by content (F3 C3 xx xx FF
 "COPYRIGHT"); a unit's state by content (the 786432 bytes every state has: it holds what the firmware wrote); the
@@ -14,8 +16,9 @@ Speak-Out's SPEAKOUT.HEX by its sha256, and any Intel HEX image by content; firm
 is not one of them.
 
     python check_apk_no_firmware.py <apk>...        prints what it looked at; exit 1 on any hit
-    python check_apk_no_firmware.py --synthetic     an APK-like zip made here: the three Aicom ROMs where the app has
-                                                    them and the licences build_android.sh stages (no APK build
+    python check_apk_no_firmware.py --synthetic     an APK-like zip made here: the Aicom files where the app has them
+                                                    (the three ROMs, and SPKEMS.DVC when the Accent-mini is in the
+                                                    tree) and the licences build_android.sh stages (no APK build
                                                     needed); must pass
   the controls, each must FAIL (on an APK, or --synthetic in place of it):
     --control <BL2ENG.BNS> <apk>                    the firmware added under a bland name -- beside the Aicom ROMs
@@ -25,7 +28,7 @@ is not one of them.
     --control-gpl <apk>                             z180emu's GPL text added among the licences (0.6's APK had it)
 
 And the licences (Tomi, 2026-09-30: all-MAME 0.7): the APK carries the project's and Casso's MIT licences, MAME's
-BSD-3-Clause notices for the Z180 and 8085 cores, Aicom's notice and the distribution notice -- and no z180emu or
+BSD-3-Clause notices for the Z180, 8085, V40 and 8086 cores, Aicom's notice and the distribution notice -- and no z180emu or
 Unicorn engine and no GPL notice anywhere (tools/check_no_gpl.py's search, the native libraries included).
 """
 import hashlib
@@ -50,6 +53,7 @@ ALLOWED = {
     "8d6aa48880d1efd02f8dc759741c16b8902db33dcc2856d1f0db4776149992ad": "u2.BIN",
     "248dd6fb6d08f6b4316ce38f83fd330e55dde80ead4b26a652ba228e6b46859a": "u3.BIN",
     "7c12a8cf56a573cd83c928d61cd49e90b3afc810279e8ee54852d7b90042d155": "u4.BIN",
+    "6b99fea4cc5534ee1f693b141df9d734057f116d0a36972e3949d86db00cbe79": "SPKEMS.DVC",
 }
 # the licences the APK must carry: its name under assets/licenses/, and where build_android.sh takes it from
 LICENSES = {"DISTRIBUTION.txt": os.path.join("src", "platforms", "android", "licenses", "DISTRIBUTION.txt"),
@@ -57,6 +61,8 @@ LICENSES = {"DISTRIBUTION.txt": os.path.join("src", "platforms", "android", "lic
             "Casso-MIT.txt": os.path.join("third_party", "casso", "LICENSE"),
             "MAME-Z180-core-BSD-3-Clause.txt": os.path.join("src", "csrc", "cpu", "mame_z180", "LICENSE-BSD-3-Clause.txt"),
             "MAME-8085-core-BSD-3-Clause.txt": os.path.join("src", "csrc", "cpu", "mame_i8085", "LICENSE-BSD-3-Clause.txt"),
+            "MAME-NEC-V40-core-BSD-3-Clause.txt": os.path.join("src", "csrc", "cpu", "mame_nec", "LICENSE-BSD-3-Clause.txt"),
+            "MAME-8086-core-BSD-3-Clause.txt": os.path.join("src", "csrc", "cpu", "mame_i86", "LICENSE-BSD-3-Clause.txt"),
             "Aicom-Accent-SA-notice.txt": os.path.join("firmware", "AICOM.txt")}
 REFUSED = {"1c6930c8c6aed0550bc267c14032f9195b450ed95de606f2fa9727e2b7eb1eb1": "the Speak-Out's SPEAKOUT.HEX"}
 
@@ -96,6 +102,9 @@ def synthetic():
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for n in ("u2.BIN", "u3.BIN", "u4.BIN"):
             z.writestr(AICOM_DIR + n, open(os.path.join(REPO, "firmware", "aicom-accent-sa", n), "rb").read())
+        mini = os.path.join(REPO, "firmware", "aicom-accent-mini", "SPKEMS.DVC")
+        if os.path.isfile(os.path.join(REPO, "src", "csrc", "accentmini", "am_voice.c")) and os.path.isfile(mini):
+            z.writestr(AICOM_DIR + "SPKEMS.DVC", open(mini, "rb").read())
         for name, src in LICENSES.items():
             z.writestr("assets/licenses/" + name, open(os.path.join(REPO, src), "rb").read())
     return out.getvalue()
@@ -152,7 +161,7 @@ def main():
         print("%s: %d entries, %s; Aicom ROMs allowed: %d%s" % (
             label, n, "no firmware" if not hits else "FIRMWARE: " + "; ".join(hits[:5]), len(allowed),
             "" if not allowed else " (%s)" % ", ".join(sorted(allowed))))
-        print("%s: licences %s" % (label, "MIT (ours, Casso's), MAME's BSD-3-Clause (Z180, 8085), Aicom's; "
+        print("%s: licences %s" % (label, "MIT (ours, Casso's), MAME's BSD-3-Clause (Z180, 8085, V40, 8086), Aicom's; "
                                    "no GPL or Unicorn" if not lic else "WRONG: " + "; ".join(lic[:5])))
         bad += bool(hits) or bool(lic)
     return 1 if bad else 0

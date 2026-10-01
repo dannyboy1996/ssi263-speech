@@ -117,7 +117,8 @@ SO_API ssi263 *sov_chip(so_voice *v) { return v->chip; }
 SO_API double sov_sample_rate(const so_voice *v) { return v->out_rate; }
 SO_API int sov_fault(const so_voice *v) { return v->fault; }
 
-/* ---- the setters: rate, pitch and volume clamped to 0-100, a tone outside A-Z ignored -------------------------- */
+/* ---- the setters: rate and pitch clamped to 0-100, volume to 0-200 (above 100 louder, ssi_pcm16 clipping at full
+   scale, as asv_set and blv_set: Android's slider; the driver stops at 100), a tone outside A-Z ignored ------------ */
 static int clamp100(int x) { return x < 0 ? 0 : x > 100 ? 100 : x; }
 
 SO_API void sov_set(so_voice *v, int rate, int pitch, int tone, int volume, int join, int short_pauses)
@@ -126,7 +127,7 @@ SO_API void sov_set(so_voice *v, int rate, int pitch, int tone, int volume, int 
     v->pitch = clamp100(pitch);
     if (tone >= 0 && tone < 26)
         v->tone = tone;
-    v->volume = clamp100(volume);
+    v->volume = volume < 0 ? 0 : volume > 200 ? 200 : volume;
     v->join = join != 0;
     v->short_pauses = short_pauses != 0;
 }

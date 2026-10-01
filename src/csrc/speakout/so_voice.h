@@ -37,7 +37,7 @@ SO_API so_voice *sov_create_hex(const char *hex, size_t len, double out_rate, ch
 SO_API void sov_destroy(so_voice *v);
 
 /* The driver's settings, on NVDA's scales: rate, pitch and volume 0-100 (50, 50, 100 = the box's rate 5 and pitch 3,
-   the gain 1); tone 0-25 = the box's tones A-Z (the driver's variant; 8 = I, the box's default); join = "Join
+   the gain 1; volume may go to 200, louder and clipped at full scale, as asv_set's: Android's slider); tone 0-25 = the box's tones A-Z (the driver's variant; 8 = I, the box's default); join = "Join
    phrases" (word delay 0, else the box's factory 1), short_pauses = "Shorten pauses between sentences" (sentence
    delay 0, else 1).  Both default on, as in the driver.  Sent before the next text, only when something changed. */
 SO_API void sov_set(so_voice *v, int rate, int pitch, int tone, int volume, int join, int short_pauses);

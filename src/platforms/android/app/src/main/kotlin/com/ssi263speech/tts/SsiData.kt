@@ -1,8 +1,9 @@
-// The units' files.  The Braille Lite's: the firmware each user imports (SsiImport) and the state made from it, in
-// device-protected storage, where the native side opens them by path -- and where they can be read before the phone is
-// first unlocked, so the voice works on the lock screen after a restart.  A release APK carries no Braille Lite
-// firmware; a developer build made with SSI263_ANDROID_BUNDLE_FIRMWARE=1 carries it as assets, copied in once per
-// installed version.  The Accent SA's: Aicom's ROMs, in every APK (assets/aicom), handed to the native side in memory.
+// The units' files.  The Braille Lite's: the firmware each user imports (SsiImport) and the state made from it; the
+// Speak-Out's: GW Micro's SPEAKOUT.HEX, imported the same way.  In device-protected storage, where the native side
+// opens them by path -- and where they can be read before the phone is first unlocked, so the voice works on the lock
+// screen after a restart.  A release APK carries neither; a developer build made with SSI263_ANDROID_BUNDLE_FIRMWARE=1
+// carries the Braille Lite's as assets, copied in once per installed version.  The Accents': Aicom's ROMs (and the
+// Accent-mini's SPKEMS.DVC, in a build that has that voice), in the APK (assets/aicom), handed over in memory.
 package com.ssi263speech.tts
 
 import android.content.Context
@@ -14,7 +15,7 @@ object SsiData {
     private const val STAMP = ".bundled"
     const val LABEL = ".label"              // beside each .BNS: what was imported, in words
 
-    /** The two files each voice needs, by SsiNative's voice index. */
+    /** The files each imported voice needs, by SsiNative's voice index. */
     val FILES = FirmwareImport.FILES
 
     fun protectedContext(ctx: Context): Context =
@@ -25,15 +26,17 @@ object SsiData {
     /** Where an import is judged and made ready, beside the real folder; gone when the import is. */
     fun staging(ctx: Context): File = File(protectedContext(ctx).filesDir, "unit.importing")
 
-    /** The voice can speak: the Accent SA's ROMs are in the APK; both of a Braille Lite voice's files are here. */
+    /** The voice can speak: the Accents' ROMs are in the APK; an imported voice's files are all here. */
     fun has(ctx: Context, voice: Int): Boolean {
         if (voice == SsiNative.ACCENT_SA) return accentRoms(ctx) != null
+        if (voice == SsiNative.ACCENT_MINI) return accentMini(ctx) != null
         stageBundled(ctx)
-        return FILES[voice].all { File(dir(ctx), it).isFile }
+        val files = FILES[voice] ?: return false
+        return files.all { File(dir(ctx), it).isFile }
     }
 
-    /** A Braille Lite voice has been imported. */
-    fun any(ctx: Context): Boolean = has(ctx, SsiNative.ENGLISH) || has(ctx, SsiNative.SPANISH)
+    /** Firmware has been imported: a Braille Lite voice or the Speak-Out. */
+    fun any(ctx: Context): Boolean = FirmwareImport.IMPORTED.any { has(ctx, it) }
 
     // ---- the Accent SA's ROMs: Aicom's, the one firmware the APK carries (firmware/AICOM.txt; Tomi, 2026-09-30) ----
 
@@ -60,10 +63,33 @@ object SsiData {
         }
     }
 
+    // ---- the Accent-mini's driver: Aicom's, in a build that carries the voice (build_android.sh stages it then) ----
+
+    private const val MINI = "SPKEMS.DVC"
+    @Volatile private var mini: ByteArray? = null
+    @Volatile private var miniChecked = false
+
+    /** SPKEMS.DVC from the APK's assets, read once; null when this build has no Accent-mini (no asset, or a library
+     * built without am_voice). */
+    fun accentMini(ctx: Context): ByteArray? {
+        if (miniChecked) return mini
+        synchronized(this) {
+            if (!miniChecked) {
+                mini = try {
+                    if (!SsiNative.nativeVoiceBuilt(SsiNative.ACCENT_MINI)) null
+                    else ctx.assets.open("$AICOM/$MINI").use { it.readBytes() }.takeIf { it.isNotEmpty() }
+                } catch (e: Exception) { null }       // not in this build: no voice, nothing wrong
+                miniChecked = true
+            }
+            return mini
+        }
+    }
+
     /** What was imported for the voice, in words; null when nothing was. */
     fun label(ctx: Context, voice: Int): String? {
         if (!has(ctx, voice)) return null
-        return try { File(dir(ctx), FILES[voice][0] + LABEL).readText() }
+        val files = FILES[voice] ?: return null
+        return try { File(dir(ctx), files[0] + LABEL).readText() }
             catch (e: Exception) { "Braille Lite ${FirmwareImport.languageName(voice)} (built into this app)" }
     }
 
@@ -80,7 +106,8 @@ object SsiData {
         }
     }
 
-    /** Remove every imported unit (a developer build's bundled one stays away until the app is reinstalled). */
+    /** Remove every imported unit, the Braille Lite's and the Speak-Out's (a developer build's bundled one stays away
+     * until the app is reinstalled). */
     fun remove(ctx: Context) = SsiEngine.withEngine {
         SsiEngine.reload()
         dir(ctx).deleteRecursively()

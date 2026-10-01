@@ -1,10 +1,10 @@
 /* ssa_jni.c -- the JNI bridge from Kotlin (SsiNative.kt) to the front end (ssa_engine.h).
  *
- * Thin: it marshals strings, the Accent SA's ROMs and the PCM buffer across the boundary and calls ssa_*, which calls
- * bl_voice and as_voice -- the same C the speech-dispatcher module and the NVDA add-ons' libraries are built from,
- * linked into this one .so.  No IPC.
+ * Thin: it marshals strings, the Accents' ROMs and the PCM buffer across the boundary and calls ssa_*, which calls
+ * bl_voice, as_voice, so_voice (and am_voice, in a build with the Accent-mini) -- the same C the speech-dispatcher
+ * module and the NVDA add-ons' libraries are built from, linked into this one .so.  No IPC.
  *
- * C, not C++: only the Accent SA's 8085 core (MAME's) is C++, linked with a static libc++ inside the .so.
+ * C, not C++: only MAME's CPU cores (the Z180, the 8085, the V40) are C++, linked with a static libc++ inside the .so.
  *
  * One engine per process.  Every call is serialised on the Kotlin side (SsiEngine's lock) except nativeStop, which
  * only sets a flag.
@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "ssa_engine.h"
+#include "ssa_import.h"
 #include "blazie/bl_firmware.h"
 #include "blazie/bl_state.h"
 
@@ -57,6 +58,28 @@ JNIEXPORT jboolean JNICALL FN(nativeAccentRoms)(JNIEnv *env, jclass cls, jbyteAr
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+/* The Accent-mini's SPKEMS.DVC (the APK's assets/aicom, in a build with the Accent-mini), copied into the engine. */
+JNIEXPORT jboolean JNICALL FN(nativeAccentMini)(JNIEnv *env, jclass cls, jbyteArray jdvc)
+{
+    jbyte *p;
+    jsize n;
+    int ok;
+    (void)cls;
+    if (!g_engine || !jdvc) return JNI_FALSE;
+    n = (*env)->GetArrayLength(env, jdvc);
+    if (!(p = (*env)->GetByteArrayElements(env, jdvc, NULL))) return JNI_FALSE;
+    ok = ssa_set_accent_mini(g_engine, (const unsigned char *)p, (size_t)n);
+    (*env)->ReleaseByteArrayElements(env, jdvc, p, JNI_ABORT);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+/* This build carries the voice's engine (no engine needs to be open). */
+JNIEXPORT jboolean JNICALL FN(nativeVoiceBuilt)(JNIEnv *env, jclass cls, jint voice)
+{
+    (void)env; (void)cls;
+    return ssa_voice_built(voice) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL FN(nativeHasVoice)(JNIEnv *env, jclass cls, jint voice)
 {
     (void)env; (void)cls;
@@ -90,7 +113,8 @@ JNIEXPORT jstring JNICALL FN(nativeError)(JNIEnv *env, jclass cls)
 }
 
 JNIEXPORT jint JNICALL FN(nativeStart)(JNIEnv *env, jclass cls, jint voice, jbyteArray jutf8, jint rate, jint pitch,
-                                       jint tone, jint volume, jint pack, jint request_rate, jint request_pitch)
+                                       jint tone, jint volume, jint pack, jint run_ahead, jint so_tone,
+                                       jint so_join, jint so_short, jint request_rate, jint request_pitch)
 {
     ssa_settings s;
     jsize n;
@@ -104,6 +128,7 @@ JNIEXPORT jint JNICALL FN(nativeStart)(JNIEnv *env, jclass cls, jint voice, jbyt
     (*env)->GetByteArrayRegion(env, jutf8, 0, n, (jbyte *)utf8);
     utf8[n] = 0;
     s.rate = rate; s.pitch = pitch; s.tone = tone; s.volume = volume; s.pack = pack;
+    s.run_ahead = run_ahead; s.so_tone = so_tone; s.so_join = so_join; s.so_short = so_short;
     g_error[0] = 0;
     r = ssa_start(g_engine, voice, utf8, &s, request_rate, request_pitch);
     free(utf8);
@@ -166,8 +191,10 @@ static unsigned char *bytes_of(JNIEnv *env, jbyteArray a, jsize *n)
     return p;
 }
 
-/* bl_firmware.h's blv_import_firmware: BLV_FW_ENGLISH 0 or _SPANISH 1, the release's label in nativeImportError; or
-   negative (_NONE, _REFUSED, _WRITE, _UNKNOWN), the reason in nativeImportError. */
+/* ssa_import.h's ssa_import_firmware, the firmware in these bytes by content: BLV_FW_ENGLISH 0 or _SPANISH 1 (a
+   Braille Lite release on the list, written to `out` as a .BNS) or SSA_HEX_SPEAKOUT 3 (the known SPEAKOUT.HEX,
+   written to `out`), the label in nativeImportError; else negative (_NONE, _REFUSED, _WRITE, _UNKNOWN; SSA_HEX_OTHER
+   -5: an Intel HEX file but not the Speak-Out's), the reason in nativeImportError. */
 JNIEXPORT jint JNICALL FN(nativeImportFirmware)(JNIEnv *env, jclass cls, jbyteArray jdata, jstring jout)
 {
     jsize n;
@@ -179,7 +206,7 @@ JNIEXPORT jint JNICALL FN(nativeImportFirmware)(JNIEnv *env, jclass cls, jbyteAr
     data = bytes_of(env, jdata, &n);
     if (!data) { strcpy(g_import_error, "out of memory"); return BLV_FW_WRITE; }
     out = (*env)->GetStringUTFChars(env, jout, NULL);
-    r = out ? blv_import_firmware(data, (long)n, out, g_import_error, sizeof g_import_error) : BLV_FW_WRITE;
+    r = out ? ssa_import_firmware(data, (long)n, out, g_import_error, sizeof g_import_error) : BLV_FW_WRITE;
     if (out) (*env)->ReleaseStringUTFChars(env, jout, out);
     free(data);
     return r;

@@ -257,10 +257,11 @@ def main():
         # REFERENCE: within a few samples, the length of each case; the state's own bytes are checked above)
         shipped = os.path.join(tmp, "shipped")
         os.makedirs(shipped)
-        want = TAN.reference(lib, TAN.data_folder(fw, shipped))
+        # (the lockstep's cases: run ahead's are its own test's, test_android_native.py)
+        want = TAN.reference(lib, TAN.data_folder(fw, shipped), run_ahead=False)
         if BREAK_STATE:
             want.pop("spanish", None)
-        got = TAN.reference(lib, made)
+        got = TAN.reference(lib, made, run_ahead=False)
         for name in want:
             n, want_n = got.get(name, (0, ""))[0], want[name][0]
             close = n > 0 and abs(n - want_n) <= 64
@@ -289,7 +290,7 @@ def check_once_english(lib, fw, tmp, june):
     result(listed, "generated September 2000 English state = the list's", "%.1f s" % secs if listed else
            (err or "a different state"))
     check_progress("September 2000 English", ENGLISH, secs, reports)
-    got = TAN.reference(lib, d)
+    got = TAN.reference(lib, d, run_ahead=False)
     for name in (n for n in june if n != "spanish"):
         n, want_n = got.get(name, (0, ""))[0], june[name][0]
         close = n > 0 and abs(n - want_n) <= max(0.02 * want_n, 2000)

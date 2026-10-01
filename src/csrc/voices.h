@@ -26,6 +26,8 @@
 #ifndef SSI263_VOICES_H
 #define SSI263_VOICES_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,7 +72,8 @@ SSV_API void ssv_boot_defaults(ssv_boot *b);
 
 /* An utterance's settings, NVDA's scales; ssv_defaults gives the voice's driver defaults. */
 typedef struct {
-    int rate, pitch, volume;       /* 0-100: 50, 50, 100 = each unit's factory rate and pitch, full volume */
+    int rate, pitch, volume;       /* 0-100: 50, 50, 100 = each unit's factory rate and pitch, full volume (every voice
+                                      takes a volume up to 200, louder and clipped at full scale: Android's slider) */
     int tone;                      /* the NVDA variant: the Braille Lite's tone 0-26 (7), the Speak-Out's A-Z as 0-25
                                       (8 = I), the Accent-mini's voice characteristic 0-9 (5); unused by the Accent SA */
     int pack;                      /* "Shorten pauses between sentences": the Braille Lite, the Speak-Out (1) */
@@ -85,6 +88,18 @@ typedef struct ssv_voice ssv_voice;
 
 /* Makes and boots voice i from fwdir (NULL: the current folder).  NULL on failure, the reason in err. */
 SSV_API ssv_voice *ssv_create(int i, const char *fwdir, const ssv_boot *b, char *err, int errlen);
+
+/* Where a voice's files come from when they are not laid out as the firmware folder: each of ssv_info.files, in its
+   order, as a path of its own or as bytes in memory (data[k] wins when not NULL).  Android's: the user's imported
+   firmware under names of the app's own, the Aicom ROMs and driver handed over from the APK.  The Braille Lite takes
+   paths only (its unit reads its files itself). */
+typedef struct {
+    const char *path[4];
+    const unsigned char *data[4];
+    size_t size[4];
+} ssv_source;
+/* As ssv_create, from src. */
+SSV_API ssv_voice *ssv_create_from(int i, const ssv_source *src, const ssv_boot *b, char *err, int errlen);
 SSV_API void ssv_destroy(ssv_voice *v);
 SSV_API int ssv_index(const ssv_voice *v);
 SSV_API int ssv_sample_rate(const ssv_voice *v);

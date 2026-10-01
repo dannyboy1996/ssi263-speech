@@ -11,7 +11,12 @@ ssa_engine.h's SSA_ACCENT_LEVEL 100) it peaks at -6.0 dBFS on these lines with i
 decibel of the Braille Lite's (-5.5, -22.5), so the default puts both beside TalkBack at the same level.  It is
 measured through the app's own path (test_android_native.c --level: ssa_engine, the fresh unit, the gain).
 
-    python test_volume_headroom.py        SSI263_VOLUME_TEST_BREAK=1: volume 250 for both voices -- must fail (both clip)
+The Aicom Accent-mini (built in, 0.7.5) takes the Accent SA's level (SSA_ACCENT_LEVEL), measured as it.  The GW Micro
+Speak-Out (imported, 0.7.5; measured when firmware/gw-micro-speakout/SPEAKOUT.HEX is there) shares it too:
+at the driver's full volume (so_voice's gain 1) it peaks at -5.6 dBFS on these lines with its speech RMS near
+-21 dBFS, the others' level; so_voice takes the app's 0-200 as as_voice does, and the default keeps its headroom.
+
+    python test_volume_headroom.py        SSI263_VOLUME_TEST_BREAK=1: volume 250 for every voice -- must fail (all clip)
                                           SSI263_VOLUME_TEST_BREAK=accent: 250 for the Accent SA alone -- must fail
 """
 import math
@@ -83,22 +88,49 @@ def blazie(volume, firmware):
     return verdict("braille lite", volume, lines, db, worst[1], clipped)
 
 
-def accent(volume):
-    """Through the app's own path: test_android_native --level, the Accent SA (voice 2) at the app's defaults."""
-    brk = os.environ.get("SSI263_VOLUME_TEST_BREAK")       # each run its own program: run_tests runs them together
-    T.OUT = os.path.join(T.REPO, "build", "android-host-volume" + ("-control-" + brk if brk else ""))
-    exe = T.build_desktop()
-    r = subprocess.run([exe, "--level", ".", T.AICOM, "2", str(volume)],
-                       input="".join(t.encode("utf-8").hex() + "\n" for t in ACCENT), capture_output=True, text=True)
+_exe = []
+
+
+def program():
+    """test_android_native, the one build every run shares (test_android_native.py's build_desktop)."""
+    if not _exe:
+        _exe.append(T.build_desktop())
+    return _exe[0]
+
+
+def app_level(label, voice, data, texts, volume, extra=()):
+    """Through the app's own path: test_android_native --level, the voice at the app's defaults and this volume."""
+    r = subprocess.run([program(), "--level", data, T.AICOM, str(voice), str(volume)] + list(extra),
+                       input="".join(t.encode("utf-8").hex() + "\n" for t in texts), capture_output=True, text=True)
     if r.returncode:
         sys.exit("test_android_native --level failed: %s" % r.stderr.strip())
     peak, clipped, worst = 0, 0, ""
     for k, p, c in re.findall(r"^level (\d+) (\d+) (\d+) ", r.stdout, re.M):
         clipped += int(c)
         if int(p) > peak:
-            peak, worst = int(p), ACCENT[int(k)]
+            peak, worst = int(p), texts[int(k)]
     db = 20 * math.log10(peak / 32768.0) if peak else -120.0
-    return verdict("accent sa", volume, len(ACCENT), db, worst, clipped)
+    return verdict(label, volume, len(texts), db, worst, clipped)
+
+
+def accent(volume):
+    return app_level("accent sa", 2, ".", ACCENT, volume)
+
+
+def mini(volume):
+    if not os.path.isfile(T.MINI_DVC):
+        print("accent-mini: skipped (no firmware/aicom-accent-mini/SPKEMS.DVC)")
+        return True
+    return app_level("accent-mini", 4, ".", ACCENT, volume, [T.MINI_DVC])
+
+
+def speakout(volume):
+    if not os.path.isfile(T.SPEAKOUT_HEX):
+        print("speak-out: skipped (no firmware/gw-micro-speakout/SPEAKOUT.HEX)")
+        return True
+    with tempfile.TemporaryDirectory() as tmp:
+        T.shutil.copy2(T.SPEAKOUT_HEX, tmp)
+        return app_level("speak-out", 3, tmp, ACCENT, volume)
 
 
 def main():
@@ -107,6 +139,8 @@ def main():
     default = default_volume()
     ok = blazie(250 if brk == "1" else default, firmware)
     ok = accent(250 if brk in ("1", "accent") else default) and ok
+    ok = speakout(250 if brk == "1" else default) and ok
+    ok = mini(250 if brk == "1" else default) and ok
     print("volume headroom: %s" % ("PASS" if ok else "FAILED"))
     sys.exit(0 if ok else 1)
 

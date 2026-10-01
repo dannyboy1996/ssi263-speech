@@ -1,9 +1,25 @@
-"""The Android app's native part, proven without a phone: test_android_native.c (the app's front end, ssa_engine.c and
-ssa_map.c, on the same chip, boards, hosts and voices), every case's PCM compared by hash.
+"""The Android app's native part, proven without a phone: test_android_native.c (the app's front end, ssa_engine.c,
+ssa_map.c and ssa_import.c, on the same chip, boards, hosts and voices), every case's PCM compared by hash.
 
 - The Braille Lite: against bl_voice driven directly the way the speech-dispatcher module drives it
   (src/platforms/speechd/sd_ssi263.c: SSIP -100..100 through its to100), from the desktop library the NVDA add-on
-  and Linux ship (bl.dll + ssi263.dll on Windows, libssi263speech.so on Linux), loaded with ctypes.
+  and Linux ship (bl.dll + ssi263.dll on Windows, libssi263speech.so on Linux), loaded with ctypes.  Lockstep, and
+  with the EXPERIMENTAL run ahead on (blv_set_run_ahead, the app's setting), whose audio must also differ from the
+  lockstep's (the run-ahead path taken).
+- The GW Micro Speak-Out (imported; its cases run when firmware/gw-micro-speakout/SPEAKOUT.HEX is there): against
+  so_voice driven directly (test_android_native --so-direct: sov_set, sov_speak, sov_render, sov_cancel on one kept
+  unit, the settings computed here: the request's rate on the slider, the slider's pitch as the setting and the
+  request's as a capital's PitchCommand offset, moved at least one of the box's ten steps).  so_voice itself is the
+  NVDA driver byte for byte (nvda/tools/so_voice_equiv.py).  A capital's 150/120/75 % differ from 100 % and 100 %
+  again is byte-identical.
+- The Aicom Accent-mini (built in, Aicom's SPKEMS.DVC handed over in memory as the app does; its cases run when
+  firmware/aicom-accent-mini/SPKEMS.DVC is there): against am_voice driven directly (test_android_native --am-direct:
+  amv_set, amv_speak with the capital's offset, amv_render, amv_cancel on one kept unit), the settings computed here
+  as the Accent SA's are.  am_voice itself is the NVDA Accent driver's "mini" voice (nvda/tools/am_voice_equiv.py).
+- The import: GW Micro's SPEAKOUT.HEX recognised by content (Intel HEX, then the known sha256) as it is, with LF
+  line endings, with a DOS end-of-file mark, and out of a speakout.zip like GW Micro's; a HEX with one digit
+  changed, one whose checksums were fixed after the change (another HEX), one cut short, and other files refused;
+  a Braille Lite .BNS still the Braille Lite's.
 - The Aicom Accent SA (the built-in voice): against the NVDA Accent add-on's own driver, its "sa" voice on the
   desktop's C host (accent_reference.py; the built nvda/dist/accent-build and accentsa-lib), a fresh unit per case as
   the app has; the request's rate and pitch put on the driver's scales as ssa_map.c does, the pitch as a capital's
@@ -21,7 +37,16 @@ ssa_map.c, on the same chip, boards, hosts and voices), every case's PCM compare
     SSI263_ANDROID_TEST_BREAK=accent-pitch        the Accent SA's controls (ssa_engine.h's ssa_accent_break), each
                              accent-glide         must FAIL: the request's pitch dropped; the pitch sent as a setting,
                              accent-reuse         glided to (no snap_pitch); one unit kept across utterances; the
-                             accent-step          plain pitch mapping (a 120 % request on the 100 % step)
+                             accent-step          plain pitch mapping (a 120 % request on the 100 % step; the
+                                                  Speak-Out's too)
+                             speakout-pitch       ssa_voice_break 1: the Speak-Out's request pitch dropped
+                             speakout-settings    ssa_voice_break 2: its tone, join and short pauses dropped
+                             run-ahead            ssa_voice_break 3: the Braille Lite's run ahead dropped
+                             import-hash          ssa_import_break: any well-formed Intel HEX taken as the Speak-Out
+
+SSI263_ANDROID_TEST_ONLY=<blocks>, a comma list of bl (the Braille Lite in lockstep, its Spanish unit and the probe),
+ra (run ahead), accent (the Accent SA and its text), so (the Speak-Out), mini (the Accent-mini), import (the Speak-Out
+import): only those blocks, on both sides -- for the controls, so each runs what its bug touches (the 3-minute gate).
 
 Options: --firmware <folder> (default $SSI263_FIRMWARE, else firmware/blazie; the Spanish unit there or in its
 spanish/ folder), --lib <reference library>, --chip <ssi263.dll bl.dll needs>, --abi <abi> (default arm64-v8a),
@@ -46,9 +71,10 @@ from tools import repo_paths  # noqa: E402
 
 SRC = os.path.join(REPO, "src", "csrc")
 CPP = os.path.join(REPO, "src", "platforms", "android", "app", "src", "main", "cpp")
-# each control builds its own program (run_tests runs them all at once: one output file would race)
-OUT = os.path.join(REPO, "build", "android-host" + ("-control-" + re.sub(r"\W", "_", os.environ["SSI263_ANDROID_TEST_BREAK"])
-                                                     if os.environ.get("SSI263_ANDROID_TEST_BREAK") else ""))
+# One program for every run: the controls choose their bug at run time (SSI263_ANDROID_TEST_BREAK), so run_tests's
+# dozen runs share one build -- the first to need it builds it under a lock, the others wait and reuse it (its key:
+# every source it is built from, and this file's flags).
+OUT = os.path.join(REPO, "build", "android-host")
 WINDOWS = sys.platform == "win32"
 
 HELLO = "Hello there. This is the Braille Lite, speaking on a phone."
@@ -65,8 +91,55 @@ CASES = [
     ("stopped", LONG, 0, 0, 5),
     ("after-stop", "Next message.", 0, 0, None),
 ]
+# the Braille Lite with run ahead on, on a unit of its own (the C program's ra- cases, in the same order)
+RA_CASES = [
+    ("ra-default", HELLO, 0, 0, None),
+    ("ra-fast", HELLO, 50, 0, None),
+    ("ra-stopped", LONG, 0, 0, 5),
+    ("ra-after-stop", "Next message.", 0, 0, None),
+]
 FILES = {"en": ("BL2ENG.BNS", "bl2_2003_warm.state"), "es": ("BL2SPA.BNS", "bl2spa_fresh.state")}
 AICOM = os.path.join(REPO, "firmware", "aicom-accent-sa")
+SPEAKOUT_HEX = os.path.join(REPO, "firmware", "gw-micro-speakout", "SPEAKOUT.HEX")
+MINI_DVC = os.path.join(REPO, "firmware", "aicom-accent-mini", "SPKEMS.DVC")
+SPEAKOUT_SHA256 = "1c6930c8c6aed0550bc267c14032f9195b450ed95de606f2fa9727e2b7eb1eb1"   # its README's
+
+# The Accent-mini's cases: test_android_native.c's mini_cases, in the same order -- (name, text, the app's rate and
+# pitch sliders, the request's rate and pitch percentages, volume, inflection, blocks before a stop).  One unit kept.
+HELLO_M = "Hello there. This is the Accent-mini, speaking on a phone."
+MINI_CASES = [
+    ("m-default", HELLO_M, 50, 50, 100, 100, 100, 1, 0),
+    ("m-fast", HELLO_M, 50, 50, 200, 100, 100, 1, 0),
+    ("m-sliders", HELLO_M, 70, 80, 100, 100, 150, 1, 0),
+    ("m-pitch-100", "B", 50, 50, 100, 100, 100, 1, 0),
+    ("m-pitch-150", "B", 50, 50, 100, 150, 100, 1, 0),
+    ("m-pitch-75", "B", 50, 50, 100, 75, 100, 1, 0),
+    ("m-stopped", LONG, 50, 50, 100, 100, 100, 1, 8),
+    ("m-after-stop", "Next message, $3.50.", 50, 50, 100, 100, 100, 1, 0),
+    ("m-monotone", HELLO_M, 50, 50, 100, 100, 100, 0, 0),
+]
+
+# The Speak-Out's cases: test_android_native.c's speakout_cases, in the same order -- (name, text, the app's rate and
+# pitch sliders, the request's rate and pitch percentages, volume, tone, join, short pauses, sample rate, pull size,
+# blocks before a stop).  One unit across them, as the app keeps one.
+HELLO_S = "Hello there. This is the Speak-Out, speaking on a phone."
+SETTINGS_S = "One. Two, three! Four? Five, $3.50."
+SPEAKOUT_CASES = [
+    ("s-default", HELLO_S, 50, 50, 100, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-default-97", HELLO_S, 50, 50, 100, 100, 100, 8, 1, 1, 22050, 97, 0),
+    ("s-fast", HELLO_S, 50, 50, 200, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-sliders", HELLO_S, 70, 80, 100, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-settings", SETTINGS_S, 50, 50, 100, 100, 100, 0, 0, 0, 22050, 4096, 0),
+    ("s-pitch-100", "B", 50, 50, 100, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-pitch-150", "B", 50, 50, 100, 150, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-pitch-75", "B", 50, 50, 100, 75, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-pitch-120", "B", 50, 50, 100, 120, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-pitch-100-again", "B", 50, 50, 100, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-stopped", LONG, 50, 50, 100, 100, 100, 8, 1, 1, 22050, 4096, 8),
+    ("s-after-stop", "Next message.", 50, 50, 100, 100, 100, 8, 1, 1, 22050, 4096, 0),
+    ("s-volume-150", HELLO_S, 50, 50, 100, 100, 150, 8, 1, 1, 22050, 4096, 0),
+    ("s-11k", HELLO_S, 50, 50, 100, 100, 100, 8, 1, 1, 11025, 4096, 0),
+]
 ROMS = ("u2.BIN", "u3.BIN", "u4.BIN")
 
 # The Accent SA's cases: test_android_native.c's accent_cases, in the same order -- (name, text, the app's rate and
@@ -144,6 +217,22 @@ def accent_pitch(slider, percent):                  # ssa_engine.c's ssa_accent_
     return p
 
 
+def speakout_step(p):                               # so_voice.c's box_pitch: the driver's _box_pitch
+    p = max(0, min(100, p))
+    return int(p * 3 / 50.0 + 0.5) if p <= 50 else 3 + int((p - 50) * 6 / 50.0 + 0.5)
+
+
+def step_pitch(slider, percent, step):              # ssa_engine.c's ssa_step_pitch: at least one step moved
+    p, base = on_top(slider, percent), step(max(0, min(100, slider)))
+    if percent > 100:
+        while p < 100 and step(p) == base:
+            p += 1
+    elif 0 < percent < 100:
+        while p > 0 and step(p) == base:
+            p -= 1
+    return p
+
+
 def accent_level():
     """SSA_ACCENT_LEVEL, from ssa_engine.h (one place)"""
     m = re.search(r"#define SSA_ACCENT_LEVEL (\d+)", open(os.path.join(CPP, "ssa_engine.h"), encoding="utf-8").read())
@@ -152,10 +241,11 @@ def accent_level():
 
 # ---- the reference: bl_voice, as sd_ssi263 drives it --------------------------------------------------------------
 class Ref:
-    def __init__(self, lib, data, spanish):
+    def __init__(self, lib, data, spanish, run_ahead=0):
         fw, st = FILES["es" if spanish else "en"]
         err = ctypes.create_string_buffer(256)
         self.lib = lib
+        self.run_ahead = run_ahead
         self.v = lib.blv_create(os.path.join(data, fw).encode(), os.path.join(data, st).encode(), int(spanish),
                                 22050.0, 1, 0, err, 256)
         if not self.v:
@@ -164,6 +254,7 @@ class Ref:
     def say(self, text, rate, pitch, blocks, volume=100):
         lib = self.lib
         lib.blv_set(self.v, to100(rate), to100(pitch), 7, volume, 1)
+        lib.blv_set_run_ahead(self.v, self.run_ahead)
         lib.blv_speak(self.v, text.encode("utf-8"))
         pcm, done, out, n_blocks = ctypes.POINTER(ctypes.c_short)(), ctypes.c_int(0), [], 0
         while not done.value:
@@ -196,17 +287,32 @@ def load_reference(lib_path, chip_path):
                                ctypes.POINTER(ctypes.c_int)]
     lib.blv_cancel.argtypes = [ctypes.c_void_p]
     lib.blv_destroy.argtypes = [ctypes.c_void_p]
+    lib.blv_set_run_ahead.argtypes = [ctypes.c_void_p, ctypes.c_int]
     return lib
 
 
-def reference(lib, data):
+ONLY = [b for b in os.environ.get("SSI263_ANDROID_TEST_ONLY", "").split(",") if b]
+
+
+def block(name):
+    """The block runs: every block, unless SSI263_ANDROID_TEST_ONLY names some."""
+    return not ONLY or name in ONLY
+
+
+def reference(lib, data, run_ahead=True):
     ref = Ref(lib, data, False)
     got = {}
-    for name, text, rate, pitch, blocks in CASES:
+    for name, text, rate, pitch, blocks in CASES if block("bl") else ():
         pcm = ref.say(text, rate, pitch, blocks)
         got[name] = (len(pcm) // 2, fnv(pcm))
     lib.blv_destroy(ref.v)
-    if all(os.path.isfile(os.path.join(data, f)) for f in FILES["es"]):
+    ra = Ref(lib, data, False, run_ahead=1) if run_ahead and block("ra") else None
+    for name, text, rate, pitch, blocks in RA_CASES if ra else ():
+        pcm = ra.say(text, rate, pitch, blocks)
+        got[name] = (len(pcm) // 2, fnv(pcm))
+    if ra:
+        lib.blv_destroy(ra.v)
+    if block("bl") and all(os.path.isfile(os.path.join(data, f)) for f in FILES["es"]):
         es = Ref(lib, data, True)
         pcm = es.say(SPANISH, 0, 0, None)
         got["spanish"] = (len(pcm) // 2, fnv(pcm))
@@ -239,8 +345,169 @@ def accent_reference():
     return got, texts
 
 
+# ---- the Speak-Out's reference: so_voice driven directly ---------------------------------------------------------
+def speakout_settings(rate, pitch, req_rate, req_pitch):
+    """The app's mapping, computed here: (so_voice's rate, its pitch setting, the capital's offset)."""
+    return on_top(rate, req_rate), pitch, step_pitch(pitch, req_pitch, speakout_step) - max(0, min(100, pitch))
+
+
+def speakout_reference(exe, cases=None):
+    lines = []
+    for name, text, rate, pitch, rr, rp, volume, tone, join, short, sr, chunk, stop in cases or SPEAKOUT_CASES:
+        r, p, off = speakout_settings(rate, pitch, rr, rp)
+        lines.append("%s %d %d %d %d %d %d %d %d %d %s\n" % (name, sr, r, p, tone, volume, join, short, off, stop,
+                                                           text.encode("utf-8").hex()))
+    out = subprocess.run([exe, "--so-direct", SPEAKOUT_HEX], input="".join(lines), capture_output=True, text=True)
+    if out.returncode:
+        sys.exit("test_android_native --so-direct failed (%d): %s" % (out.returncode, out.stderr.strip()))
+    return parse(out.stdout)
+
+
+# ---- the Accent-mini's reference: am_voice driven directly ---------------------------------------------------------
+def mini_reference(exe):
+    level, lines = accent_level(), []
+    for name, text, rate, pitch, rr, rp, volume, infl, stop in MINI_CASES:
+        slider = max(0, min(100, pitch))
+        lines.append("%s %d 22050 %d %d %d %d 1 5 %d %d %s\n" % (
+            name, infl, on_top(rate, rr), slider, 100 if infl else 0, volume * level // 100,
+            accent_pitch(pitch, rp) - slider, stop, text.encode("utf-8").hex()))
+    out = subprocess.run([exe, "--am-direct", MINI_DVC], input="".join(lines), capture_output=True, text=True)
+    if out.returncode:
+        sys.exit("test_android_native --am-direct failed (%d): %s" % (out.returncode, out.stderr.strip()))
+    return parse(out.stdout)
+
+
+def mini_capitals(label, got):
+    """The Accent-mini's capital (one kept unit, as the Speak-Out's: its return is the reference's, compared above)."""
+    bad = 0
+    for name in ("m-pitch-150", "m-pitch-75"):
+        ok = got.get(name) is not None and got.get(name)[1] != (got.get("m-pitch-100") or (0, None))[1]
+        print("%-5s %-8s %s sounds different from m-pitch-100" % ("ok" if ok else "FAIL", label, name))
+        bad += not ok
+    return bad
+
+
+# ---- the import: GW Micro's SPEAKOUT.HEX by content -----------------------------------------------------------------
+def import_cases(exe, tmp):
+    """(name, bytes, the code wanted, the bytes wanted in out or None): what a user may bring."""
+    import hashlib
+    import io
+    import zipfile
+    bad = 0
+    hexdata = open(SPEAKOUT_HEX, "rb").read()
+    lines = hexdata.split(b"\r\n")
+    # one data digit changed (its checksum now wrong), and the same with the checksum put right: another HEX
+    k = next(i for i, ln in enumerate(lines) if ln.startswith(b":20") and len(ln) > 20)
+    rec = bytearray(lines[k])
+    rec[12] = ord("0") if rec[12] != ord("0") else ord("1")
+    flipped = b"\r\n".join(lines[:k] + [bytes(rec)] + lines[k + 1:])
+    body = bytes.fromhex(rec[1:-2].decode())
+    fixed = bytes(rec[:-2]) + b"%02X" % ((-sum(body)) & 0xFF)
+    other = b"\r\n".join(lines[:k] + [fixed] + lines[k + 1:])
+    cut = b"\r\n".join(lines[:len(lines) // 2]) + b"\r\n"
+    # GW Micro's speakout.zip: the HEX among the package's other files; each member judged as the app judges it
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("README.TXT", b"Speak-Out firmware update.\r\n")
+        z.writestr("SPEAKOUT.HEX", hexdata)
+        z.writestr("UPDATE.EXE", b"MZ" + bytes(5000))
+    with zipfile.ZipFile(io.BytesIO(zbuf.getvalue())) as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    bns = open(os.path.join(tmp, "BL2ENG.BNS"), "rb").read()
+    cases = [("SPEAKOUT.HEX", hexdata, 3, hexdata),
+             ("the HEX with LF line endings", hexdata.replace(b"\r\n", b"\n"), 3, hexdata),
+             ("the HEX with a DOS end-of-file mark", hexdata + b"\x1a", 3, hexdata),
+             ("a renamed copy (firmware.txt)", hexdata, 3, hexdata),
+             ("speakout.zip's SPEAKOUT.HEX", members["SPEAKOUT.HEX"], 3, hexdata),
+             ("speakout.zip's README.TXT", members["README.TXT"], -1, None),
+             ("speakout.zip's UPDATE.EXE", members["UPDATE.EXE"], -1, None),
+             ("a HEX with one digit changed (its checksum wrong)", flipped, -5, None),
+             ("another HEX (the change with its checksum put right)", other, -5, None),
+             ("a HEX cut short", cut, -5, None),
+             ("a text file", b"Hello there.\r\nNot firmware.\r\n", -1, None),
+             ("BL2ENG.BNS (the Braille Lite's)", bns, 0, None)]
+    for name, data, code, want in cases:
+        src, out = os.path.join(tmp, "import.in"), os.path.join(tmp, "import.out")
+        with open(src, "wb") as f:
+            f.write(data)
+        if os.path.exists(out):
+            os.remove(out)
+        r = subprocess.run([exe, "--import", src, out], capture_output=True, text=True)
+        m = re.match(r"^import (-?\d+) (.*)$", r.stdout.strip())
+        got = int(m.group(1)) if m else None
+        ok = got == code
+        written = open(out, "rb").read() if os.path.exists(out) else None
+        if ok and want is not None:
+            ok = written == want and hashlib.sha256(written).hexdigest() == SPEAKOUT_SHA256
+        if ok and code < 0:
+            ok = written is None
+        print("%-5s import   %s: %s" % ("ok" if ok else "FAIL", name, m.group(2) if m else r.stdout + r.stderr))
+        bad += not ok
+    return bad
+
+
 # ---- the program ------------------------------------------------------------------------------------------------
+def source_key():
+    """What the program is built from: every C/C++ file under src/csrc and the app's cpp folder, the test program and
+    this file (its flags)."""
+    import hashlib
+    h = hashlib.sha256()
+    files = [os.path.abspath(__file__), os.path.join(HERE, "test_android_native.c")]
+    for top in (SRC, CPP):
+        for d, dirs, names in os.walk(top):
+            dirs.sort()
+            files += [os.path.join(d, n) for n in sorted(names)
+                      if os.path.splitext(n)[1].lower() in (".c", ".h", ".cpp", ".hpp", ".ipp", ".hxx", ".inc")]
+    for f in files:
+        h.update(f.encode("utf-8", "replace"))
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()
+
+
 def build_desktop():
+    """test_android_native, built once for every run (see OUT): reused when its key matches, else built under a lock."""
+    import time
+    exe = os.path.join(OUT, "test_android_native" + (".exe" if WINDOWS else ""))
+    stamp, lock = os.path.join(OUT, "key.txt"), OUT + ".lock"
+    key = source_key()
+
+    def built():
+        try:
+            return os.path.isfile(exe) and open(stamp).read() == key
+        except OSError:
+            return False
+    if built():
+        return exe
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    deadline = time.time() + 600
+    while True:
+        try:
+            os.mkdir(lock)                         # atomic: one builder at a time
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > 600:
+                    os.rmdir(lock)                 # a builder that died
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                sys.exit("waited 10 minutes for %s" % lock)
+            time.sleep(0.5)
+    try:
+        if not built():                            # another run may have built it meanwhile
+            if os.path.exists(stamp):
+                os.remove(stamp)
+            build_into(exe)
+            with open(stamp, "w") as f:
+                f.write(key)
+    finally:
+        os.rmdir(lock)
+    return exe
+
+
+def build_into(exe):
     """test_android_native with the desktop compiler, the flags of build_linux.sh / build_board.py."""
     if WINDOWS:
         bindir = repo_paths.bin_dir("W64DEVKIT")
@@ -260,23 +527,44 @@ def build_desktop():
             "-I" + os.path.join(SRC, "cpu"), "-I" + SRC]
     accent = ["-O2", "-std=gnu89", "-ffp-contract=off", "-Wall", "-I" + os.path.join(SRC, "cpu"),
               "-I" + os.path.join(SRC, "accentsa"), "-I" + SRC]
-    asa = os.path.join(SRC, "accentsa")
+    speakout = ["-O2", "-std=gnu89", "-ffp-contract=off", "-Wall", "-I" + os.path.join(SRC, "cpu"),
+                "-I" + os.path.join(SRC, "speakout"), "-I" + SRC]
+    asa, spk = os.path.join(SRC, "accentsa"), os.path.join(SRC, "speakout")
     units = [(chip, os.path.join(SRC, "ssi263.c")), (chip, os.path.join(SRC, "ssi263dsp.c")),
              (z180, os.path.join(SRC, "cpu", "z180_mame.cpp")), (z180, os.path.join(SRC, "cpu", "z180_asci.cpp"))] + \
             [(board, os.path.join(SRC, "blazie", n + ".c")) for n in ("bl_board", "flash29", "bl_serial", "bl_idle", "bl_clock",
-                                                                     "bl_host", "bl_voice")] + [
+                                                                     "bl_host", "bl_voice", "bl_firmware")] + [
              (mame, os.path.join(SRC, "cpu", "i8085_mame.cpp")), (accent, os.path.join(asa, "as_board.c")),
              (accent, os.path.join(asa, "as_usart.c")), (accent, os.path.join(asa, "as_host.c")),
              (front, os.path.join(asa, "as_voice.c")), (front, os.path.join(SRC, "numwords.c")),
              (front, os.path.join(SRC, "accent_text.c")),
+             (mame, os.path.join(SRC, "cpu", "v40_mame.cpp"))] + \
+            [(speakout, os.path.join(spk, n + ".c")) for n in ("so_board", "so_icu", "so_scu", "so_hex", "so_host")] + [
+             (front, os.path.join(spk, "so_voice.c")), (front, os.path.join(CPP, "ssa_import.c")),
+             (front + ["-I" + os.path.join(SRC, "blazie")], os.path.join(SRC, "blazie", "bl_numbers.c")),
+             (front, os.path.join(SRC, "numwords_es.c")),
              (front, os.path.join(CPP, "ssa_map.c")),
              (front, os.path.join(CPP, "ssa_engine.c")), (front, os.path.join(HERE, "test_android_native.c"))]
-    objs = []
-    for flags, src in units:
+    # the voices' table (src/csrc/voices.c) with the engines in the tree, as build_android.sh builds it
+    have = ["-DSSV_HAVE_SPEAKOUT"]
+    if os.path.isfile(os.path.join(SRC, "accentmini", "am_voice.c")):
+        have.append("-DSSV_HAVE_ACCENTMINI")
+        am = accent + ["-I" + os.path.join(SRC, "pc86")]
+        units += [(mame, os.path.join(SRC, "cpu", "i86_mame.cpp")), (am, os.path.join(SRC, "pc86", "pc86.c")),
+                  (am, os.path.join(SRC, "accentmini", "am_host.c")), (am, os.path.join(SRC, "accentmini", "am_voice.c"))]
+    units.append((front + have, os.path.join(SRC, "voices.c")))
+
+    def compile_one(unit):
+        flags, src = unit
         obj = os.path.join(OUT, os.path.splitext(os.path.basename(src))[0] + ".o")
-        subprocess.run([cxx if src.endswith(".cpp") else cc] + flags + ["-c", "-o", obj, src], check=True, env=env)
-        objs.append(obj)
-    exe = os.path.join(OUT, "test_android_native" + (".exe" if WINDOWS else ""))
+        r = subprocess.run([cxx if src.endswith(".cpp") else cc] + flags + ["-c", "-o", obj, src], env=env,
+                           capture_output=True, text=True)
+        if r.returncode:
+            sys.exit("compiling %s failed:\n%s" % (os.path.basename(src), (r.stdout + r.stderr)[-3000:]))
+        return obj
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as pool:   # every unit at once: the gate's minutes
+        objs = list(pool.map(compile_one, units))
     link = ["-static", "-static-libstdc++", "-static-libgcc"] if WINDOWS else ["-lm"]
     subprocess.run([cxx, "-o", exe] + objs + link, check=True, env=env)
     return exe
@@ -292,7 +580,8 @@ def parse(text):
 
 
 def run_desktop(exe, data, aicom):
-    r = subprocess.run([exe, data, aicom], capture_output=True, text=True)
+    r = subprocess.run([exe, data, aicom] + ([MINI_DVC] if os.path.isfile(MINI_DVC) else []), capture_output=True,
+                       text=True)
     if r.returncode:
         sys.exit("test_android_native failed (%d): %s" % (r.returncode, r.stderr.strip()))
     return parse(r.stdout)
@@ -319,9 +608,13 @@ def run_adb(abi, data, aicom):
         subprocess.run([adb, "shell", "mkdir -p %s/aicom" % where], check=True)
         for n in ROMS:
             subprocess.run([adb, "push", os.path.join(aicom, n), where + "/aicom/"], check=True, capture_output=True)
+        mini = ""
+        if os.path.isfile(MINI_DVC):
+            subprocess.run([adb, "push", MINI_DVC, where + "/aicom/"], check=True, capture_output=True)
+            mini = " aicom/SPKEMS.DVC"
         brk = os.environ.get("SSI263_ANDROID_TEST_BREAK", "")
         r = subprocess.run([adb, "shell", "cd %s && chmod 755 test_android_native && SSI263_ANDROID_TEST_BREAK=%s "
-                            "./test_android_native . aicom" % (where, brk)], capture_output=True, text=True)
+                            "./test_android_native . aicom%s" % (where, brk, mini)], capture_output=True, text=True)
         if r.returncode:
             sys.exit("on the device, test_android_native failed (%d): %s" % (r.returncode, r.stderr.strip()))
         return parse(r.stdout)
@@ -330,9 +623,12 @@ def run_adb(abi, data, aicom):
 
 
 def data_folder(firmware, tmp):
-    """The unit's files in one folder, as the app has them (English, and Spanish when both of its files exist)."""
+    """The units' files in one folder, as the app has them (English, Spanish when both of its files exist, and the
+    Speak-Out's HEX when it is in the repository's firmware folder)."""
     for f in FILES["en"]:
         shutil.copy2(os.path.join(firmware, f), tmp)
+    if os.path.isfile(SPEAKOUT_HEX):
+        shutil.copy2(SPEAKOUT_HEX, tmp)
     for d in (firmware, os.path.join(firmware, "spanish")):
         if all(os.path.isfile(os.path.join(d, f)) for f in FILES["es"]):
             for f in FILES["es"]:
@@ -352,19 +648,33 @@ def compare(label, got, want):
     return bad
 
 
-def capitals(label, got):
-    """A capital's pitch (TalkBack raises the request's pitch for its own utterance): heard, and gone after it."""
+def capitals(label, got, p="a"):
+    """A capital's pitch (TalkBack raises the request's pitch for its own utterance): heard, and gone after it.  The
+    Speak-Out ("s") keeps one unit, as the NVDA driver keeps one box: the same text twice in a row already differs a
+    little (the box's own timing carries over), so its pitch coming back is the reference's -- so_voice itself, given
+    no offset -- matched byte for byte above, not a repeat of the first."""
     bad = 0
-    base, again = got.get("a-pitch-100"), got.get("a-pitch-100-again")
-    for name, other in (("a-pitch-150", "a-pitch-100"), ("a-pitch-75", "a-pitch-100"), ("a-pitch-150", "a-pitch-75"),
-                        ("a-pitch-120", "a-pitch-100")):
+    base, again = got.get(p + "-pitch-100"), got.get(p + "-pitch-100-again")
+    for name, other in (("-pitch-150", "-pitch-100"), ("-pitch-75", "-pitch-100"), ("-pitch-150", "-pitch-75"),
+                        ("-pitch-120", "-pitch-100")):
+        name, other = p + name, p + other
         ok = got.get(name) is not None and got.get(name)[1] != (got.get(other) or (0, None))[1]
         print("%-5s %-8s %s sounds different from %s" % ("ok" if ok else "FAIL", label, name, other))
         bad += not ok
+    if p == "s":
+        return bad
     ok = base is not None and base == again
-    print("%-5s %-8s a-pitch-100-again = a-pitch-100, byte for byte (the pitch came back)" % ("ok" if ok else "FAIL",
-                                                                                               label))
+    print("%-5s %-8s %s-pitch-100-again = %s-pitch-100, byte for byte (the pitch came back)" % (
+        "ok" if ok else "FAIL", label, p, p))
     return bad + (not ok)
+
+
+def run_ahead_taken(label, got):
+    """The run-ahead cases took the run-ahead path: their audio is not the lockstep's."""
+    ok = got.get("ra-default") is not None and got.get("ra-default") != got.get("default")
+    print("%-5s %-8s ra-default differs from default (run ahead taken, not the lockstep)" % ("ok" if ok else "FAIL",
+                                                                                              label))
+    return not ok
 
 
 def compare_texts(got, want):
@@ -395,16 +705,46 @@ def main():
     tmp = tempfile.mkdtemp(prefix="ssi263-android-test-")
     try:
         data = data_folder(a.firmware, tmp)
-        want = reference(load_reference(a.lib, a.chip), data)
-        want["probe"] = want["default"]            # ssa_probe: a fresh unit speaks the first case as it did
-        accent_want, text_want = accent_reference()
+        want = reference(load_reference(a.lib, a.chip), data) if block("bl") or block("ra") else {}
+        if block("bl"):
+            want["probe"] = want["default"]        # ssa_probe: a fresh unit speaks the first case as it did
+        accent_want, text_want = accent_reference() if block("accent") else ({}, {})
         want.update(accent_want)
         exe = build_desktop()
-        got = run_desktop(exe, data, a.aicom)
-        bad = compare("desktop", got, want) + capitals("desktop", got) + compare_texts(run_texts(exe), text_want)
+        speakout = os.path.isfile(SPEAKOUT_HEX)
+        if speakout and block("so"):
+            want.update(speakout_reference(exe))
+            # ssa_probe on the Speak-Out: a fresh unit says the import's "Hello." at the defaults
+            want["s-probe"] = speakout_reference(exe, [("s-probe", "Hello.", 50, 50, 100, 100, 100, 8, 1, 1, 22050,
+                                                        4096, 0)])["s-probe"]
+        elif not speakout:
+            print("skip  the Speak-Out: no firmware/gw-micro-speakout/SPEAKOUT.HEX")
+        mini = os.path.isfile(MINI_DVC)
+        if mini and block("mini"):
+            want.update(mini_reference(exe))
+        elif not mini:
+            print("skip  the Accent-mini: no firmware/aicom-accent-mini/SPKEMS.DVC")
+
+        def checks(label, got):
+            bad = compare(label, got, want)
+            if block("accent"):
+                bad += capitals(label, got)
+            if block("bl") and block("ra"):
+                bad += run_ahead_taken(label, got)
+            if speakout and block("so"):
+                bad += capitals(label, got, "s")
+            if mini and block("mini"):
+                bad += mini_capitals(label, got)
+            return bad
+        bad = 0
+        if want:
+            bad += checks("desktop", run_desktop(exe, data, a.aicom))
+        if block("accent"):
+            bad += compare_texts(run_texts(exe), text_want)
+        if speakout and block("import"):
+            bad += import_cases(exe, data)
         if a.adb:
-            got = run_adb(a.abi, data, a.aicom)
-            bad += compare("device", got, want) + capitals("device", got)
+            bad += checks("device", run_adb(a.abi, data, a.aicom))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("FAILED: %d case(s) differ" % bad if bad else "the app's native part speaks as the reference, byte for byte")

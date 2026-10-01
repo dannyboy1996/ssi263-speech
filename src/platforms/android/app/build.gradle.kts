@@ -21,8 +21,12 @@ val verifyNativeBuild = tasks.register("verifyNativeBuild") {
         }
         for (name in listOf("licenses/DISTRIBUTION.txt", "licenses/ssi263-speech-MIT.txt",
                             "licenses/Aicom-Accent-SA-notice.txt", "licenses/MAME-Z180-core-BSD-3-Clause.txt",
-                            "licenses/MAME-8085-core-BSD-3-Clause.txt", "licenses/Casso-MIT.txt",
-                            "aicom/u2.BIN", "aicom/u3.BIN", "aicom/u4.BIN")) {
+                            "licenses/MAME-8085-core-BSD-3-Clause.txt", "licenses/MAME-NEC-V40-core-BSD-3-Clause.txt",
+                            "licenses/Casso-MIT.txt",
+                            "aicom/u2.BIN", "aicom/u3.BIN", "aicom/u4.BIN") +
+                            // the Accent-mini, built in once its voice's sources are in the tree (build_android.sh)
+                            (if (File(repoRoot, "src/csrc/accentmini/am_voice.c").isFile)
+                                listOf("aicom/SPKEMS.DVC", "licenses/MAME-8086-core-BSD-3-Clause.txt") else emptyList())) {
             check(File(stagedAssets, name).isFile) { "build/android/assets/$name is missing: run `sh build_android.sh`" }
         }
         // All-MAME 0.7: no GPL code, so nothing of 0.6's GPL staging may ride along from an older stage

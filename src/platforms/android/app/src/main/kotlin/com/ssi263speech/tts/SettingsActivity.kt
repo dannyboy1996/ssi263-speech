@@ -1,7 +1,8 @@
 // The app's screen, laid out as outspoken's: two pages behind two plain buttons (a tab bar is hard to hit on a small
-// screen, and TalkBack reads a selected/unselected button pair well).  Setup: what this is, the Braille Lite firmware
-// import, a preview, the way to the system's TTS settings, the licences and source.  Voice settings: the voice (the
-// built-in Accent SA, and the Braille Lite voices once imported) and the units' own settings.
+// screen, and TalkBack reads a selected/unselected button pair well).  Setup: what this is, the firmware import (the
+// Braille Lite's and the Speak-Out's, one button, told apart by content), a preview, the way to the system's TTS
+// settings, the licences and source.  Voice settings: the voice (the built-in Accents, and the Braille Lite voices and
+// the Speak-Out once imported) and the units' own settings -- every voice's NVDA add-on settings (Tomi, 0.7.5).
 package com.ssi263speech.tts
 
 import android.app.Activity
@@ -92,13 +93,21 @@ class SettingsActivity : Activity() {
             intent.getStringExtra("text")?.let { sampleText.setText(it) }
             speak()
         }
-        // Test hook: `--ei setvoice <n>` chooses the voice (0 Braille Lite English, 1 Spanish, 2 Accent SA; -1 forgets
-        // the choice, so the default applies), as the Voice button would; test_device_service.py puts it back after.
+        // Test hook: `--ei setvoice <n>` chooses the voice (0 Braille Lite English, 1 Spanish, 2 Accent SA, 3 Speak-Out,
+        // 4 Accent-mini; -1 forgets the choice, so the default applies), as the Voice button would;
+        // test_device_service.py puts it back after.
         intent?.takeIf { it.hasExtra("setvoice") }?.getIntExtra("setvoice", -1)?.let { v ->
             val p = SsiSettings.prefs(this).edit()
             (if (v < 0) p.remove(SsiSettings.VOICE) else p.putInt(SsiSettings.VOICE, v)).commit()
             Log.i("SsiSettings", "voice set by the test hook: $v -> ${SsiEngine.voiceFor(this, SsiSettings.snapshot(this).voice).name}")
             refreshStatus()
+        }
+        // Test hook: `--ei setrunahead <0|1>` sets the Braille Lite's run ahead, as its check box would (-1 forgets it:
+        // off, the default); test_device_service.py puts it back after.
+        intent?.takeIf { it.hasExtra("setrunahead") }?.getIntExtra("setrunahead", -1)?.let { v ->
+            val p = SsiSettings.prefs(this).edit()
+            (if (v < 0) p.remove(SsiSettings.RUN_AHEAD) else p.putBoolean(SsiSettings.RUN_AHEAD, v == 1)).commit()
+            Log.i("SsiSettings", "run ahead set by the test hook: ${SsiSettings.snapshot(this).runAhead}")
         }
         // Test hook: the TTS service through Android's client (TtsSelfTest.kt).
         if (intent?.getBooleanExtra("ttstest", false) == true) {
@@ -180,19 +189,24 @@ class SettingsActivity : Activity() {
             "inflection are its own, and nothing is recorded. They are the same voices as the NVDA add-ons, " +
             "byte for byte."))
         root.addView(ui.body(
-            "\nBuilt in: the Aicom Accent SA, a 1980s speech synthesizer. Its own 8085 firmware and dictionary ROMs " +
-            "come with this app. It speaks English, and it is the voice you hear until you import a Braille Lite."))
+            "\nBuilt in: the Aicom Accent SA, a 1980s speech synthesizer, its own 8085 firmware and dictionary ROMs " +
+            "coming with this app; and the Aicom Accent-mini, its DOS driver on an emulated PC, when this copy of the " +
+            "app carries it. They speak English, and the Accent SA is the voice you hear until you import a Braille " +
+            "Lite."))
         root.addView(ui.body(
             "\nTo add: the Blazie Braille Lite 2000 in speech-box mode, its June 2003 firmware on an emulated Z180, " +
-            "in English and Spanish."))
+            "in English and Spanish; and the GW Micro Speak-Out, its own firmware on an emulated V40, in English."))
 
-        root.addView(ui.heading("Braille Lite firmware"))
+        root.addView(ui.heading("Firmware to import"))
         root.addView(ui.body(
-            "The Braille Lite's firmware is Blazie's and cannot come with this app: import your own copy. Choose " +
-            "the Braille Lite 2000's update program (such as blt2000.exe), the BL2ENG.BNS (English) or BL2SPA.BNS " +
-            "(Spanish) inside it, a zip holding them, or the NVDA add-on (.nvda-addon), which carries both. This " +
-            "phone then prepares the unit once, as the add-on's was prepared: a few seconds for English, about a " +
-            "minute for Spanish. The files stay in this app's protected storage."))
+            "The Braille Lite's firmware is Blazie's, and the Speak-Out's GW Micro's: neither can come with this " +
+            "app, so import your own copy. One button takes either; the app tells them apart by what is in the file. " +
+            "For the Braille Lite, choose the Braille Lite 2000's update program (such as blt2000.exe), the " +
+            "BL2ENG.BNS (English) or BL2SPA.BNS (Spanish) inside it, a zip holding them, or the NVDA add-on " +
+            "(.nvda-addon), which carries both. This phone then prepares the unit once, as the add-on's was " +
+            "prepared: a few seconds for English, about a minute for Spanish. For the Speak-Out, choose GW Micro's " +
+            "SPEAKOUT.HEX, or the speakout.zip holding it; it is checked and ready in a moment. The files stay in " +
+            "this app's protected storage."))
         firmwareStatus = ui.body("")
         root.addView(firmwareStatus)
         root.addView(Button(this).apply { text = "Import firmware…"; setOnClickListener { pickFile() } })
@@ -227,15 +241,15 @@ class SettingsActivity : Activity() {
             "This app is free software under the MIT License; its emulated processors are MAME's, under their " +
             "BSD-3-Clause licenses. Its source is at github.com/tgeczy/ssi263-speech. The " +
             "Accent SA's firmware is Aicom's, carried with a notice, and is not covered by those licenses. The app " +
-            "carries no Braille Lite firmware: the copy you import is Blazie's, is not covered by them " +
-            "either, and never leaves this phone."))
+            "carries no Braille Lite or Speak-Out firmware: the copy you import is Blazie's or GW Micro's, is not " +
+            "covered by them either, and never leaves this phone."))
         root.addView(Button(this).apply { text = "Licenses and source"; setOnClickListener { showLicenses() } })
     }
 
     private fun refreshStatus() {
         val voices = SsiEngine.voices(this)
-        val labels = listOf(SsiNative.ENGLISH, SsiNative.SPANISH).mapNotNull { SsiData.label(this, it) }
-        firmwareStatus.text = if (labels.isEmpty()) "No Braille Lite firmware imported."
+        val labels = FirmwareImport.IMPORTED.mapNotNull { SsiData.label(this, it) }
+        firmwareStatus.text = if (labels.isEmpty()) "No firmware imported."
             else labels.joinToString("\n") { "$it, imported." }
         removeButton.isEnabled = labels.isNotEmpty()
         val current = SsiEngine.voiceFor(this, SsiSettings.snapshot(this).voice)
@@ -267,7 +281,7 @@ class SettingsActivity : Activity() {
         if (SsiImport.job != null) { toast("An import is already running."); return }
         importStatus.text = "Checking ${source.name}…"
         val checking = AlertDialog.Builder(this).setTitle("Checking the file")
-            .setMessage("Looking for Braille Lite firmware in ${source.name}…").setCancelable(false).create()
+            .setMessage("Looking for firmware in ${source.name}…").setCancelable(false).create()
             .also { it.show() }
         Thread({
             val plan = try { SsiImport.inspect(this, source) }
@@ -297,8 +311,12 @@ class SettingsActivity : Activity() {
     private fun confirmImport(plan: FirmwareImport.Plan, confirm: Boolean) {
         val lines = plan.found.map { f ->
             val name = FirmwareImport.languageName(f.language)
-            "Will import ${f.label} (from ${f.from}). The unit is then prepared on this phone, " +
-                (if (f.language == SsiNative.SPANISH) "which takes about a minute." else "which takes a few seconds.") +
+            "Will import ${f.label} (from ${f.from}). " +
+                (when (f.language) {
+                    SsiNative.SPANISH -> "The unit is then prepared on this phone, which takes about a minute."
+                    SsiNative.SPEAKOUT -> "It is then checked on this phone, which takes a moment."
+                    else -> "The unit is then prepared on this phone, which takes a few seconds."
+                }) +
                 (if (SsiData.has(this, f.language)) " The $name firmware already here will be replaced." else "")
         }
         val message = (lines + plan.notes).joinToString("\n\n")
@@ -399,14 +417,14 @@ class SettingsActivity : Activity() {
             PreviewPlayer.stop()
             SsiData.remove(this)
             refreshStatus()
-            importStatus.text = "The Braille Lite firmware was removed. Its voices cannot speak until it is " +
-                "imported again; the Accent SA speaks meanwhile."
+            importStatus.text = "The imported firmware was removed. The Braille Lite and Speak-Out voices cannot " +
+                "speak until it is imported again; the Accent SA speaks meanwhile."
             try { importStatus.announceForAccessibility(importStatus.text) } catch (e: Throwable) {}
         }
         if (!confirm) { remove(); return }
-        AlertDialog.Builder(this).setTitle("Remove the Braille Lite firmware?")
-            .setMessage("The Braille Lite voices cannot speak until you import the firmware again. The Accent SA " +
-                "stays.")
+        AlertDialog.Builder(this).setTitle("Remove the imported firmware?")
+            .setMessage("The Braille Lite and Speak-Out firmware goes, and their voices cannot speak until you " +
+                "import it again. The built-in Accent voices stay.")
             .setPositiveButton("Remove") { _, _ -> remove() }
             .setNegativeButton("Cancel", null).show()
     }
@@ -481,8 +499,8 @@ class SettingsActivity : Activity() {
         voiceLabel.labelFor = voiceButton!!.id
         root.addView(voiceButton)
         ui.checkBox(root, "Use selected voice in all apps", s.overrideVoice) { put(SsiSettings.OVERRIDE_VOICE, it) }
-        root.addView(ui.body("The Accent SA is always here; the Braille Lite voices join it once their firmware " +
-            "is imported on the Setup page. A screen reader asks this engine for a voice once and keeps it; with " +
+        root.addView(ui.body("The Accents are built in; the Braille Lite voices and the Speak-Out join them once " +
+            "their firmware is imported on the Setup page. A screen reader asks this engine for a voice once and keeps it; with " +
             "this on, the voice chosen here is heard straight away. A request in Spanish gets the Spanish Braille " +
             "Lite either way, when it is here."))
 
@@ -501,8 +519,8 @@ class SettingsActivity : Activity() {
         }
 
         root.addView(ui.heading("Tone"))
-        root.addView(ui.body("The Braille Lite's tone setting, 0 to 26. 7 is the factory tone. The Accent SA has " +
-            "no tone setting."))
+        root.addView(ui.body("The Braille Lite's tone setting, 0 to 26. 7 is the factory tone. The Speak-Out has " +
+            "its own, below; the Accents have none."))
         ui.slider(root, "Tone", 26, s.tone, { if (it == 7) "7, factory" else "$it" }) { put(SsiSettings.TONE, it) }
 
         root.addView(ui.heading("Volume"))
@@ -521,6 +539,11 @@ class SettingsActivity : Activity() {
         ui.checkBox(root, "Short pauses", s.shortPauses) { put(SsiSettings.SHORT_PAUSES, it) }
         root.addView(ui.body("Braille Lite only: sentences packed onto one line from the second on, as the NVDA " +
             "add-on's default."))
+        ui.checkBox(root, "Run the unit ahead (experimental: with short pauses)", s.runAhead) {
+            put(SsiSettings.RUN_AHEAD, it)
+        }
+        root.addView(ui.body("Braille Lite only, experimental and off by default, as in the NVDA add-on: the unit " +
+            "runs ahead of its speech chip, so long text starts sooner. It needs short pauses on."))
 
         ui.choice(root, "Idle sound", listOf("Off", "Hiss", "Whine"), s.whine) { put(SsiSettings.WHINE, it) }
         root.addView(ui.body("Braille Lite only: the faint sound a real unit makes under its speech, hiss at even " +
@@ -530,6 +553,15 @@ class SettingsActivity : Activity() {
             "44 kHz"), SsiSettings.SAMPLE_RATES.indexOf(s.sampleRate)) { put(SsiSettings.SAMPLE_RATE, SsiSettings.SAMPLE_RATES[it]) }
         root.addView(ui.body("Inflection, the idle sound and the sample rate restart the unit on the next " +
             "utterance, which takes a moment."))
+
+        root.addView(ui.heading("The Speak-Out"))
+        ui.slider(root, "Speak-Out tone", 25, s.soTone, { tone ->
+            "${'A' + tone}" + if (tone == SsiSettings.SO_DEFAULT_TONE) ", the box's own" else ""
+        }) { put(SsiSettings.SO_TONE, it) }
+        root.addView(ui.body("The Speak-Out's tones A to Z, as its NVDA add-on offers them; I is the box's own."))
+        ui.checkBox(root, "Join phrases (fewer pauses between words)", s.soJoin) { put(SsiSettings.SO_JOIN, it) }
+        ui.checkBox(root, "Shorten pauses between sentences", s.soShortPauses) { put(SsiSettings.SO_SHORT_PAUSES, it) }
+        root.addView(ui.body("Speak-Out only, both on by default, as in its NVDA add-on."))
     }
 
     private companion object { const val REQUEST_FIRMWARE = 42 }

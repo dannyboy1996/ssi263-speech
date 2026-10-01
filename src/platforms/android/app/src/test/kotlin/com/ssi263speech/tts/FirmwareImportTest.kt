@@ -1,10 +1,12 @@
 // FirmwareImport's layout and wording on the JVM, with no phone and no firmware: the native side's judgement is
 // played by a fake that knows a made-up image by the same signature (F3 C3 xx xx FF "COPYRIGHT") plus a letter for
-// what it is.  The real judgement (bl_firmware.c, its list of releases) has its own test, test_import_native.py, on
-// the real files.
+// what it is, and a made-up Intel HEX text (":" records) as the Speak-Out's when it says GOOD, a damaged one when not.
+// The real judgement (bl_firmware.c, its list of releases; ssa_import.c, SPEAKOUT.HEX's sha256) has its own tests,
+// test_import_native.py and test_android_native.py, on the real files.
 //     gradlew testDebugUnitTest                              every case
 //     gradlew testDebugUnitTest -Pssi263ImportBreak=1        control: the layout rules off; the layout cases fail
 //     gradlew testDebugUnitTest -Pssi263ImportBreak=state    control: a state not known as one; the state cases fail
+//     gradlew testDebugUnitTest -Pssi263ImportBreak=speakout control: the Speak-Out's HEX dropped; its cases fail
 package com.ssi263speech.tts
 
 import org.junit.Assert.assertEquals
@@ -30,6 +32,10 @@ class FirmwareImportTest {
     /** A .BNS: a loader, then the image at 3000h. */
     private fun bns(kind: Char) = ByteArray(0x3000) { 0x18 } + image(kind)
 
+    /** A made-up Intel HEX text: the Speak-Out's when it says GOOD, a damaged one when it says BAD. */
+    private fun hex(good: Boolean) = (":020000020000FC\r\n:10000000" + (if (good) "GOOD" else "BAD0") +
+        "000000000000000000000000000000\r\n:00000001FF\r\n").toByteArray()
+
     /** A made-up state: the size every state has, whatever is in it. */
     private fun state() = ByteArray(FirmwareImport.STATE_SIZE) { (it * 13).toByte() }
 
@@ -37,6 +43,12 @@ class FirmwareImportTest {
         val labels = listOf("English June 2003", "English September 2000", "Spanish September 2000")
 
         override fun firmware(data: ByteArray, out: File): Pair<Int, String> {
+            if (data.isNotEmpty() && data[0] == ':'.code.toByte()) {
+                if (!String(data, Charsets.ISO_8859_1).contains("GOOD"))
+                    return FirmwareImport.OTHER_HEX to "an Intel HEX file, but damaged: line 2's checksum or length is wrong"
+                out.writeBytes(data)
+                return FirmwareImport.SPEAKOUT to "GW Micro Speak-Out: SPEAKOUT.HEX"
+            }
             val at = (0..data.size - 15).firstOrNull { i ->
                 data[i] == 0xF3.toByte() && data[i + 1] == 0xC3.toByte() && data[i + 4] == 0xFF.toByte() &&
                     String(data, i + 5, 9, Charsets.ISO_8859_1) == "COPYRIGHT"
@@ -101,7 +113,8 @@ class FirmwareImportTest {
     @Test fun aZipWithNoFirmwareSaysSo() {
         val plan = inspect("photos.zip", zip("a.txt" to "hello".toByteArray(), "b/c.bin" to ByteArray(300)))
         assertTrue(plan.found.isEmpty())
-        assertTrue(plan.refusal!!, plan.refusal!!.startsWith("This zip does not contain Braille Lite firmware."))
+        assertTrue(plan.refusal!!, plan.refusal!!.startsWith("This zip does not contain Braille Lite or Speak-Out " +
+            "firmware."))
     }
 
     @Test fun firmwareTwoFoldersDownIsNotLookedForButNamed() {
@@ -235,5 +248,74 @@ class FirmwareImportTest {
         assertEquals("unit.dat is a state file, not firmware, and is not used: this phone prepares the unit's " +
             "state itself from the firmware.", plan.notes.single())
         assertFalse(plan.found.any { it.firmware.length() == FirmwareImport.STATE_SIZE.toLong() })
+    }
+
+    // ---- the Speak-Out: GW Micro's SPEAKOUT.HEX, by content (Tomi, 0.7.5) -----------------------------------------
+
+    @Test fun theSpeakOutHexAlone() {
+        val plan = inspect("SPEAKOUT.HEX", hex(true))
+        assertNull(plan.refusal)
+        assertEquals(listOf(FirmwareImport.SPEAKOUT), languages(plan))
+        assertEquals("GW Micro Speak-Out: SPEAKOUT.HEX", plan.found[0].label)
+        assertTrue(plan.found[0].firmware.readBytes().contentEquals(hex(true)))
+    }
+
+    @Test fun gwMicrosSpeakoutZip() {
+        val plan = inspect("speakout.zip", zip("README.TXT" to "Speak-Out update".toByteArray(),
+            "SPEAKOUT.HEX" to hex(true), "UPDATE.EXE" to "MZ".toByteArray() + ByteArray(500)))
+        assertNull(plan.refusal)
+        assertEquals(listOf(FirmwareImport.SPEAKOUT), languages(plan))
+        assertEquals("SPEAKOUT.HEX", plan.found[0].from)
+    }
+
+    @Test fun theSpeakOutHexOneFolderDown() {
+        val plan = inspect("speakout.zip", zip("speakout/SPEAKOUT.HEX" to hex(true)))
+        assertEquals(listOf(FirmwareImport.SPEAKOUT), languages(plan))
+        assertEquals("speakout/SPEAKOUT.HEX", plan.found[0].from)
+    }
+
+    @Test fun aRenamedHexIsStillTheSpeakOuts() {
+        val plan = inspect("firmware.txt", hex(true))
+        assertEquals(listOf(FirmwareImport.SPEAKOUT), languages(plan))
+    }
+
+    @Test fun bothUnitsInOneZip() {
+        val plan = inspect("units.zip", zip("blt2000/BL2ENG.BNS" to bns('E'), "speakout/SPEAKOUT.HEX" to hex(true)))
+        assertNull(plan.refusal)
+        assertEquals(listOf(FirmwareImport.ENGLISH, FirmwareImport.SPEAKOUT), languages(plan))
+    }
+
+    @Test fun aDamagedHexIsRefusedAndSaysWhy() {
+        val plan = inspect("SPEAKOUT.HEX", hex(false))
+        assertTrue(plan.found.isEmpty())
+        assertTrue(plan.refusal!!, plan.refusal!!.startsWith("SPEAKOUT.HEX is an Intel HEX file, but damaged: " +
+            "line 2's checksum or length is wrong. " + FirmwareImport.ONLY_THE_HEX))
+        assertTrue(plan.refusal!!, plan.refusal!!.endsWith(FirmwareImport.WHAT_TO_CHOOSE))
+    }
+
+    @Test fun aDamagedHexBesideFirmwareIsLeftOut() {
+        val plan = inspect("mixed.zip", zip("BL2ENG.BNS" to bns('E'), "old/SPEAKOUT.HEX" to hex(false)))
+        assertEquals(listOf(FirmwareImport.ENGLISH), languages(plan))
+        assertEquals("old/SPEAKOUT.HEX is an Intel HEX file, but damaged: line 2's checksum or length is wrong; it is " +
+            "left out.", plan.notes.single())
+    }
+
+    @Test fun aHexTwoFoldersDownIsNamed() {
+        val plan = inspect("deep.zip", zip("backup/speakout/SPEAKOUT.HEX" to hex(true)))
+        assertTrue(plan.found.isEmpty())
+        assertTrue(plan.refusal!!, plan.refusal!!.contains("backup/speakout/SPEAKOUT.HEX is deeper than that"))
+    }
+
+    @Test fun aStateBesideTheHexIsNotUsed() {
+        val plan = inspect("unit.zip", zip("SPEAKOUT.HEX" to hex(true), "unit.dat" to state()))
+        assertEquals(listOf(FirmwareImport.SPEAKOUT), languages(plan))
+        assertTrue(plan.notes.single(), plan.notes.single().startsWith("unit.dat is a state file, not firmware"))
+    }
+
+    @Test fun theWordsNameBothUnits() {
+        assertEquals("This file does not contain Braille Lite or Speak-Out firmware.", FirmwareImport.NO_FIRMWARE_FILE)
+        assertTrue(FirmwareImport.WHAT_TO_CHOOSE.contains("GW Micro's SPEAKOUT.HEX, or the speakout.zip holding it"))
+        assertEquals("This is a state file, not firmware. Please import only firmware files, or zips containing " +
+            "them, with this tool.", FirmwareImport.STATE_FILE)
     }
 }
