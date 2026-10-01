@@ -55,8 +55,8 @@ android {
         applicationId = "com.ssi263speech.tts"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.7.0"
+        versionCode = 2
+        versionName = "0.7.5"
 
         ndk {
             abiFilters += abis
