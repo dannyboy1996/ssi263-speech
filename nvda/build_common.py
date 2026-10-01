@@ -124,8 +124,11 @@ def zip_build(build, out):
     if os.path.exists(out):
         os.remove(out)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for root, _, files in os.walk(build):
+        for root, dirs, files in os.walk(build):
+            dirs[:] = [d for d in dirs if d != "__pycache__"]
             for fn in files:
+                if fn.endswith((".pyc", ".pyo")):
+                    continue
                 p = os.path.join(root, fn)
                 z.write(p, os.path.relpath(p, build))
     print("wrote %s (%.1f MB)" % (out, os.path.getsize(out) / 1e6))
