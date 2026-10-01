@@ -58,6 +58,14 @@ register-level model in `../src/csrc/ssi263.c`; nothing is recorded.
   through a fixed soft knee that keeps four in unison under 0 dBFS
   (0.7.0 divided by four, 12 dB quieter).
 
+## System requirements
+
+| OS | Runs on | Why |
+|---|---|---|
+| Windows | **Windows 10 (version 1607) or later**, x64. Not Windows 7 or 8.1: the binaries will not load there. | JUCE 8 and 9 support Windows 10 1607+ only; JUCE imports dcomp.dll, the shcore scaling API and user32's per-monitor DPI functions directly. JUCE 9 has no supported switch to lower this. |
+| macOS | **macOS 10.15 (Catalina) or later**, Apple silicon or Intel (one universal binary) | Built with `CMAKE_OSX_DEPLOYMENT_TARGET=10.15` |
+| Linux | x86-64 or arm64 with **glibc 2.38 and libstdc++ from GCC 13 or newer**: Ubuntu 24.04+, Debian 13+, Fedora 39+, Raspberry Pi OS based on Debian 13. Older systems (Debian 12, Ubuntu 22.04): build from source. | The downloads are built on GitHub's current Ubuntu runners; their binaries ask for GLIBC_2.38 and GLIBCXX_3.4.32 (checked on this build) |
+
 ## Build
 
 Full instructions per OS (Windows/MSVC, macOS/Apple clang universal,

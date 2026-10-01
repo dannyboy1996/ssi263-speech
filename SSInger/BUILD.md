@@ -17,6 +17,14 @@ runners). The workflow `.github/workflows/ssinger.yml` builds all of this on
 Windows, Linux x86-64, Linux arm64 and macOS, runs the tests and the
 validators below, and keeps the bundles as downloadable artifacts.
 
+## What the built plug-ins run on
+
+| OS | Runs on | Why |
+|---|---|---|
+| Windows | **Windows 10 (version 1607) or later**, x64. Not Windows 7 or 8.1: the binaries will not load there. | JUCE 8 and 9 support Windows 10 1607+ only; JUCE imports dcomp.dll, the shcore scaling API and user32's per-monitor DPI functions directly. JUCE 9 has no supported switch to lower this. |
+| macOS | **macOS 10.15 (Catalina) or later**, Apple silicon or Intel (one universal binary) | Built with `CMAKE_OSX_DEPLOYMENT_TARGET=10.15` |
+| Linux | x86-64 or arm64 with **glibc 2.38 and libstdc++ from GCC 13 or newer**: Ubuntu 24.04+, Debian 13+, Fedora 39+, Raspberry Pi OS based on Debian 13. Older systems (Debian 12, Ubuntu 22.04): build from source. | The downloads are built on GitHub's current Ubuntu runners; their binaries ask for GLIBC_2.38 and GLIBCXX_3.4.32 (checked on this build) |
+
 ## You need
 
 Everywhere: **CMake 3.22+** and **git**, and internet **once**: JUCE 9.0.3
@@ -25,7 +33,8 @@ and clap-juce-extensions are fetched from GitHub at configure time
 SSI-263 engine, the 6502/6850 emulator, the translator) is already in this
 repo.
 
-- **Windows 10/11**: Visual Studio 2022 or newer, or its Build Tools, with
+- **Windows 10/11** (the plug-ins run on Windows 10 1607 or later only,
+  never Windows 7 or 8.1): Visual Studio 2022 or newer, or its Build Tools, with
   the "Desktop development with C++" workload (MSVC). The plug-ins link the
   C runtime statically, so users need no Visual C++ redistributable.
 - **macOS 10.15+** to run, **Xcode 12.4+** (Apple clang) to build. Ninja
