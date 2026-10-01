@@ -22,6 +22,8 @@
  *   SSI263ShortPauses 1        sentences packed onto one line from the second on (the NVDA driver's default)
  *   SSI263RunAhead 0           1: the NVDA driver's "Run the unit ahead" (EXPERIMENTAL, off by default; with short
  *                              pauses on only, as there): blv_set_run_ahead
+ *   SSI263BrailleLiteNumbers 1 the NVDA driver's custom number processing (its default: on): numbers read as words,
+ *                              Spain's way for the Spanish unit ("1.234.567", "3,5"); 0: the firmware reads them
  *   the Accents' (the SA and the mini):
  *   SSI263AccentInflection 100 0-100, the add-on's inflection slider (100 full intonation ... 0 monotone; five steps)
  *   SSI263AccentNumbers 1      the add-on's custom number processing
@@ -170,6 +172,7 @@ static void read_config(const char *path)
         else if (!strcmp(key, "SSI263Tone")) conf.tone = atoi(val);
         else if (!strcmp(key, "SSI263ShortPauses")) conf.short_pauses = atoi(val) != 0;
         else if (!strcmp(key, "SSI263RunAhead")) conf.run_ahead = atoi(val) != 0;
+        else if (!strcmp(key, "SSI263BrailleLiteNumbers")) conf.numbers = atoi(val) != 0;
         else if (!strcmp(key, "SSI263Whine")) conf.whine = !strcmp(val, "hiss") ? 1 : !strcmp(val, "whine") ? 2 : 0;
         else if (!strcmp(key, "SSI263AccentInflection")) conf.accent_inflection = atoi(val);
         else if (!strcmp(key, "SSI263AccentNumbers")) conf.accent_numbers = atoi(val) != 0;

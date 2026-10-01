@@ -21,6 +21,16 @@ EXPERIMENTAL run ahead (SSI263RunAhead 1, blv_set_run_ahead), against a referenc
            nothing of the cancelled text
   ra_sys   the key in the module file runs ahead; ra_user0: this user's "SSI263RunAhead 0" wins over it
 
+and the Braille Lite's number words (the NVDA driver's "Custom number processing", bl_numbers through
+blv_set_numbers), against a reference with them on or off -- each reference pair must differ on the text, or the
+check could not tell; the references have them on as the module's default does:
+
+  num_dflt no key: the default is the driver's (numberWords' defaultVal and self._numbers in blazie.py, read here):
+           "1,234,567", "3.5" and "$12.50" as the reference with that setting says them
+  num_es   no key, the Spanish unit: Spain's "1.234.567" and "3,5" (tres coma cinco)
+  num_user SSI263BrailleLiteNumbers 0 in the module file, this user's 1 over it: on
+  num_off  this user's SSI263BrailleLiteNumbers 0: off -- the firmware reads the digits; num_es_off: the Spanish too
+
 The other voices (0.7.1, "every voice on Linux"), each against its own voice driven directly through the same calls
 (libsd_voices_ref.so, beside the module: the module's own engine objects, ctypes), in a session of their own:
 
@@ -40,10 +50,13 @@ one: the Braille Lite's files from <data folder>, and aicom-accent-sa/, aicom-ac
     python3 test_sd_ssi263.py <sd_ssi263> <libssi263speech.so> <data folder>
     SD_SSI263_TEST_NO_CANCEL=1 in the environment: the module leaves the unit uncancelled -- "stop" must FAIL
     SD_SSI263_TEST_IGNORE_RUN_AHEAD=1: the module drops SSI263RunAhead -- the ra_ checks must FAIL
+    SD_SSI263_TEST_IGNORE_BL_NUMBERS=1: the module drops SSI263BrailleLiteNumbers (the default reaches the unit) --
+                                        num_off and num_es_off must FAIL
     SD_SSI263_TEST_IGNORE_ACCENT_INFLECTION=1: the module drops SSI263AccentInflection -- as_infl must FAIL
 """
 import ctypes
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -64,6 +77,8 @@ lib.blv_render.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.POINTER(ctypes
 lib.blv_cancel.argtypes = [ctypes.c_void_p]
 lib.blv_destroy.argtypes = [ctypes.c_void_p]
 lib.blv_set_run_ahead.argtypes = [ctypes.c_void_p, ctypes.c_int]
+lib.blv_set_numbers.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+NUMBERS_FN = ctypes.cast(lib.bl_numbers, ctypes.c_void_p)     # bl_numbers.h: the driver's _numbers in C
 lib.blv_host.restype = ctypes.c_void_p
 lib.blv_host.argtypes = [ctypes.c_void_p]
 lib.bh_set_int.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
@@ -80,13 +95,14 @@ lib.bh_clear_writes.argtypes = [ctypes.c_void_p]
 
 # ---- the reference -----------------------------------------------------------------------------------------------
 class Ref:
-    def __init__(self, spanish=False, rate=22050, whine=0, run_ahead=0):
+    def __init__(self, spanish=False, rate=22050, whine=0, run_ahead=0, numbers=1):
         fw, st = (("BL2SPA.BNS", "bl2spa_fresh.state") if spanish else ("BL2ENG.BNS", "bl2_2003_warm.state"))
         err = ctypes.create_string_buffer(256)
         self.v = lib.blv_create(os.path.join(DATA, fw).encode(), os.path.join(DATA, st).encode(), int(spanish),
                                 float(rate), 1, whine, err, 256)
         assert self.v, err.value
         lib.blv_set_run_ahead(self.v, run_ahead)
+        lib.blv_set_numbers(self.v, NUMBERS_FN if numbers else None)
         self.host = lib.blv_host(self.v)
         lib.bh_set_int(self.host, b"log_writes", 1)    # the chip's writes, for the phonemes (nothing else changes)
         self.ctrl = 0
@@ -428,6 +444,57 @@ print("ra_sys   \"Is it ready?\": run ahead's reference %s the lockstep's" % ("d
                                                                              "is IDENTICAL to"))
 results.append(configured("ra_sys", "SSI263RunAhead 1\n", None, 22050, run_ahead=1) and ra_q != lock_q)
 results.append(configured("ra_user0", "SSI263RunAhead 1\n", "SSI263RunAhead 0\n", 22050))
+
+# ---- the Braille Lite's number words: the driver's default, the key, this user's key over the module file's -------
+def driver_numbers_default():
+    """blazie.py's: numberWords' defaultVal and self._numbers in __init__ (they must agree)."""
+    src = open(os.path.join(ROOT, "nvda", "blazie", "synthDrivers", "blazie.py"), encoding="utf-8").read()
+    setting = re.search(r'BooleanDriverSetting\("numberWords", [^\n]*?defaultVal=(True|False)\)', src).group(1)
+    init = re.search(r"^\s+self\._numbers = (True|False)\b", src, re.M).group(1)
+    assert setting == init, (setting, init)
+    return setting == "True"
+
+
+NUM_EN = "It is 1,234,567 steps, 3.5 miles and $12.50."
+NUM_ES = "Son 1.234.567 pasos y 3,5 kilos."
+SPANISH_HERE = os.path.isfile(os.path.join(DATA, "BL2SPA.BNS"))
+DRIVER_NUMBERS = driver_numbers_default()
+en_on, en_off = Ref(numbers=1).say(NUM_EN), Ref(numbers=0).say(NUM_EN)
+print("num      the driver's default: number words %s; with them the English reference %s the one without" % (
+    "on" if DRIVER_NUMBERS else "off", "differs from" if en_on != en_off else "is IDENTICAL to"))
+es_on = es_off = None
+if SPANISH_HERE:
+    es_on, es_off = Ref(spanish=True, numbers=1).say(NUM_ES), Ref(spanish=True, numbers=0).say(NUM_ES)
+    print("num      with them the Spanish reference %s the one without" % (
+        "differs from" if es_on != es_off else "is IDENTICAL to"))
+
+
+def numbers_session(conf=None, user_conf=None):
+    """NUM_EN on the English unit, and NUM_ES on the Spanish one when it is there: (English PCM, Spanish PCM)."""
+    n = Module(conf, user_conf)
+    n.send("INIT")
+    assert n.reply()[-1] == b"299 OK LOADED SUCCESSFULLY"
+    en, _ev, _b = n.speak(NUM_EN)
+    es = None
+    if SPANISH_HERE:
+        n.set(language="es")
+        es, _ev, _b = n.speak(NUM_ES)
+    n.send("QUIT")
+    n.p.wait(timeout=10)
+    return en, es
+
+
+en, es = numbers_session()
+results.append(same("num_dflt", en, en_on if DRIVER_NUMBERS else en_off) and en_on != en_off)
+if SPANISH_HERE:
+    results.append(same("num_es", es, es_on if DRIVER_NUMBERS else es_off) and es_on != es_off)
+en, es = numbers_session("SSI263BrailleLiteNumbers 0\n", "SSI263BrailleLiteNumbers 1\n")
+results.append(same("num_user", en, en_on) and en_on != en_off)
+en, es = numbers_session(None, "SSI263BrailleLiteNumbers 0\n")
+results.append(same("num_off", en, en_off) and en_on != en_off)
+if SPANISH_HERE:
+    results.append(same("num_es_off", es, es_off) and es_on != es_off)
+
 
 # ---- the other voices, each in a session of its own: speak, stop, after, set; the Braille Lite and back; language --
 def voice_session(key):

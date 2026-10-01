@@ -164,7 +164,11 @@ units, a damaged HEX alone and beside firmware, states alone, in a zip and besid
 releases.
 
 `test_android_native.py` also covers 0.7.5's voices and settings. The Braille Lite with run ahead on (its setting,
-`blv_set_run_ahead`) against bl_voice running ahead -- and its audio must not be the lockstep's. The Speak-Out
+`blv_set_run_ahead`) against bl_voice running ahead -- and its audio must not be the lockstep's. Its number words
+("Read numbers as words", on by default; `blv_set_numbers` with `bl_numbers`), on and off, each on a fresh unit:
+"1,234,567", "3.5" and "$12.50" in English, Spain's "1.234.567" and "3,5" in Spanish, against bl_voice with and
+without them from a library that has them (`build/win/<arch>/ssi263speech.dll` from `build_ssi263speech.py`, or
+`build/linux/libssi263speech.so`; the block is skipped, and said so, without it) -- on and off must differ. The Speak-Out
 (`firmware/gw-micro-speakout/SPEAKOUT.HEX`; skipped, and said so, without it) against so_voice driven directly
 (`--so-direct`: one kept unit, the settings computed in Python: the request's rate on the slider, the slider's pitch
 as the setting and the request's as a capital's offset, the tone, join and short pauses) on 14 cases: rates,
@@ -175,7 +179,8 @@ so_voice and am_voice are themselves the NVDA drivers byte for byte (`nvda/tools
 end-of-file mark, renamed, out of a `speakout.zip` like GW Micro's (its other members not firmware); a digit changed,
 the same with its checksum put right (another HEX), one cut short, a text file, all refused; `BL2ENG.BNS` still the
 Braille Lite's. Its controls: the Speak-Out's request pitch dropped (`speakout-pitch`), its own settings dropped
-(`speakout-settings`), run ahead dropped (`run-ahead`), the sha256 check dropped (`import-hash`: another HEX taken).
+(`speakout-settings`), run ahead dropped (`run-ahead`), the number words dropped (`numbers`: always off, as before),
+the sha256 check dropped (`import-hash`: another HEX taken).
 
 The Braille Lite's reference in both is the desktop library the NVDA add-on and Linux ship (`bl.dll` + `ssi263.dll`
 from `build_board.py` / `build_native.py`, or `build/linux/libssi263speech.so`), driven the way `sd_ssi263.c` maps
@@ -206,7 +211,7 @@ defaults:
 
 | Voice | Settings (Voice settings page) |
 |---|---|
-| Braille Lite | tone 0-26 (7); short pauses (on); run the unit ahead (**experimental**, off; needs short pauses), as in NVDA, SAPI and Linux; idle sound off/hiss/whine; voice inflection (on) |
+| Braille Lite | tone 0-26 (7); short pauses (on); read numbers as words (on: the driver's custom number processing, English and Spain's Spanish); run the unit ahead (**experimental**, off; needs short pauses), as in NVDA, SAPI and Linux; idle sound off/hiss/whine; voice inflection (on) |
 | Speak-Out | tone A-Z (I, the box's own); join phrases (on); shorten pauses between sentences (on) |
 | Accents | voice inflection (on: full intonation; off: monotone) |
 

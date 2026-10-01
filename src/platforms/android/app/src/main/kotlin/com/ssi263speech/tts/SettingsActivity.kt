@@ -539,6 +539,10 @@ class SettingsActivity : Activity() {
         ui.checkBox(root, "Short pauses", s.shortPauses) { put(SsiSettings.SHORT_PAUSES, it) }
         root.addView(ui.body("Braille Lite only: sentences packed onto one line from the second on, as the NVDA " +
             "add-on's default."))
+        ui.checkBox(root, "Read numbers as words", s.numbers) { put(SsiSettings.NUMBERS, it) }
+        root.addView(ui.body("Braille Lite only, on by default, as the NVDA add-on's custom number processing: " +
+            "1,234,567 as one number, read in words, and the Spanish voice in Spain's way (1.234.567, and 3,5 as " +
+            "tres coma cinco). Off, the unit's own firmware reads them. The Accents keep their own add-on's number processing on."))
         ui.checkBox(root, "Run the unit ahead (experimental: with short pauses)", s.runAhead) {
             put(SsiSettings.RUN_AHEAD, it)
         }

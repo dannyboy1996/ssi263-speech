@@ -750,10 +750,11 @@ if os.path.isfile(MAME_LIVE):
 # it on the desktop's C host (accent_reference.py), the GW Micro Speak-Out (imported; with the firmware) as so_voice
 # driven directly speaks it, and the Aicom Accent-mini (built in) as am_voice driven directly does, byte for byte; a capital's 150/120/75 % differ from 100 % (the Accent's 100 %
 # again is byte-identical); GW Micro's SPEAKOUT.HEX recognised by content, a damaged or other HEX refused (Tomi,
-# 0.7.5: every voice on Android).  Each control puts one bug back and must show it: the request's rate dropped; the
-# request's pitch dropped; the pitch glided to (no snap_pitch); one Accent unit kept across utterances; the plain pitch
-# mapping (120 % on 100 %'s step); the Speak-Out's request pitch dropped; its own settings dropped; run ahead dropped;
-# the import's sha256 dropped.
+# 0.7.5: every voice on Android); the Braille Lite's number words on and off, English and Spain's Spanish, as bl_voice
+# with bl_numbers in ssi263speech.dll speaks them (Tomi, 0.7.5 uniform).  Each control puts one bug back and must show
+# it: the request's rate dropped; the request's pitch dropped; the pitch glided to (no snap_pitch); one Accent unit kept
+# across utterances; the plain pitch mapping (120 % on 100 %'s step); the Speak-Out's request pitch dropped; its own
+# settings dropped; run ahead dropped; the number words dropped; the import's sha256 dropped.
 # The default volume keeps headroom for both voices (Tomi: under TalkBack's sounds at the desktop level), with a
 # control per voice.  The APK's firmware check, on an APK-like zip made here: only Aicom's three ROMs pass, by sha256;
 # a Blazie image beside them, the Speak-Out's HEX and a changed Aicom ROM must each fail.
@@ -763,6 +764,9 @@ if os.path.isfile(ANDROID_TEST):
     ANDROID_FW = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware")
     ANDROID_SO = os.path.isfile(os.path.join(ANDROID_FW, "gw-micro-speakout", "SPEAKOUT.HEX"))
     ANDROID_MINI = os.path.isfile(os.path.join(ANDROID_FW, "aicom-accent-mini", "SPKEMS.DVC"))
+    # the number words' reference (bl.dll has none): ssi263speech.dll, src/csrc/build_ssi263speech.py
+    ANDROID_NUM = os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(HERE)), "build", "win",
+                                              "x64" if sys.maxsize > 2 ** 32 else "x86", "ssi263speech.dll"))
     CHECKS.append(check("Android engine: native part as bl.dll, the NVDA Accent driver, so_voice and am_voice",
                         [PY, ANDROID_TEST]))
     for brk, what, marks in (
@@ -785,6 +789,10 @@ if os.path.isfile(ANDROID_TEST):
             ("run-ahead", "Braille Lite: run ahead dropped",
              [r"^FAIL +desktop +ra-default +got ", r"^FAIL +desktop +ra-default differs from default",
               r"^ok +desktop +default ", r"^FAILED: 5 case\(s\) differ$"])) + ((
+            ("numbers", "Braille Lite: number words dropped",
+             [r"^FAIL +desktop +num-en +got ", r"^FAIL +desktop +num-es +got ", r"^ok +desktop +num-en-off ",
+              r"^FAIL +desktop +num-en differs from num-en-off", r"^FAILED: 4 case\(s\) differ$"]),) if ANDROID_NUM
+            else ()) + ((
             ("speakout-pitch", "Speak-Out: the request's pitch dropped",
              [r"^FAIL +desktop +s-pitch-150 +got ", r"^ok +desktop +s-pitch-100 ", r"^FAILED: 7 case\(s\) differ$"]),
             ("speakout-settings", "Speak-Out: tone, join and short pauses dropped",
@@ -793,8 +801,8 @@ if os.path.isfile(ANDROID_TEST):
              [r"^FAIL +import +another HEX ", r"^ok +import +a HEX with one digit changed",
               r"^FAILED: 1 case\(s\) differ$"])) if ANDROID_SO else ()):
         # each control runs the blocks its bug touches (SSI263_ANDROID_TEST_ONLY), not all five voices: the gate's time
-        only = {"1": "bl,accent", "accent-pitch": "accent,mini", "run-ahead": "bl,ra", "speakout-pitch": "so",
-                "speakout-settings": "so", "import-hash": "import"}.get(brk, "accent")
+        only = {"1": "bl,accent", "accent-pitch": "accent,mini", "run-ahead": "bl,ra", "numbers": "num",
+                "speakout-pitch": "so", "speakout-settings": "so", "import-hash": "import"}.get(brk, "accent")
         CHECKS.append(check("Android engine CONTROL (%s, must fail)" % what, [PY, ANDROID_TEST],
                             env={"SSI263_ANDROID_TEST_BREAK": brk, "SSI263_ANDROID_TEST_ONLY": only}, expect_fail=True,
                             fail_marks=marks))

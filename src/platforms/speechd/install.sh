@@ -106,7 +106,7 @@ Try it:
     spd-say -o ssi263 -y "Accent SA" "Hello from the Accent"
     spd-say -o ssi263 -L          (the voices)
 In Orca: Preferences, Speech, Speech synthesizer: ssi263, then the voice.
-Settings (sample rate; the Braille Lite's inflection, hiss, tone, run ahead; the Accents' inflection; the Speak-Out's
-tone) are explained in $MODCONF/ssi263.conf; your own copy of any line in ~/.config/ssi263-speech/sd_ssi263.conf wins
+Settings (sample rate; the Braille Lite's inflection, hiss, tone, number words, run ahead; the Accents' inflection;
+the Speak-Out's tone) are explained in $MODCONF/ssi263.conf; your own copy of any line in ~/.config/ssi263-speech/sd_ssi263.conf wins
 over it.
 EOF
