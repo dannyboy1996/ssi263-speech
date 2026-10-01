@@ -93,14 +93,16 @@ CHECKS.append(check("complete_fuzz, forged dones (owned rule)", [PY, "complete_f
 CHECKS.append(check("driver_sim CONTROL (stale done, must fail)", [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"],
                     env={"DRIVER_SIM_STALE": "1"}, expect_fail=True,
                     fail_marks=[r"^sample rate: .*11025 0\.00 s rms 0.*: FAILED$", r"^speakout rt: .*all ok False"]))
-# the Accent-mini on MAME's 8086 core (opt-in; not gated before Reply 104 because the old rule failed it on seed 3)
+# the Accent-mini on MAME's 8086 core (its default since 0.7, named here explicitly; not gated before Reply 104
+# because the old rule failed it on seed 3)
 PC86_FUZZ = os.path.join(os.path.dirname(HERE), "dist", "blazie-lib", "x64", "pc86.dll")
 if os.path.isfile(PC86_FUZZ):
     CHECKS.append(check("complete_fuzz accent on the MAME 8086 core", [PY, "complete_fuzz.py", "150", "3"],
                         env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "accent", "SSI263_ACCENT_CORE": "mame",
                              "SSI263_PC86_DLL": PC86_FUZZ}))
-# the premature completion replayed from a caught live session (complete_fuzz seed 4): the cut line must be spoken
-# whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
+# the premature completion replayed (complete_fuzz seed 4's miscount; on MAME the seed-4 record no longer makes it, so
+# the replay is golden/premature_history_mame.jsonl, the same miscount found on MAME: premature_record.py): the cut
+# line must be spoken whole on both hosts; with 0.6.0's busy() put back it must end at its comma again
 CHECKS.append(check("premature completion replay", [PY, "premature_replay.py"]))
 CHECKS.append(check("premature completion replay CONTROL (0.6.0 busy, must be cut)", [PY, "premature_replay.py"],
                     env={"PREMATURE_REPLAY_OLD": "1"}, expect_fail=True,
@@ -149,8 +151,11 @@ if os.path.isfile(os.path.join(LIB, "bl_live.exe")):
     CHECKS.append(check("library board: two units in one process", [os.path.join(LIB, "test_bl_board.exe"),
                         os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state"),
                         os.path.join(ENG, "BL2SPA.BNS"), os.path.join(ENG, "bl2spa_fresh.state")]))
-    # CONTRACT.md 3: the legacy path's own exceptions (src/csrc/cpu/test_z180_legacy.c)
-    CHECKS.append(check("z180emu legacy path: its exceptions", [os.path.join(LIB, "test_z180_legacy.exe")]))
+    # CONTRACT.md 3: the legacy path's own exceptions (src/csrc/cpu/test_z180_legacy.c) -- a development reference
+    # since 0.7, built only by build_board.py --legacy-tests (with a z180emu checkout): run when it is there
+    if os.path.isfile(os.path.join(LIB, "test_z180_legacy.exe")):
+        CHECKS.append(check("z180emu legacy path: its exceptions (development reference)",
+                            [os.path.join(LIB, "test_z180_legacy.exe")]))
 # the Blazie emulator app (src/apps/blazie): its chord logic, and the unit headless (boot greeting heard, a chord
 # answered against the no-chord control, faster than real time)
 EMU = os.path.join(os.path.dirname(HERE), "dist", "blazie-emu")
@@ -354,7 +359,9 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
              [r"^FAIL case 1 block 1: write values DIFFER at write \d+$",
               r"^FAIL 1\.1 Hello\. +REPLAY DIFFERS FROM CAPTURE", RA_SUM % 2]),
             ("left off, the head", {"RUN_AHEAD_EQUIV_OFF": "1"}, ["--quick"],
-             [r"^FAIL 1\.3 Select synthesizer dialog +head 123\.0 -> 123\.0 ms", RA_SUM % 3]),
+             # left off, "run ahead" is the lockstep: its head the same, over the 100 ms limit (MAME: 120.8 ms; the
+             # z180emu core's was 123.0)
+             [r"^FAIL 1\.3 Select synthesizer dialog +head (1\d\d\.\d) -> \1 ms", RA_SUM % 3]),
             ("busy never false", {"RUN_AHEAD_EQUIV_NEVER": "1", "RUN_AHEAD_EQUIV_SAY_LIMIT": "3"}, ["--cases=1"],
              [r"^FAIL 1\.1 Hello\. +NEVER DONE \(run ahead, 3 s\)$", RA_SUM % 3]),
             ("audio silenced", {"RUN_AHEAD_EQUIV_MUTE": "1"}, ["--cases=1"],
@@ -411,7 +418,8 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                                     r"^run ahead state \(English\): 1 FAILED$"]))
     CHECKS.append(check("run ahead state CONTROL (the cancel's leak put back, must fail)",
                         [PY, "run_ahead_state.py"], env={"RUN_AHEAD_STATE_BREAK": "settle"}, expect_fail=True,
-                        fail_marks=[r"^FAIL respoken .*writes DIFFER at 12 of 175/181",
+                        fail_marks=[r"^FAIL cancelled .*FINDING: RAM 4 cells beyond timing's: 433AB 0D/61 433AC FF/61 ",
+                                    r"^FAIL respoken .*writes DIFFER at 12 of 175/181",
                                     r"^run ahead state \(English\): \d+ FAILED$"]))
     # a cancel, then at once a new say (run_ahead_cancel.py): the new utterance begins with its own phonemes, over
     # sweeps of the cancel time (with and without history, and in the driver's 30 ms blocks); the lockstep's own rarer
@@ -421,17 +429,30 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                             [PY, "run_ahead_cancel.py"] + lang))
     CHECKS.append(check("run ahead cancel CONTROL (the leak put back, must fail)", [PY, "run_ahead_cancel.py", "--quick"],
                         env={"RUN_AHEAD_CANCEL_BREAK": "settle"}, expect_fail=True,
-                        fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
+                        # on MAME 2 of 25 (the z180emu core's: 4): 0.50 s led by the resumed copier's "A" (10),
+                        # 0.80 s by "And a t", the copy gone on (12 56 37 8 2 54)
+                        fail_marks=[r"^FAIL state history, rate 14: run ahead 2 of 25 led by other phonemes; 0\.50 s: "
+                                    r"\[10, 29, 10, .*; 0\.80 s: \[12, 56, 37, 8, 2, 54\]",
                                     r"^run ahead cancel \(English\): 1 FAILED$"]))
-    # the DEFAULT lockstep's own, rarer cancel race (lockstep_cancel.py; Astra, Reply 112 item 3, Reply 114): its two
-    # retained leaks reproduced exactly by the default (unchanged), and cleared by the opt-in prototype (cancel_settle
-    # 3: settle and A/R hold); its control tests the settle alone, which leaves the 1.040 s leak
-    CHECKS.append(check("lockstep cancel race: retained by the default, cleared by the opt-in prototype",
-                        [PY, "lockstep_cancel.py"]))
+    # the lockstep's own cancel race (lockstep_cancel.py; Astra, Reply 112 item 3, Replies 114 and 124-129): the
+    # shipping default (bl_host.c cancel_settle 3: settle, then A/R held over ^X) must respeak cleanly at all 8 MAME
+    # leak times retained from Astra's sweep; its controls put the race back through the host's override
+    # (SSI263_BLAZIE_CANCEL_SETTLE): 0 must bring back all 8 leaks exactly (phonemes and line buffer), the settle
+    # alone (1) the two copier-resumed ones it cannot clear
+    CHECKS.append(check("lockstep cancel race: the default clean at every retained leak", [PY, "lockstep_cancel.py"]))
+    LC_SUM = r"^lockstep cancel race \(English, cancel_settle %d, SSI263_BLAZIE_CANCEL_SETTLE=%d; .*\): %d of 10 FAILED$"
+    CHECKS.append(check("lockstep cancel race CONTROL (cancel_settle 0, the race put back, must fail)",
+                        [PY, "lockstep_cancel.py"], env={"SSI263_BLAZIE_CANCEL_SETTLE": "0"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.0380 s, cancel_settle 0 .*led by \[10\]; .* the retained leak, exactly$",
+                                    r"^FAIL 1\.0410 s, cancel_settle 0 .*begins \[7, 28, 10, 48\] .* the retained leak, "
+                                    r"exactly$",
+                                    r"^FAIL 1\.0480 s, cancel_settle 0 .*led by \[12, 56, 37, 8, 2\]; .* the retained "
+                                    r"leak, exactly$", LC_SUM % (0, 0, 8)]))
     CHECKS.append(check("lockstep cancel race CONTROL (the settle alone, must fail)", [PY, "lockstep_cancel.py"],
-                        env={"LOCKSTEP_CANCEL_PROTO": "1"}, expect_fail=True,
-                        fail_marks=[r"^FAIL 1\.040 s, cancel_settle 1 \(the prototype clears it\): the respoken text "
-                                    r"led by \[10\]", r"^lockstep cancel race \(English, .*\): 1 FAILED$"]))
+                        env={"SSI263_BLAZIE_CANCEL_SETTLE": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.0380 s, cancel_settle 1 .*led by \[10\]; .* the retained leak, exactly$",
+                                    r"^FAIL 1\.0385 s, cancel_settle 1 .*led by \[56\]; .* the retained leak, exactly$",
+                                    r"^ok +1\.0480 s, cancel_settle 1 ", LC_SUM % (1, 1, 2)]))
     # faults are never silent (run_ahead_fault.py; Astra, Reply 112 item 2): a run-ahead capture failing mid-utterance
     # with a say or a setting waiting, or at its start with a second say at once (her error_priority_probe.c: busy 1
     # with input held), a board event, a transmitted byte and a logged write lost -- each seen first
@@ -459,8 +480,9 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                             [PY, "run_ahead_driver.py"], env={"RUN_AHEAD_DRIVER_BREAK": "nocancel"}, expect_fail=True,
                             fail_marks=[r"^FAIL Tab every 30 ms: .* [1-9]\d* led by anything but their own label",
                                         r"^run ahead through the driver, Run dialog \(run ahead\): 2 FAILED$"]))
-# MAME's Z180 core (src/csrc/cpu/z180_mame.cpp, not yet accepted): the same spoken values as the goldens -- its
-# timing legitimately differs (src/csrc/cpu/README.md) -- and two units in one process
+# MAME's Z180 core (src/csrc/cpu/z180_mame.cpp; the shipped core since 0.7, bl_live.exe and bl.dll are built on it):
+# the same spoken values as the goldens -- its timing legitimately differs (src/csrc/cpu/README.md) -- and two units
+# in one process
 MAME_LIVE = os.path.join(LIB, "bl_live_mame.exe")
 if os.path.isfile(MAME_LIVE):
     for lang in ("en", "es"):
@@ -575,13 +597,13 @@ if os.path.isfile(IMPORT_TEST):
 # (src/csrc/cpu/test_i8085_contract.c; its must-fail controls: cpu/i8085_controls.py)
 if os.path.isfile(os.path.join(LIB, "test_i8085_contract.exe")):
     CHECKS.append(check("MAME 8085 core: CPU contract tests", [os.path.join(LIB, "test_i8085_contract.exe")]))
-# MAME's V40 core (the Speak-Out's, src/csrc/cpu/v40_mame.cpp) and the Speak-Out board on it (src/csrc/speakout): opt-in,
-# not yet accepted (the add-on keeps Unicorn).  The contract's clauses, the board's own rules, and, with the firmware,
-# the board against today's Unicorn host (speakout_core_compare.py: steps coupled as Unicorn's instructions, every write
-# identical -- the migration candidate; clocks at 8 MHz, experimental: a speed grade, not a measured clock -- the
-# speech frames identical, the times classified) with its must-fail control, and the
-# driver on the MAME core: the candidate mame-steps gated, mame a smoke test (Astra, Reply 105).  Built by
-# src/csrc/speakout/build_board.py.
+# MAME's V40 core (the Speak-Out's, src/csrc/cpu/v40_mame.cpp) and the Speak-Out board on it (src/csrc/speakout): the
+# add-on's default since 0.7 (mame-steps).  The contract's clauses, the board's own rules, and, with the firmware,
+# the board against the old Unicorn host, selected explicitly as a development reference (speakout_core_compare.py:
+# steps coupled as Unicorn's instructions, every write identical -- the shipped mame-steps; clocks at 8 MHz,
+# experimental: a speed grade, not a measured clock -- the speech frames identical, the times classified) with its
+# must-fail control, and the driver on the MAME core: mame-steps gated, mame a smoke test (Astra, Reply 105).  Built
+# by src/csrc/speakout/build_board.py.
 SO_LIB = os.path.join(os.path.dirname(HERE), "dist", "speakout-lib")
 if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
     CHECKS.append(check("MAME V40 core: CPU contract tests", [os.path.join(SO_LIB, "test_v40_contract.exe")]))
@@ -594,24 +616,14 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
                             fail_marks=[r"^mame-steps: write values DIFFER from Unicorn's at write \d+ of",
                                         r"^  utterance 1: speech frames DIFFER at frame \d+",
                                         r"^speakout cores: 2 FAILED$"]))
-        # the gates run the migration candidate, mame-steps (Astra, Reply 105); mame (8 MHz clocks) is a labelled
-        # experimental smoke test only -- passing it is not passing the candidate
-        CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame-steps, the candidate)",
-                            [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"],
-                            env={"SSI263_SPEAKOUT_CORE": "mame-steps"}))
-        if os.path.isfile(PY37) and os.path.isdir(os.path.join(WIN7, "nvda2023app")):      # the x86 DLL
-            CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame-steps, nvda2023app, 32-bit)",
-                                [PY37, "run37.py", "../driver_sim.py", "speakout", "nvda2023app", "rt"],
-                                env={"NVDA_APP": "nvda2023app", "SSI263_SPEAKOUT_CORE": "mame-steps"}, cwd=WIN7))
-        CHECKS.append(check("complete_fuzz speakout on the MAME V40 core (mame-steps, the candidate)",
-                            [PY, "complete_fuzz.py", "150", "1"],
-                            env={"SIM_SPEED": "10", "COMPLETE_FUZZ_SYNTH": "speakout",
-                                 "SSI263_SPEAKOUT_CORE": "mame-steps"}))
+        # mame-steps is the default since 0.7: the plain driver_sim speakout checks (64- and 32-bit) and complete_fuzz
+        # speakout above gate it (their explicit mame-steps copies here are gone).  mame (8 MHz clocks) stays a
+        # labelled experimental smoke test only
         CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame at 8 MHz: experimental smoke test)",
                             [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
 
-# The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; opt-in,
-# SSI263_ACCENT_SA_CORE=c, the add-on keeps the Python 8085): the board's rules (test_as_board.c; their must-fail
+# The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; the add-on's default since
+# 0.7, SSI263_ACCENT_SA_CORE=c; the Python 8085 is the development reference): the board's rules (test_as_board.c; their must-fail
 # controls, seventeen builds, are accentsa/as_controls.py's, run by hand as so_controls.py); the C host against the
 # Python host (compare_accent_sa.py --quick: every write's value and chip time, the audio and the counting events
 # identical) with two controls, one value flipped and the core's own counting (writes identical, the counting
@@ -647,7 +659,8 @@ if os.path.isfile(os.path.join(ASA_LIB, "test_as_board.exe")):
                                 [PY37, "run37.py", "../driver_sim.py", "accentsa", "nvda2023app", "rt-c"],
                                 env={"NVDA_APP": "nvda2023app", "SSI263_ACCENT_SA_CORE": "c"}, cwd=WIN7))
 
-# MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; opt-in, Unicorn stays the default): CONTRACT.md's
+# MAME's 8086 core (the Accent-mini's PC, src/csrc/cpu/i86_mame.cpp; the default since 0.7, Unicorn the development
+# reference, selected explicitly by compare_i86_accent.py): CONTRACT.md's
 # clauses (test_i86_contract.c; its must-fail controls: cpu/i86_controls.py); the Accent-mini's scripted scenarios on
 # both CPUs, every promised invariant identical -- write values and times, audio, registers, FLAGS by its policy
 # (Reply 106), host log, memory after INIT but for its allow-list, INIT snapshots (cpu/compare_i86_accent.py) -- with
