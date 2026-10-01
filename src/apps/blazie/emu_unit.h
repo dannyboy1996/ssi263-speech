@@ -20,8 +20,8 @@ typedef struct emu_unit emu_unit;
 enum { EMU_BRAILLE_LITE, EMU_TYPE_N_SPEAK };
 
 /* firmware: a .BNS (Braille Lite) or .TNS (Type 'n Speak) update file; state: its saved memory (for the Braille
-   Lite required -- bl2_2003_warm.state; for the Type 'n Speak NULL = a cold start, which asks to initialise the
-   flash).  whine: 0 off, 1 hiss, 2 whine (the Braille Lite's idle channel noise).  NULL on failure, the reason in
+   Lite required -- bl2_2003_warm.state; for the Type 'n Speak NULL = a cold start: the unit's cold reset,
+   which asks to set up its file system, flash and folders, tns_setup.h).  whine: 0 off, 1 hiss, 2 whine (the Braille Lite's idle channel noise).  NULL on failure, the reason in
    err. */
 emu_unit *emu_create(int kind, const char *firmware, const char *state, double out_rate, int whine, char *err,
                      int errlen);

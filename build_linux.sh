@@ -68,17 +68,29 @@ APP="$ROOT/src/apps/blazie"
 APPF="-O2 -std=gnu99 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -I$APP -I$SRC -fmacro-prefix-map=$ROOT=."
 rm -rf "$OUT/obj_emu" "$OUT/blazie_emu"; mkdir -p "$OUT/obj_emu"
 $CC $BOARD -c -o "$OUT/obj_emu/tns_board.o" "$SRC/blazie/tns_board.c"
-for f in emu_unit chords keys term_keys bl_keys tns_term ini; do
+for f in emu_unit chords keys term_keys bl_keys tns_term ini tns_setup tns_rescue; do
     $CC $APPF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
 done
+# the units' files (src/csrc/blazie/bl_files*.c, fat_img.c: portable C99, no unit runs)
+for f in bl_files bl_files_state bl_files_xfer fat_img; do
+    $CC $APPF -c -o "$OUT/obj_emu/$f.o" "$SRC/blazie/$f.c"
+done
+FILES_OBJS="$OUT/obj_emu/bl_files.o $OUT/obj_emu/bl_files_state.o $OUT/obj_emu/bl_files_xfer.o $OUT/obj_emu/fat_img.o"
 KEY_OBJS="$OUT/obj_emu/chords.o $OUT/obj_emu/keys.o $OUT/obj_emu/term_keys.o $OUT/obj_emu/bl_keys.o $OUT/obj_emu/tns_term.o $OUT/obj_emu/ini.o"
-EMU_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj_emu/tns_board.o $OUT/obj_emu/emu_unit.o"
+# the unit, and the Type 'n Speak's factory setup (its cold reset's questions answered: the tests, the rescue)
+EMU_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj_emu/tns_board.o $OUT/obj_emu/emu_unit.o $OUT/obj_emu/tns_setup.o"
+# a saved Type 'n Speak that was never set up (the previews' first start), told apart and set up anew
+RESCUE_OBJS="$OUT/obj_emu/tns_rescue.o $OUT/obj_emu/bl_files.o $OUT/obj_emu/bl_files_state.o"
 $CC $APPF -o "$OUT/test_keys" "$APP/test_keys.c" $KEY_OBJS
-# the unit's own headless tests, as on Windows (build_app.py's test_emu_unit, test_clock), on MAME's Z180
+# blazie_files: a saved unit's files from the command line (export, import, extract, pack, unpack), as on Windows
+$CC $APPF -o "$OUT/blazie_files" "$APP/blazie_files.c" $FILES_OBJS
+# the unit's own headless tests, as on Windows (build_app.py's test_emu_unit, test_clock, test_rescue), on MAME's Z180
 $CC $APPF -c -o "$OUT/obj_emu/test_emu_unit.o" "$APP/test_emu_unit.c"
 $CXX $SHARED_CXX -o "$OUT/test_emu_unit" "$OUT/obj_emu/test_emu_unit.o" $EMU_OBJS -lm
 $CC $APPF -c -o "$OUT/obj_emu/test_clock.o" "$APP/test_clock.c"
 $CXX $SHARED_CXX -o "$OUT/test_clock" "$OUT/obj_emu/test_clock.o" $EMU_OBJS -lm
+$CC $APPF -c -o "$OUT/obj_emu/test_rescue.o" "$APP/test_rescue.c"
+$CXX $SHARED_CXX -o "$OUT/test_rescue" "$OUT/obj_emu/test_rescue.o" $RESCUE_OBJS $EMU_OBJS -lm
 AUDIO_DEF=""; AUDIO_LIBS=""; SOUND=""
 if [ "${BLAZIE_AUDIO:-alsa}" != pulse ] && pkg-config --exists alsa 2>/dev/null; then
     AUDIO_LIBS="$(pkg-config --libs alsa)"; SOUND=ALSA
@@ -90,7 +102,8 @@ if [ -n "$AUDIO_LIBS" ]; then
         $CC $APPF $AUDIO_DEF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
     done
     $CXX $SHARED_CXX -o "$OUT/blazie_emu" "$OUT/obj_emu/main_linux.o" "$OUT/obj_emu/audio_linux.o" \
-        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $EMU_OBJS $AUDIO_LIBS -lpthread -lm
+        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS $EMU_OBJS $AUDIO_LIBS \
+        -lpthread -lm
     echo "built $OUT/blazie_emu (sound: $SOUND)"
 else
     echo "NOT built: blazie_emu -- no ALSA (sudo apt install libasound2-dev) nor PulseAudio (libpulse-dev) headers"

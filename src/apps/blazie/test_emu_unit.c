@@ -2,7 +2,9 @@
  * the same run without the chord stays quiet there: the control), and it renders faster than real time.
  *
  *   test_emu_unit bl FIRMWARE STATE     the Braille Lite (a chord: dot 1)
- *   test_emu_unit tns FIRMWARE -        the Type 'n Speak from cold (its question, then y answered: "are you sure?")
+ *   test_emu_unit tns FIRMWARE -        the Type 'n Speak from cold (its cold reset's first question, then y
+ *                                       answered: "are you sure?"); its key latency and options menu from its
+ *                                       factory setup (tns_setup.h)
  * (run_tests passes the source tree's firmware/blazie files)
  */
 #include <math.h>
@@ -17,6 +19,7 @@
 #define _getpid getpid
 #endif
 #include "emu_unit.h"
+#include "tns_setup.h"
 
 #define RATE 44100
 
@@ -84,8 +87,9 @@ static void check(const char *name, int ok, const char *detail)
     failures += !ok;
 }
 
-/* chip ms from a key at 8 s (the greeting over; the Type 'n Speak 12 s) to the first audible sample, in the app's 10 ms blocks; -1: none in
-   1.5 s.  TEST_EMU_QUICK_BREAK=1 never switches quick response on (the control: the quick check must fail). */
+/* chip ms from a key at 8 s (the greeting over) to the first audible sample, in the app's 10 ms blocks; -1: none in
+   1.5 s.  TEST_EMU_QUICK_BREAK=1 never switches quick response on (the control: the quick check must fail).  The
+   Type 'n Speak from its factory setup (in its main menu, as the Braille Lite from its state). */
 static double key_latency(const char *fw, const char *st, int quick)
 {
     char err[256];
@@ -93,7 +97,7 @@ static double key_latency(const char *fw, const char *st, int quick)
     int block = RATE / 100, i, j;
     short buf[RATE / 100];
     double t0 = -1, found = -1;
-    int at = g_kind == EMU_TYPE_N_SPEAK ? 1200 : 800;   /* the Type 'n Speak's answers to y, y are over by 12 s */
+    int at = 800;
     if (!u) {
         printf("FAIL create: %s\n", err);
         exit(1);
@@ -108,10 +112,6 @@ static double key_latency(const char *fw, const char *st, int quick)
                 emu_key(u, 0x14);           /* a up */
             } else
                 emu_key(u, 0x01);
-        }
-        if (g_kind == EMU_TYPE_N_SPEAK && (i == 300 || i == 600)) {   /* the cold start's question: y, y */
-            emu_key(u, 0xBD);
-            emu_key(u, 0x3D);
         }
         emu_render(u, buf, block);
         if (t0 >= 0)
@@ -128,8 +128,9 @@ static double key_latency(const char *fw, const char *st, int quick)
 int main(int argc, char **argv)
 {
     char d[200];
+    static char ready_path[64];
     double greet, with_key, without, secs;
-    const char *fw, *st;
+    const char *fw, *st, *ready;
     if (argc < 4) {
         printf("usage: test_emu_unit bl|tns FIRMWARE STATE|-\n");
         return 2;
@@ -137,10 +138,21 @@ int main(int argc, char **argv)
     g_kind = !strcmp(argv[1], "tns") ? EMU_TYPE_N_SPEAK : EMU_BRAILLE_LITE;
     fw = argv[2];
     st = strcmp(argv[3], "-") ? argv[3] : NULL;
-    greet = run(fw, st, 0, 0, 0.0, 6.0, NULL);         /* the Type 'n Speak's cold question comes after its reset */
+    ready = st;
+    if (g_kind == EMU_TYPE_N_SPEAK && !st) {   /* the Type 'n Speak in its main menu: its factory setup, saved */
+        char err[256];
+        snprintf(ready_path, sizeof ready_path, "test_emu_unit.%d.ready.state", (int)_getpid());
+        if (!tns_factory_setup(fw, ready_path, err, sizeof err)) {
+            printf("FAIL factory setup: %s\n", err);
+            return 1;
+        }
+        ready = ready_path;
+    }
+    greet = run(fw, st, 0, 0, 0.0, 6.0, NULL);         /* the Type 'n Speak's cold reset: its first question */
     snprintf(d, sizeof d, "rms %.4f over the first 6 s", greet);
     check("boot greeting", greet > 0.01, d);
-    /* the greeting (or the cold question) is over by ~7 s; a key at 8 s against none */
+    /* the greeting (or the cold reset's first question) is over by ~7 s; a key at 8 s (y: "are you sure?") against
+       none */
     with_key = run(fw, st, 1, 8.0, 8.0, 10.0, &secs);
     without = run(fw, st, 0, 8.0, 8.0, 10.0, NULL);
     snprintf(d, sizeof d, "8-10 s: rms %.4f with the chord, %.4f without (the control)", with_key, without);
@@ -150,7 +162,7 @@ int main(int argc, char **argv)
     {   /* key to first sound, in chip time: the firmware's own pace (the English Braille Lite ~283 ms, the Spanish
            ~107, the Type 'n Speak ~242: the unit's work before it speaks), which the host must not lengthen; and with
            quick key response the words come sooner */
-        double slow = key_latency(fw, st, 0), fast = key_latency(fw, st, 1);
+        double slow = key_latency(fw, ready, 0), fast = key_latency(fw, ready, 1);
         snprintf(d, sizeof d, "key to first sound %.1f ms of chip time (at most 320: the firmware's own)", slow);
         check("key latency", slow > 0 && slow <= 320.0, d);
         snprintf(d, sizeof d, "key to first sound %.1f ms with quick key response, %.1f ms without", fast, slow);
@@ -184,17 +196,17 @@ int main(int argc, char **argv)
         remove(path);
         free(buf);
     }
-    if (g_kind == EMU_TYPE_N_SPEAK && !st) {  /* the options menu (F9), up arrow -- it polls the 8255's port B for the
-                                                 chip's A/R; answered FFh it hung -- then escape must be answered */
+    if (g_kind == EMU_TYPE_N_SPEAK) {  /* the options menu (F9), up arrow -- it polls the 8255's port B for the
+                                          chip's A/R; answered FFh it hung -- then escape must be answered */
         char err[256];
-        emu_unit *u = make(fw, NULL, err, sizeof err);
+        emu_unit *u = make(fw, ready, err, sizeof err);
         static const struct { double t; int down, up; } keys[] = {
-            {3.0, 0xBD, 0x3D}, {6.0, 0xBD, 0x3D}, {12.0, 0xC6, 0x46}, {15.0, 0xDA, 0x5A}, {18.0, 0x89, 0x09}};
+            {12.0, 0xC6, 0x46}, {15.0, 0xDA, 0x5A}, {18.0, 0x89, 0x09}};
         int n = 21 * RATE, i, k, block = RATE / 50;
         short *buf = (short *)calloc((size_t)n, sizeof(short));
         double after;
         for (i = 0; i < n; i += block) {
-            for (k = 0; k < 5; k++)
+            for (k = 0; k < 3; k++)
                 if (i == (int)(keys[k].t * RATE)) {
                     emu_key(u, keys[k].down);
                     emu_key(u, keys[k].up);
@@ -226,6 +238,8 @@ int main(int argc, char **argv)
         free(buf);
         emu_destroy(u);
     }
+    if (ready == ready_path)
+        remove(ready_path);
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

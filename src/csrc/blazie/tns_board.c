@@ -18,6 +18,8 @@
 #define CLOCK_HZ 6144000.0
 #define KEYQ 64
 
+int tns_cold_break;
+
 struct tns_unit {
     unsigned char *ram, *fdata;
     unsigned long image_len;
@@ -193,6 +195,19 @@ static long image_offset(const unsigned char *d, long n)
     return -1;
 }
 
+long tns_program_end(const char *firmware)
+{
+    unsigned char *file = (unsigned char *)malloc(0x100000);
+    FILE *f = file ? fopen(firmware, "rb") : NULL;
+    long n, off;
+    if (!f) { free(file); return -1; }
+    n = (long)fread(file, 1, 0x100000, f);
+    fclose(f);
+    off = image_offset(file, n);
+    free(file);
+    return off < 0 || n - off > IMAGE_MAX ? -1 : n - off;
+}
+
 tns_unit *tns_create(const char *firmware, const char *state, char *err, int errlen)
 {
     tns_unit *u = (tns_unit *)calloc(1, sizeof(tns_unit));
@@ -245,13 +260,21 @@ tns_unit *tns_create(const char *firmware, const char *state, char *err, int err
     memcpy(u->ram, file + off, u->image_len);   /* over a saved state too: the program always comes from the file */
     free(file);
     if (!state) {
-        /* a cold start: Ctrl+Alt+Del held at power-on, the unit's own reset to its defaults.  Blank RAM leaves the
-           volume at 0 (every phoneme goes out with R3's amplitude 0); the reset sets R3 = 56h, as the Braille Lite's
-           defaults do.  Then the keys come up. */
-        static const unsigned char cold[] = {0x81, 0xA1, 0xC9, 0x49, 0x21, 0x01};
-        int k;
-        for (k = 0; k < (int)sizeof cold; k++)
-            tns_key(u, cold[k]);
+        /* a cold start: Ctrl+Alt+Del held at power-on, the unit's own cold reset (the Type 'n Speak's real cold
+           reset; Timothy, Jayson).  Blank RAM leaves the volume at 0 (every phoneme goes out with R3's amplitude
+           0); the reset sets R3 = 56h, as the Braille Lite's defaults do.  Measured by watching the key port's
+           reads: the firmware reads one key very early (that byte is used up), then reads three more, each of
+           which must be a different one of Ctrl, Alt and Delete down -- so Ctrl goes twice.  Three of them: the
+           cold reset, which asks to set up the file system, the flash and the folders (tns_setup.h); a key up
+           among them (the old Ctrl, Alt, Del, Del up): the warm reset, which sets up none of them, so a new file
+           went into the program's last byte (its first character lost) and a file moved to flash into folder 0,
+           the deleted mark.  Then the keys come up. */
+        static const unsigned char cold[] = {0x81, 0x81, 0xA1, 0xC9, 0x49, 0x21, 0x01};
+        static const unsigned char old[] = {0x81, 0xA1, 0xC9, 0x49, 0x21, 0x01};
+        const unsigned char *keys = tns_cold_break ? old : cold;
+        int k, n = tns_cold_break ? (int)sizeof old : (int)sizeof cold;
+        for (k = 0; k < n; k++)
+            tns_key(u, keys[k]);
     }
     memset(&bus, 0, sizeof bus);
     bus.ctx = u;

@@ -45,6 +45,12 @@ if [ -f "$HERE/bin/blazie_emu" ]; then   # the Blazie emulator (README-blazie-em
     fi
     echo "  emulator: $PREFIX/bin/blazie_emu"
 fi
+if [ -f "$HERE/bin/blazie_files" ]; then   # a saved unit's files from the command line (README-blazie-emu.md)
+    mkdir -p "$PREFIX/bin"
+    cp "$HERE/bin/blazie_files" "$PREFIX/bin/blazie_files"
+    chmod 755 "$PREFIX/bin/blazie_files"
+    echo "  files tool: $PREFIX/bin/blazie_files"
+fi
 {
     cat "$HERE/share/ssi263-speech/speech-dispatcher/ssi263.conf"
     echo "SSI263DataDir \"$DATA\""

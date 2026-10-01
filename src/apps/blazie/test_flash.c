@@ -3,10 +3,11 @@
  *   test_flash tns FIRMWARE [--break=instant|persist]   the Type 'n Speak from cold, through the emulator's unit
  *   test_flash bl FIRMWARE STATE [--break=instant]       the Braille Lite on its board
  *
- * Type 'n Speak (Jayson, Timothy): its first start asks "initialize flash system?" -- the firmware asks only when the
- * chip answers the 29F016's ID (a 29F040's: it skips the flash and never asks) -- and after y, y erases the chip; the
- * erase takes the chip's 32 s, and the unit chirps through the speech chip meanwhile (heard: a sound every ~2 s);
- * saved and started again, it does not ask again (y, y then erase nothing).
+ * Type 'n Speak (Jayson, Timothy): its first start, its cold reset, asks "initialize flash system?" after the file
+ * system (tns_setup.h) -- the firmware asks only when the chip answers the 29F016's ID (a 29F040's: it skips the flash
+ * and never asks) -- and after y, y erases the chip; the erase takes the chip's 32 s, and the unit chirps through the
+ * speech chip meanwhile (heard: a sound every ~2 s); saved and started again, it does not ask again (y, y then erase
+ * nothing).
  * Braille Lite: its reset (the i-chord held at power-on, then y four times) erases the flash with the same chirps,
  * each R4 F0, R1 F0, R2 FE, R3 58 and phoneme 17h; a file moved to flash lands at the top of the 2 MB chip the
  * firmware manages (E0h bits 0-1 page it), not over the first 512 KB, and survives a save and a restart.
@@ -21,6 +22,7 @@
 #include <string.h>
 #include <process.h>
 #include "emu_unit.h"
+#include "tns_setup.h"
 #include "../../csrc/blazie/bl_board.h"
 
 #define RATE 22050
@@ -43,14 +45,15 @@ typedef struct {
     double first_rms;                        /* the first 3 s */
 } tns_run_t;
 
-/* `secs` of the unit in 10 ms blocks, y down and up at 3 s and 6 s; save to `save` at `save_at` s (0: never) */
-static int tns_run(const char *fw, const char *st, int yes, double secs, const char *save, double save_at,
-                   tns_run_t *r)
+/* `secs` of the unit in 10 ms blocks, yes down and up at the n_at times `at`; save to `save` at `save_at` s (0:
+   never) */
+static int tns_run(const char *fw, const char *st, int yes, const double *at, int n_at, double secs, const char *save,
+                   double save_at, tns_run_t *r)
 {
     char err[256];
     emu_unit *u = emu_create(EMU_TYPE_N_SPEAK, fw, st, RATE, 0, err, sizeof err);
     short buf[BLOCK];
-    int i, j, loud = 0, n = (int)(secs * 100);
+    int i, j, k, loud = 0, n = (int)(secs * 100);
     double e0 = 0;
     if (!u) {
         printf("FAIL create: %s\n", err);
@@ -63,10 +66,11 @@ static int tns_run(const char *fw, const char *st, int yes, double secs, const c
     for (i = 0; i < n; i++) {
         double s = 0;
         int busy;
-        if (i == 300 || i == 600) {
-            emu_key(u, yes | 0x80);
-            emu_key(u, yes & 0x7F);
-        }
+        for (k = 0; k < n_at; k++)
+            if (i == (int)(at[k] * 100 + 0.5)) {
+                emu_key(u, yes | 0x80);
+                emu_key(u, yes & 0x7F);
+            }
         if (save && i == (int)(save_at * 100) && !emu_save(u, save)) {
             printf("FAIL save %s\n", save);
             emu_destroy(u);
@@ -96,14 +100,19 @@ static void tns_checks(const char *fw)
 {
     char d[300], path[64];
     tns_run_t a, b;
-    int yes = strstr(fw, "SPA") || strstr(fw, "spa") ? 0x2C : 0x3D;   /* y; the Spanish unit's yes is s */
-    double span;
+    int yes = tns_setup_yes_code(tns_setup_yes(fw)) & 0x7F, k;   /* y; the Spanish unit's yes is s */
+    double span, at[TNS_SETUP_ANSWERS], ready = tns_setup_ready_at(1);
+    static const double again[] = {3.0, 6.0};
     snprintf(path, sizeof path, "test_flash.%d.state", (int)_getpid());
-    /* from cold: the question, y, "are you sure?", y, the erase, ready by ~39 s; saved at 45 s (persist: at 2 s, while
-       the unit still asks) */
-    if (!tns_run(fw, NULL, yes, 46.0, path, !strcmp(brk, "persist") ? 2.0 : 45.0, &a))
+    /* from cold: its cold reset's questions (tns_setup.h): the file system y y, the flash y y -- the erase, 32 s --
+       then the folders, ...; saved when it is ready (persist: at 2 s, while the unit still asks) */
+    for (k = 0; k < TNS_SETUP_ANSWERS; k++)
+        at[k] = tns_setup_answer_at(k, 1);
+    if (!tns_run(fw, NULL, yes, at, TNS_SETUP_ANSWERS, ready + 1.0, path, !strcmp(brk, "persist") ? 2.0 : ready,
+                 &a))
         exit(1);
-    snprintf(d, sizeof d, "%d chip erase after y, y (0: the firmware refused the chip's ID and never asked)", a.erases);
+    snprintf(d, sizeof d, "%d chip erase after the flash's y, y (0: the firmware refused the chip's ID and never "
+             "asked)", a.erases);
     check("flash ID accepted, flash initialised", a.erases == 1, d);
     span = a.busy_from >= 0 && a.busy_to >= 0 ? a.busy_to - a.busy_from : 0;
     snprintf(d, sizeof d, "the erase ran %.1f s of chip time (want 31-33: a 29F016's 32 s)", span);
@@ -111,7 +120,7 @@ static void tns_checks(const char *fw)
     snprintf(d, sizeof d, "%d sounds began while it ran (want >= 12: a chirp every ~2 s)", a.onsets);
     check("erase chirps", a.onsets >= 12, d);
     /* started again from what it saved: it speaks, and y, y erase nothing (it did not ask again) */
-    if (!tns_run(fw, path, yes, 12.0, NULL, 0, &b))
+    if (!tns_run(fw, path, yes, again, 2, 12.0, NULL, 0, &b))
         exit(1);
     snprintf(d, sizeof d, "restarted: rms %.4f in the first 3 s; %d chip erases after y, y (0: it did not ask again)",
              b.first_rms, b.erases);

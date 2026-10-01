@@ -104,9 +104,15 @@ def main():
                                                                       "fat_img")]
     emu = compile_c(os.path.join(HERE, "emu_unit.c"), APP)
     chords = compile_c(os.path.join(HERE, "chords.c"), APP)
-    unit = chip + board() + [emu, chords]
+    # the Type 'n Speak's factory setup, headless: its cold reset's questions answered (the tests, the rescue)
+    setup = compile_c(os.path.join(HERE, "tns_setup.c"), APP)
+    unit = chip + board() + [emu, chords, setup]
+    # a saved Type 'n Speak that was never set up (the previews' first start), told apart and set up anew
+    rescue = compile_c(os.path.join(HERE, "tns_rescue.c"), APP)
     shell = [compile_c(os.path.join(HERE, f), APP) for f in ("main_win.c", "tns_keymap_win.c", "serial_win.c")]
-    link("blazie_emu.exe", unit + shell + files, libs=("-lwinmm", "-lsetupapi", "-lcomdlg32", "-lm"), extra=("-mwindows",))
+    link("blazie_emu.exe", unit + shell + files + [rescue], libs=("-lwinmm", "-lsetupapi", "-lcomdlg32", "-lm"),
+         extra=("-mwindows",))
+    link("test_rescue.exe", [compile_c(os.path.join(HERE, "test_rescue.c"), APP), rescue] + unit + files)
     link("test_chords.exe", [compile_c(os.path.join(HERE, "test_chords.c"), APP), chords], libs=())
     # the same from the command line, on a saved state (no unit runs: Linux and the BTSpeak build it alone)
     link("blazie_files.exe", [compile_c(os.path.join(HERE, "blazie_files.c"), APP)] + files, libs=())
@@ -118,12 +124,12 @@ def main():
     # chip answers a 29F040's ID; the Braille Lite's banks all on one 512 KB)
     flash = compile_c(os.path.join(HERE, "test_flash.c"), APP)
     link("test_flash.exe", [flash] + unit)
-    link("test_flash_break.exe", [flash] + chip + board("flash_break") + [emu, chords])
+    link("test_flash_break.exe", [flash] + chip + board("flash_break") + [emu, chords, setup])
     # files in and out against the units' own commands (test_files.c; its controls: --break=N)
     link("test_files.exe", [compile_c(os.path.join(HERE, "test_files.c"), APP)] + unit + files)
     # the serial port plugged in, and its control: the same board with the receive path cut (bl_serial.c)
     serial = compile_c(os.path.join(HERE, "test_serial.c"), APP)
-    unit_cut = chip + board("cut_rx") + [emu, chords]
+    unit_cut = chip + board("cut_rx") + [emu, chords, setup]
     link("test_serial.exe", [serial] + unit)
     link("test_serial_cut.exe", [serial] + unit_cut)
     # the Windows side end to end through a named pipe (serial_win.c), and its control on the cut board

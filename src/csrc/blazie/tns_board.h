@@ -16,7 +16,8 @@
  *   (a new file's text starts right after the program).
  *
  * The unit runs live from the start: the host drives A/R from its chip (tns_set_ar).  With no saved state the unit
- * starts cold and asks "initialize flash system?" (answer y twice; the Spanish unit's yes is s).
+ * starts cold -- Ctrl+Alt+Del held at power-on, its own cold reset -- and asks to set up its file system, its flash
+ * and its folders (seven questions, each answered y; the Spanish unit's yes is s: ../../apps/blazie/tns_setup.h).
  */
 #ifndef TNS_BOARD_H
 #define TNS_BOARD_H
@@ -30,7 +31,7 @@ extern "C" {
 typedef struct tns_unit tns_unit;
 
 /* firmware: a .TNS update file (the ROM image is found in it by content); state: a tns_save_state file, or NULL for
-   a cold start.  NULL on failure, with a reason in err. */
+   a cold start (the unit's cold reset).  NULL on failure, with a reason in err. */
 tns_unit *tns_create(const char *firmware, const char *state, char *err, int errlen);
 void tns_destroy(tns_unit *u);
 
@@ -67,6 +68,15 @@ int  tns_clock_time(const tns_unit *u, int alarm, blc_time *t);
 void tns_clock_wall(tns_unit *u, long long unix_now);
 /* tests: which 0, the 1 MB address space's RAM (the program at its start); which 1, the 4 MB file flash; the size */
 int  tns_memory(const tns_unit *u, int which, const unsigned char **bytes);
+
+/* the program's end in the address space (its image's length: RAM starts there), or -1 if the file holds no Type
+   'n Speak image.  A unit whose file system was never set up put its first file's first byte below it, where the
+   program is: that byte was never stored (../../apps/blazie/tns_rescue.h). */
+long tns_program_end(const char *firmware);
+
+/* Tests' must-fail control (an app never sets it): nonzero, a cold start sends the keys the emulator sent before
+   0.7.1, which the firmware takes as its warm reset (no file system, no folders). */
+extern int tns_cold_break;
 
 #ifdef __cplusplus
 }

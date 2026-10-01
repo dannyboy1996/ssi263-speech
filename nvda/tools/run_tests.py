@@ -302,6 +302,26 @@ if os.path.isfile(FILES):
         CHECKS.append(check("Blazie emulator: files CONTROL (Type 'n Speak, break 5, must fail)",
                             [FILES, "tns", os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS"), "--break=5"], expect_fail=True,
                             fail_marks=[r"^FAIL the open file goes on after the import", r"^FAILED$"]))
+        # the Type 'n Speak's real cold reset (Timothy, Jayson): the old cold start's keys put back (tns_board.h
+        # tns_cold_break) reach only the warm reset -- no file system, no folders: the first file loses its first
+        # character and the unit cannot move it to flash
+        CHECKS.append(check("Blazie emulator: files CONTROL (Type 'n Speak, the old cold start, must fail)",
+                            [FILES, "tns", os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS"), "--break=cold"],
+                            expect_fail=True,
+                            fail_marks=[r"^FAIL the factory start set the unit up +RAM file system NOT set up, flash "
+                                        r"set up, folders NOT set up",
+                                        r"^FAIL the unit's first file, moved to flash, whole +notes \"\?ello world"
+                                        r"\\rline two\" in RAM", r"^FAILED$"]))
+        # ... and a unit the previews saved that way (src/apps/blazie/tns_rescue.c): told apart, set up anew with its
+        # RAM files, the flash file it lost named; its control leaves the old cold start on through the rescue
+        RESCUE = [os.path.join(EMU, "test_rescue.exe"), os.path.join(FW_BLAZIE, "tns", "TNSENG.TNS")]
+        if os.path.isfile(RESCUE[0]):
+            CHECKS.append(check("Blazie emulator: a Type 'n Speak never set up, rescued", RESCUE))
+            CHECKS.append(check("Blazie emulator: rescue CONTROL (the old cold start left on, must fail)", RESCUE,
+                                env={"TEST_RESCUE_BREAK": "1"}, expect_fail=True,
+                                fail_marks=[r"^ok +the old unit told apart, its files found",
+                                            r"^FAIL rescued: set up anew, its files carried +the unit's own setup did "
+                                            r"not complete", r"^FAILED$"]))
     # ... and the images in another program: 7-Zip (when this machine has it) extracts a packed image and a unit's
     # export exactly; its control writes the long names with a wrong checksum (7-Zip then shows 8.3 aliases)
     SEVEN = shutil.which("7z") or os.path.join(os.environ.get("ProgramFiles", ""), "7-Zip", "7z.exe")

@@ -9,7 +9,8 @@ The checks:
   boot           the Braille Lite boots and speaks; F (dot 1) typed at 8 s is answered, and not without it
   clock-keys     o-chord t typed as keys (f s k space, then d s j k): the unit says the time, the host's
   clock-letters  the same in letters mode (O, then t: the BTSpeak's computer braille, a capital as its chord)
-  tns            the Type 'n Speak from cold: it speaks, y y answered, then F4 says the host's time
+  tns            the Type 'n Speak from cold: it speaks, its cold reset's seven questions answered y, then F4 says
+                 the host's time
   memory         the date and time set through the unit's own commands (typed as keys), the memory saved to the
                  program's folder (--autosave) and started from again: the unit still holds 2015-09-30
   serial         the program run as a person runs it (in a pseudo-terminal, no sound card), its serial port on a
@@ -152,14 +153,16 @@ def main():
             if not tns:
                 check("Type 'n Speak boot", False, "no TNSENG.TNS in %s (or its tns folder)" % fw)
             else:
-                out = run(exe, base + ["--unit", "tns-en", "--flash-instant", "--seconds", "16", "--rms", "0:6",
+                # its cold reset's seven questions, y each (tns_setup.c's times; the last starts a 35 s wipe), then F4
+                answers = ["%.1f type y" % t for t in (4.0, 7.0, 10.0, 13.0, 18.0, 25.0, 28.0)]
+                out = run(exe, base + ["--unit", "tns-en", "--flash-instant", "--seconds", "76", "--rms", "0:6",
                                        "--clock-check"],
-                          ["3.0 type y", "6.0 type y", "12.0 type \\eOS"], tmp)
+                          answers + ["72.0 type \\eOS"], tmp)
                 g = rms(out, 0, 6)
                 ok, d = said_time(out)
                 check("Type 'n Speak boot (from cold)", g > 0.01 and "from cold" in out,
                       "rms %.4f over the first 6 s, %s" % (g, "a cold start" if "from cold" in out else "NOT cold"))
-                check("Type 'n Speak: y y, then F4 the time", ok, d)
+                check("Type 'n Speak: its setup answered y, then F4 the time", ok, d)
 
         if want("memory"):
             cfg = os.path.join(tmp, "config")

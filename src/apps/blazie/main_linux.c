@@ -43,6 +43,8 @@
 #include "keys.h"
 #include "serial_linux.h"
 #include "term_keys.h"
+#include "tns_rescue.h"
+#include "tns_setup.h"
 #include "tns_term.h"
 
 #define BLOCK_MS_DEFAULT 10
@@ -51,8 +53,8 @@
 #define AUTOSAVE_S 60.0
 
 /* firmware: the folder's layout as the repository's firmware/blazie (spanish/, tns/), or all in one folder (the
-   Linux package's share/ssi263-speech) -- the first that exists.  state NULL: a cold start (the Type 'n Speak asks to
-   initialise its flash; answer y twice, the Spanish unit s twice). */
+   Linux package's share/ssi263-speech) -- the first that exists.  state NULL: a cold start (the Type 'n Speak's cold
+   reset asks how to set itself up: tns_setup.h, TNS_FIRST_START). */
 typedef struct {
     const char *name, *id;
     int kind;
@@ -404,6 +406,61 @@ static void release_keys(void)
     pthread_mutex_unlock(&g_lock);
 }
 
+/* A saved Type 'n Speak that was never set up (tns_rescue.h: the 0.6 and 0.7 previews' first start missed the unit's
+   cold reset): the person chooses -- set it up now keeping its RAM files, the factory state (its own questions), or
+   as it is.  0: start it from no state (the factory's cold start); 1: from st.  Headless: said, and left as it is. */
+static int offer_setup(int kind, const char *fw, const char *st)
+{
+    char line[64], err[300], before[PATH_MAX + 20];
+    tns_rescue_report r;
+    if (tns_needs_setup(st, &r) != 1)
+        return 1;
+    snprintf(before, sizeof before, "%s.before-setup", st);
+    say("This %s was never set up: its file system and folders were not made when it first started (the 0.6 and "
+        "0.7 previews' first start missed the unit's cold reset; or a setup question was answered n). On it a new "
+        "file can lose its first letter, and a file moved to flash is lost.", KINDS[kind].name);
+    say("Its files: %d in RAM%s.", r.ram_files, r.lost_flash ? ", and some it lost when moving them to flash (their "
+        "text was never written: only their names are left)" : "");
+    if (g_headless)
+        return 1;
+    say("Type k to set it up now and keep its RAM files (its settings go back to the factory's), f for the factory "
+        "state (it asks its own setup questions; its files are not kept), or Enter alone to start it as it is. "
+        "k and f keep the old memory as %s.", before);
+    if (g_use_evdev)
+        evdev_grab(&g_ev, 0);                   /* the answer is typed in the terminal */
+    read_line(line, sizeof line);
+    if (g_use_evdev)
+        evdev_grab(&g_ev, ini_get_int(g_ini, "input", "grab", 1));
+    if (line[0] == 'f') {
+        FILE *a = fopen(st, "rb"), *b = fopen(before, "wb");
+        char buf[65536];
+        size_t n;
+        int ok = a && b;
+        while (ok && (n = fread(buf, 1, sizeof buf, a)) > 0)
+            ok = fwrite(buf, 1, n, b) == n;
+        if (a) fclose(a);
+        if (b && fclose(b) != 0) ok = 0;
+        if (!ok) {
+            say("Could not keep the old memory; the unit starts as it is.");
+            return 1;
+        }
+        unlink(st);
+        return 0;
+    }
+    if (line[0] != 'k')
+        return 1;
+    say("Setting it up (a few seconds) ...");
+    if (!tns_rescue(fw, st, 1, &r, err, sizeof err)) {
+        say("Could not set it up: %s. It starts as it is.", err);
+        return 1;
+    }
+    say("Set up: %d files kept%s. The old memory is in %s.", r.carried,
+        r.first_lost ? " (one had lost its first letter on the old unit)" : "", before);
+    fputs(r.log, stdout);
+    fflush(stdout);
+    return 1;
+}
+
 static int start_unit(int kind, const char *state_given)
 {
     char fw[PATH_MAX], st[PATH_MAX], err[300];
@@ -415,7 +472,9 @@ static int start_unit(int kind, const char *state_given)
         snprintf(st, sizeof st, "%s", state_given);
     else {
         saved_path(kind, st, sizeof st);
-        if (!exists(st)) {                      /* the first time: the unit as it left the factory */
+        if (exists(st) && KINDS[kind].kind == EMU_TYPE_N_SPEAK && !offer_setup(kind, fw, st))
+            state = NULL;                       /* the factory state: the unit's cold reset, its own questions */
+        else if (!exists(st)) {                 /* the first time: the unit as it left the factory */
             if (KINDS[kind].state[0])
                 fw_file(KINDS[kind].state, st, sizeof st);
             else
@@ -445,8 +504,9 @@ static int start_unit(int kind, const char *state_given)
     pthread_mutex_unlock(&g_lock);
     emu_destroy(old);
     if (!g_headless) {
-        say("%s is on.%s", KINDS[kind].name, KINDS[kind].kind == EMU_TYPE_N_SPEAK && !state
-            ? " The first time it asks to initialize its flash: press y, then y again (the Spanish unit: s, s)." : "");
+        say("%s is on.", KINDS[kind].name);
+        if (KINDS[kind].kind == EMU_TYPE_N_SPEAK && !state)
+            say("%s", TNS_FIRST_START);
         save_settings();
     }
     return 1;
@@ -687,7 +747,8 @@ static void keys_help(void)
     say("Hold (F12 or Ctrl+K): the next chord stays held down until you press it again -- the unit reads keys held");
     say("  while it starts: p-chord, hold, i-chord, l restarts it into the cold reset; then hold again.");
     say("  With an input device (evdev; the input group) keys are seen going down and up: no hold key needed.");
-    say("Type 'n Speak: the whole keyboard is the unit's. The first time it asks to initialize its flash: y, y.");
+    say("Type 'n Speak: the whole keyboard is the unit's.");
+    say("%s", TNS_FIRST_START);
     say("F11 opens this menu (Ctrl+O too for the Braille Lite; Alt+Shift+F always). Keys are set in %s.", g_ini_path);
 }
 

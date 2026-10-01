@@ -699,6 +699,52 @@ int blf_add_folder(blf_fs *fs, const char *name, int type, char *err, int errlen
     return fail(err, errlen, "the unit has 20 folders already") - 1;
 }
 
+/* ---- flash files a unit without folders lost (bl_files.h blf_lost_get) -------------------------------------------- */
+static int lost_entry(const blf_fs *fs, int k, where_t *w)
+{
+    const unsigned char *e = fs->flash + fs->entries_at + (unsigned long)k * SLOT;
+    unsigned long b, first, nb, lo = FIRST_FILE_BLOCK * BLOCK, hi = fs->blocks * BLOCK;
+    int j;
+    if (e[E_FOLDER] || !e[E_NAME])
+        return 0;
+    w->entry = fs->entries_at + (unsigned long)k * SLOT;
+    w->start = rd32(e + E_START);
+    w->end_text = rd32(e + E_END_TEXT);
+    w->end_alloc = rd32(e + E_END_ALLOC);
+    if (w->start < FLASH_PTR + lo || w->end_alloc >= FLASH_PTR + hi || w->end_text + 1 < w->start
+            || w->end_text > w->end_alloc || (w->start - FLASH_PTR) % BLOCK)
+        return 0;
+    first = (w->start - FLASH_PTR) / BLOCK;
+    nb = (w->end_text + BLOCK - w->start) / BLOCK;
+    for (b = first; b < first + nb; b++)
+        if (block_state(fs, b) != B_USED)
+            return 0;               /* freed with the mark: the firmware's own delete */
+    for (j = 0; j < fs->n_entries; j++) {   /* a live entry on the same blocks (a rename), or a later lost copy */
+        const unsigned char *o = fs->flash + fs->entries_at + (unsigned long)j * SLOT;
+        if (j != k && rd32(o + E_START) == w->start && (o[E_FOLDER] || j > k))
+            return 0;
+    }
+    return 1;
+}
+
+const unsigned char *blf_lost_get(const blf_fs *fs, int i, blf_file *f, unsigned long *n)
+{
+    int k;
+    where_t w;
+    if (!fs->flash_ok)
+        return NULL;
+    for (k = 0; k < fs->n_entries; k++)
+        if (lost_entry(fs, k, &w) && i-- == 0) {
+            entry_file(fs->flash + w.entry, f);
+            f->in_flash = 1;
+            f->slot = k;
+            f->size = w.end_text + 1 - w.start;
+            *n = f->size;
+            return fs->flash + (w.start - FLASH_PTR);
+        }
+    return NULL;
+}
+
 /* ---- the rules, checked ------------------------------------------------------------------------------------------ */
 int blf_check(const blf_fs *fs, char *err, int errlen)
 {

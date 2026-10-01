@@ -114,6 +114,14 @@ int blf_move(blf_fs *fs, int i, int folder, char *err, int errlen);
 /* a new folder ('r' or 'f'); its number, or -1 */
 int blf_add_folder(blf_fs *fs, const char *name, int type, char *err, int errlen);
 
+/* Flash files the unit lost: entries marked deleted (folder 0) whose blocks are all still marked used and that no
+   live entry shares.  A Type 'n Speak whose folders were never set up (the emulator's first start before 0.7.1, which
+   missed the unit's cold reset) wrote a file moved to flash as such an entry -- in folder 0, the deleted mark -- and
+   removed it from RAM without writing its text to its blocks (measured: they stay erased, FFh): the name is all that
+   is left.  The firmware's own delete frees the blocks with the mark, and a rename leaves a live entry on the same
+   blocks.  The i-th one (0..), its entry in *f and its blocks' bytes (*n); NULL past the last. */
+const unsigned char *blf_lost_get(const blf_fs *fs, int i, blf_file *f, unsigned long *n);
+
 /* Checks every rule above on the images (packing, pointers inside RAM, each live flash file's blocks marked used,
    no two files on the same block, the table's free count); 1 if all hold, else 0 with the first broken one in err. */
 int blf_check(const blf_fs *fs, char *err, int errlen);

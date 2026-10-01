@@ -2,28 +2,34 @@
  * bl_files_xfer.h), headless, against the units' own commands.
  *
  *   test_files bl FIRMWARE STATE [--break=N]   a Braille Lite (English or Spanish) from its shipped state
- *   test_files tns FIRMWARE [--break=N]        the Type 'n Speak from cold, its file system set up by its cold reset
+ *   test_files tns FIRMWARE [--break=N|cold]   the Type 'n Speak from its factory start: its cold reset, its own
+ *                                              questions answered yes (tns_setup.h)
  *
- * Each run: the firmware makes files with its own commands (the Braille Lite also moves one to flash) and leaves one
- * open with text typed since it was opened; the export must hold every file with its exact bytes (the open one with
- * the text typed since).  An image with new files (RAM, flash, a new folder, CR LF line ends, a file of two pages)
- * that also drops a file BEFORE the open one is imported; the unit, started again from it, types into its open file
- * and lists its files with its own command (the verbose list into the clipboard), which must name every file with
- * its size; the Braille Lite then moves an imported flash file to RAM and an imported RAM file to flash with its
- * own commands, and the copies must be byte for byte the imported text, the flash copy placed by the unit's own
- * allocator in the next free block below the imported ones (its free space is ours).  Export, import, export gives
- * the same image byte for byte, on the unit itself and on a fresh one.
+ * Each run: the firmware makes files with its own commands, moves the first one to flash and leaves one open with
+ * text typed since it was opened; the first file must be in a flash folder, whole (on the Type 'n Speak, before its
+ * real cold reset, the first file lost its first character and a file moved to flash was lost: Timothy, Jayson), and
+ * the export must hold every file with its exact bytes (the open one with the text typed since).  An image with new
+ * files (RAM, flash, a new folder, CR LF line ends, a file of two pages), a flash file rewritten, that also drops a
+ * file BEFORE the open one is imported; the unit, started again from it, types into its open file and lists its
+ * files with its own command (the verbose list into the clipboard), which must name every file with its size; it
+ * then moves an imported flash file to RAM and an imported RAM file to flash with its own commands, and the copies
+ * must be byte for byte the imported text, the flash copy placed by the unit's own allocator in the next free block
+ * below the imported ones (its free space is ours).  Export, import, export gives the same image byte for byte, on
+ * the unit itself and on a fresh one.
  *
  * --break=N (bl_files.h's blf_break) puts one bug back; run_tests' controls must fail on exactly the checks that see
  * it: 1 the open file's live pointers ignored, 2 new flash blocks not marked used, 3 a new RAM file's end of text one
- * byte short, 4 an imported file's date dropped.
+ * byte short, 4 an imported file's date dropped, 5 the open file's number not followed.  --break=cold
+ * (tns_board.h's tns_cold_break) starts the Type 'n Speak as the emulator did before: the unit's warm reset.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <process.h>
 #include "emu_unit.h"
+#include "tns_setup.h"
 #include "../../csrc/blazie/bl_board.h"
+#include "../../csrc/blazie/tns_board.h"
 #include "../../csrc/blazie/bl_files.h"
 #include "../../csrc/blazie/bl_files_state.h"
 #include "../../csrc/blazie/bl_files_xfer.h"
@@ -119,6 +125,11 @@ static void files_menu(script *sc)
 static void enter(script *sc)
 {
     key(sc, sc->tns ? TNS_PRESS | T_ENTER : B_ECHORD, AFTER_KEY);
+}
+
+static void new_line(script *sc)            /* in a file: Enter; the Braille Lite's dots 4-6 chord */
+{
+    key(sc, sc->tns ? TNS_PRESS | T_ENTER : 0x68, sc->tns ? 0.4 : 0.6);
 }
 
 static void open_or_create(script *sc, int create, const char *name)
@@ -323,7 +334,7 @@ static void make_texts(void)
     g_big[5000] = 0;
 }
 
-#define NEW_NOTES "notes rewritten\r"   /* the Braille Lite's flash file, new bytes from the PC */
+#define NEW_NOTES "notes rewritten\r"   /* the flash file, new bytes from the PC */
 #define GROWN 4500UL                    /* "grow" (one page, before the open file) rewritten to two pages */
 
 /* the unit's export as an image with the import test's changes: one file dropped, two rewritten (one in RAM
@@ -352,7 +363,7 @@ static unsigned char *changed_image(const unit_t *x, const char *drop, const cha
             d = (const unsigned char *)g_big;
             n = GROWN;
         }
-        if (!strcmp(fl->name, "notes") && !tns) {
+        if (!strcmp(fl->name, "notes")) {
             d = (const unsigned char *)NEW_NOTES;
             n = strlen(NEW_NOTES);
         }
@@ -402,81 +413,56 @@ static void all_checks(int tns, const char *fw, const char *state)
     char d[600], s1[200], s2[200], err[300];
     const char *made = tmp("made.state"), *imported = tmp("imported.state"), *after = tmp("after.state");
     const char *fresh_tns = tmp("fresh.state");   /* the Type 'n Speak just after its cold reset: no files yet */
-    const char *ram_folder, *flash_folder, *dropped = "notes", *book = tns ? "fbook.brl" : "book";
+    const char *ram_folder, *flash_folder, *dropped = "temp", *book = tns ? "fbook.brl" : "book";
     unsigned long n, n2, size, size2, size3;
     const unsigned char *x;
     unsigned char *img, *img2, *img3, *exp;
-    int fl, ok;
+    int fl, ok, imported_ok;
     blx_report r;
 
-    /* 1. the firmware's own files, one moved to flash (Braille Lite), one left open with text typed since */
+    /* 1. the firmware's own files: the first one made moved to flash, one left open with text typed since */
+    if (tns) {
+        /* the unit as it left the factory: a new Type 'n Speak's first start is its cold reset, and its own
+           questions answered yes (tns_setup.h) set up its file system, its flash and its folders.  (Before, the
+           start missed the cold reset: no file system, no folders -- the first file lost its first character and
+           a file moved to flash was lost: Timothy, Jayson.) */
+        if (!tns_factory_setup(fw, fresh_tns, err, sizeof err)) {
+            printf("FAIL the factory start: %s\n", err);
+            exit(1);
+        }
+        if (!load(fresh_tns, &a)) exit(1);
+        snprintf(d, sizeof d, "RAM file system %s, flash %s, folders %s (\"%s\" \"%s\")",
+                 blf_ram_ok(a.fs) ? "set up" : "NOT set up", blf_flash_ok(a.fs) ? "set up" : "NOT set up",
+                 blf_folders_ok(a.fs) ? "set up" : "NOT set up", blf_folder_get(a.fs, 0)->name,
+                 blf_folder_get(a.fs, 1)->name);
+        check("the factory start set the unit up", blf_ram_ok(a.fs) && blf_flash_ok(a.fs) && blf_folders_ok(a.fs)
+              && blf_check(a.fs, err, sizeof err), d);
+        unload(&a);
+    }
     memset(&sc, 0, sizeof sc);
     sc.tns = tns;
-    if (tns) {
-        /* from cold: the program's start answers its flash question (y y), saved; then the unit's own cold reset
-           (Ctrl+Alt+Del held at power-on; the firmware's first early read takes one byte, so Ctrl goes twice) sets
-           up the file system, the flash and the folders: y to each question */
-        const char *cold = tmp("cold.state"), *yes = g_yes == 's' ? "s" : "y";
-        int k;
-        sc.t = 3.0;
-        type_text(&sc, yes);
-        wait_s(&sc, 3.0);
-        type_text(&sc, yes);
-        wait_s(&sc, 8.0);
-        if (!run_tns(fw, NULL, cold, &sc)) exit(1);
-        memset(&sc, 0, sizeof sc);
-        sc.tns = 1;
-        key(&sc, 0x81, 0.0);
-        key(&sc, 0x81, 0.0);
-        key(&sc, 0xA1, 0.0);
-        key(&sc, 0xC9, 3.0);
-        key(&sc, 0x49, 0.2);
-        key(&sc, 0x21, 0.2);
-        key(&sc, 0x01, 4.0);
-        for (k = 0; k < 8; k++) {
-            type_text(&sc, yes);
-            wait_s(&sc, 4.7);
-        }
-        if (!run_tns(fw, cold, fresh_tns, &sc)) exit(1);
-        remove(cold);
-        memset(&sc, 0, sizeof sc);
-        sc.tns = 1;
-        sc.t = SPOKEN_START;
-        open_or_create(&sc, 1, "notes");
-        type_text(&sc, "hello world");
-        key(&sc, TNS_PRESS | T_ENTER, 0.4);
-        type_text(&sc, "line two");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 1, "grow");   /* one page, before the open file: the import makes it two */
-        type_text(&sc, "g");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 1, g_doc);
-        type_text(&sc, "abc");      /* left open: its directory entry still says empty */
-        wait_s(&sc, 3.0);
-        if (!run_tns(fw, fresh_tns, made, &sc)) exit(1);
-    } else {
-        sc.t = SPOKEN_START;
-        open_or_create(&sc, 1, "notes");
-        type_text(&sc, "hello world");
-        key(&sc, 0x68, 0.6);        /* dots 4-6 chord: a new line */
-        type_text(&sc, "line two");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 1, "temp");   /* a file before the one left open, for the import to drop */
-        type_text(&sc, "t");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 1, "grow");   /* one page, before the open file: the import makes it two */
-        type_text(&sc, "g");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 1, g_doc);
-        type_text(&sc, "abc");
-        wait_s(&sc, 2.0);
-        open_or_create(&sc, 0, "notes");
-        move_open_file(&sc);        /* notes to flash */
-        open_or_create(&sc, 0, g_doc);
-        type_text(&sc, "xyz");      /* left open: its directory entry still says "abc" */
-        wait_s(&sc, 3.0);
-        if (!run_bl(fw, state, made, &sc)) exit(1);
-    }
+    sc.t = SPOKEN_START;
+    open_or_create(&sc, 1, "notes");   /* the unit's first file (on the Type 'n Speak right after the program
+                                          before the fix: its first character was never stored) */
+    type_text(&sc, "hello world");
+    new_line(&sc);
+    type_text(&sc, "line two");
+    wait_s(&sc, 2.0);
+    open_or_create(&sc, 1, "temp");    /* a file before the one left open, for the import to drop */
+    type_text(&sc, "t");
+    wait_s(&sc, 2.0);
+    open_or_create(&sc, 1, "grow");    /* one page, before the open file: the import makes it two */
+    type_text(&sc, "g");
+    wait_s(&sc, 2.0);
+    open_or_create(&sc, 1, g_doc);
+    type_text(&sc, "abc");
+    wait_s(&sc, 2.0);
+    open_or_create(&sc, 0, "notes");
+    move_open_file(&sc);               /* notes to flash, with the unit's own command */
+    open_or_create(&sc, 0, g_doc);
+    type_text(&sc, "xyz");             /* left open: its directory entry still says "abc" */
+    wait_s(&sc, 3.0);
+    if (!run(tns, fw, tns ? fresh_tns : state, made, &sc)) exit(1);
     if (!load(made, &a)) exit(1);
     ram_folder = blf_folder_get(a.fs, 0)->name;
     flash_folder = blf_folder_get(a.fs, 1)->name;
@@ -485,16 +471,22 @@ static void all_checks(int tns, const char *fw, const char *state)
              flash_folder, blf_check(a.fs, err, sizeof err) ? "" : ", rules broken");
     check("the unit's file system read", blf_ram_ok(a.fs) && blf_flash_ok(a.fs) && blf_folders_ok(a.fs)
           && blf_check(a.fs, err, sizeof err), d);
+    x = unit_file(&a, "notes", &n, &fl);
+    show(s1, sizeof s1, x, n);
+    snprintf(d, sizeof d, "notes \"%s\" in %s, folder %d", s1, x ? (fl ? "flash" : "RAM") : "-",
+             x ? blf_get(a.fs, blf_find(a.fs, "notes"))->folder : -1);
+    check("the unit's first file, moved to flash, whole", x && fl && blf_get(a.fs, blf_find(a.fs, "notes"))->folder
+          && same(x, n, "hello world\rline two", 20), d);
 
     /* 2. the export: the firmware's files, exact */
     exp = export_of(&a, &size);
     {
-        unsigned char *e1 = image_file(exp, size, tns ? ram_folder : flash_folder, "notes", &n);
+        unsigned char *e1 = image_file(exp, size, flash_folder, "notes", &n);
         unsigned char *e2 = image_file(exp, size, ram_folder, g_doc, &n2);
-        const char *want2 = tns ? "abc" : "abcxyz";
+        const char *want2 = "abcxyz";
         show(s1, sizeof s1, e1, n);
         show(s2, sizeof s2, e2, n2);
-        snprintf(d, sizeof d, "notes \"%s\"%s", s1, tns ? "" : " (in flash)");
+        snprintf(d, sizeof d, "notes \"%s\" (in flash)", s1);
         check("export: a file the unit made", same(e1, n, "hello world\rline two", 20), d);
         snprintf(d, sizeof d, "the open file \"%s\" (want \"%s\": the text typed since it was opened)", s2, want2);
         check("export: the open file, typed into since opened", same(e2, n2, want2, strlen(want2)), d);
@@ -502,10 +494,8 @@ static void all_checks(int tns, const char *fw, const char *state)
         free(e2);
     }
 
-    /* 3. the import: notes dropped (it is before the open file on the Type 'n Speak: the open file moves down a
-       slot), new files in RAM, in flash, in a new folder */
-    if (!tns)
-        dropped = "temp";           /* the Braille Lite's notes went to flash: temp is before the open file */
+    /* 3. the import: temp dropped (before the open file: the open file moves down a slot), new files in RAM, in
+       flash, in a new folder */
     img = changed_image(&a, dropped, ram_folder, flash_folder, tns, &size2);
     blx_report_init(&r);
     ok = img && blx_import(a.fs, img, size2, &r, err, sizeof err);
@@ -513,11 +503,12 @@ static void all_checks(int tns, const char *fw, const char *state)
         printf("FAIL save %s: %s\n", imported, err);
         exit(1);
     }
+    imported_ok = ok;
     ok = ok && blf_check(a.fs, err, sizeof err);
     snprintf(d, sizeof d, "%d added, %d rewritten, %d deleted, %d unchanged, %d kept, %d skipped, %d new folders%s%s",
              r.added, r.replaced, r.deleted, r.unchanged, r.kept, r.skipped, r.folders_added, ok ? "" : ": ",
              ok ? "" : err);
-    check("import: done, the file system's rules hold", ok && r.added == 4 && r.replaced == (tns ? 1 : 2)
+    check("import: done, the file system's rules hold", ok && r.added == 4 && r.replaced == 2
           && r.deleted == 1 && r.skipped == 0 && r.folders_added == 1, d);
     if ((r.skipped || r.kept || getenv("TEST_FILES_KEEP")) && r.log)
         printf("%s", r.log);
@@ -554,6 +545,15 @@ static void all_checks(int tns, const char *fw, const char *state)
 
     /* 5. the unit started from the imported state: types into its open file, lists its files (into the clipboard),
        moves an imported flash file to RAM and an imported RAM file to flash */
+    if (!imported_ok) {             /* nothing imported (a unit whose folders were never set up): nothing to run */
+        check("the unit started from the imported files", 0, "nothing was imported");
+        unload(&a);
+        free(img);
+        free(exp);
+        remove(made);
+        remove(fresh_tns);
+        return;
+    }
     memset(&sc, 0, sizeof sc);
     sc.tns = tns;
     sc.t = SPOKEN_START;
@@ -572,8 +572,8 @@ static void all_checks(int tns, const char *fw, const char *state)
         static const struct { const char *name; long bytes; } want_bl[] = {
             {"doc", 7}, {"imported", 23}, {"big.brl", 5000}, {"book", 3000}, {"inwork.txt", 12},
             {"notes", 16}, {"grow", 4500}, {NULL, 0}}, want_tns[] = {
-            {"doc.brl", 4}, {"imported.txt", 23}, {"big.brl", 5000}, {"fbook.brl", 3000}, {"inwork.txt", 12},
-            {"grow", 4500}, {NULL, 0}};
+            {"doc.brl", 7}, {"imported.txt", 23}, {"big.brl", 5000}, {"fbook.brl", 3000}, {"inwork.txt", 12},
+            {"notes", 16}, {"grow", 4500}, {NULL, 0}};
         char text[8000], missing[600] = "";
         int i;
         size_t m = cn < sizeof text - 1 ? cn : sizeof text - 1;
@@ -595,7 +595,7 @@ static void all_checks(int tns, const char *fw, const char *state)
     x = unit_file(&b, g_doc, &n, NULL);
     show(s1, sizeof s1, x, n);
     snprintf(d, sizeof d, "\"%s\" (its pointers and number followed the files that moved)", s1);
-    check("the open file goes on after the import", same(x, n, tns ? "abcq" : "abcxyzq", tns ? 4 : 7), d);
+    check("the open file goes on after the import", same(x, n, "abcxyzq", 7), d);
     {
         unsigned long low = 0, start;
         x = unit_file(&b, book, &n, &fl);
@@ -636,7 +636,9 @@ int main(int argc, char **argv)
         return 2;
     }
     for (i = 3; i < argc; i++)
-        if (!strncmp(argv[i], "--break=", 8))
+        if (!strcmp(argv[i], "--break=cold"))
+            tns_cold_break = 1;
+        else if (!strncmp(argv[i], "--break=", 8))
             blf_break = atoi(argv[i] + 8);
     snprintf(g_tmp, sizeof g_tmp, "test_files.%d", (int)_getpid());
     if (strstr(argv[2], "SPA") || strstr(argv[2], "spa"))

@@ -6,7 +6,8 @@
  *                                        the date and time set, the clock going on, the year, switched off and on;
  *                                        and i-chord held through p-chord l's restart (PART: clock or restart;
  *                                        start: only the clock read at the start, for the Spanish unit)
- *   test_clock tns FIRMWARE [PART]       the English Type 'n Speak from cold (F4 F5, F9 s t, F9 s d; PART: clock)
+ *   test_clock tns FIRMWARE [PART]       the English Type 'n Speak from cold, its setup questions answered y (F4 F5,
+ *                                        F9 s t, F9 s d; PART: clock)
  *
  * What the firmware says is read from its RAM: it writes the words before it speaks them ("12:35:02 pm",
  * "Wednesday September 30, 2015", "initialize file system").  The controls put one bug back and must fail:
@@ -25,6 +26,7 @@
 #define _getpid getpid
 #endif
 #include "emu_unit.h"
+#include "tns_setup.h"
 #include "../../csrc/blazie/bl_board.h"   /* bl_keys_break */
 
 #define RATE 11025
@@ -197,16 +199,20 @@ static void clock_checks(int kind, const char *fw, const char *st, int only_star
     blc_time t;
     char d[300], path[64];
     int ok;
+    /* the Type 'n Speak from cold: its cold reset's questions answered y (tns_setup.h); every key after them o
+       seconds later than the Braille Lite's, and the PC's clock o seconds earlier, so the times said are the same */
+    double o = tns ? tns_setup_ready_at(0) - 12.0 : 0.0;
 
-    start(kind, fw, st, T2012);
-    if (tns) {                      /* from cold: its two questions answered y */
-        key(3.0, 0x3D | 0x80);
-        key(6.0, 0x3D | 0x80);
+    start(kind, fw, st, T2012 - (long long)o);
+    if (tns) {
+        int k;
+        for (k = 0; k < TNS_SETUP_ANSWERS; k++)
+            key(tns_setup_answer_at(k, 0), tns_setup_yes_code('y'));
     }
-    key(12.0, tns ? 0x0E : 0x55);   /* F4, or o-chord ... */
+    key(o + 12.0, tns ? 0x0E : 0x55);   /* F4, or o-chord ... */
     if (!tns)
         key(13.5, 0x1E);            /* ... t */
-    run_to(16.0);
+    run_to(o + 16.0);
     emu_clock_time(g_u, 0, &t);
     snprintf(d, sizeof d, "the PC's 2012-03-04 12:34: the unit said 12:34: %s", ram_has("12:34") ? "yes" : "no");
     check("started from the PC's clock", ram_has("12:34") && t.year == 2012 && t.hour == 12, d);
@@ -216,12 +222,12 @@ static void clock_checks(int kind, const char *fw, const char *st, int only_star
     }
 
     /* the date, then the time, through the unit's own commands */
-    keys(18.0, tns ? tns_date : bl_date, 3);
-    keys(21.0, tns ? tns_mmddyy : bl_mmddyy, 6);
-    keys(28.0, tns ? tns_time : bl_time, 3);
-    keys(31.0, tns ? tns_hhmm : bl_hhmm, 4);
-    key(34.0, tns ? 0x14 : 0x0F);   /* a (am) / p (pm) */
-    run_to(38.0);
+    keys(o + 18.0, tns ? tns_date : bl_date, 3);
+    keys(o + 21.0, tns ? tns_mmddyy : bl_mmddyy, 6);
+    keys(o + 28.0, tns ? tns_time : bl_time, 3);
+    keys(o + 31.0, tns ? tns_hhmm : bl_hhmm, 4);
+    key(o + 34.0, tns ? 0x14 : 0x0F);   /* a (am) / p (pm) */
+    run_to(o + 38.0);
     emu_clock_time(g_u, 0, &t);
     ok = tns ? (t.year == 2014 && t.month == 10 && t.day == 1 && t.hour == 9 && t.minute == 45)
              : (t.year == 2015 && t.month == 9 && t.day == 30 && t.hour == 12 && t.minute == 34);
@@ -230,19 +236,19 @@ static void clock_checks(int kind, const char *fw, const char *st, int only_star
     check("set through the unit's commands", ok && ram_has(set_date), d);
 
     /* a minute on: the clock goes on, in the unit's time, and the unit reads it */
-    key(97.0, tns ? 0x0E : 0x55);
+    key(o + 97.0, tns ? 0x0E : 0x55);
     if (!tns)
         key(98.5, 0x1E);
-    run_to(101.0);
+    run_to(o + 101.0);
     emu_clock_time(g_u, 0, &t);
     snprintf(d, sizeof d, "a minute on: %02d:%02d:%02d; the unit said %s: %s", t.hour, t.minute, t.second, minute_on,
              ram_has(minute_on) ? "yes" : "no");
     check("the clock goes on", ram_has(minute_on) && t.minute == (tns ? 46 : 35), d);
 
-    key(102.0, tns ? 0x16 : 0x55);  /* F5, or o-chord d */
+    key(o + 102.0, tns ? 0x16 : 0x55);  /* F5, or o-chord d */
     if (!tns)
         key(103.5, 0x19);
-    run_to(107.0);
+    run_to(o + 107.0);
     snprintf(d, sizeof d, "the unit read the date back: \"%s\": %s", set_date, ram_has(set_date) ? "yes" : "no");
     check("the year read back", ram_has(set_date), d);
 

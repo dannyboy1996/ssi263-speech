@@ -91,6 +91,19 @@ check "emulator: the clock (Type 'n Speak)" ./build/linux/test_clock tns "$TNS"
 control "emulator: held keys CONTROL (never reported held, must fail)" "^FAIL i-chord held through the restart" \
     "^FAILED$" -- env TEST_CLOCK_HOLD_BREAK=1 ./build/linux/test_clock bl "$DATA/BL2ENG.BNS" \
     "$DATA/bl2_2003_warm.state" restart
+# the Type 'n Speak's real cold reset (Timothy, Jayson): a unit the previews saved without its file system or folders,
+# told apart and set up anew with its files (test_rescue); its control leaves the old cold start on through the rescue
+check "emulator: a Type 'n Speak never set up, rescued" ./build/linux/test_rescue "$TNS"
+control "emulator: rescue CONTROL (the old cold start left on, must fail)" \
+    "^FAIL rescued: set up anew, its files carried +the unit's own setup did not complete" "^FAILED$" \
+    -- env TEST_RESCUE_BREAK=1 ./build/linux/test_rescue "$TNS"
+# blazie_files, a saved unit's files from the command line: export, unpack, a new file, pack, import, on a copy of
+# the shipped state; its control leaves a new flash file's blocks unmarked (bl_files.h blf_break 2)
+check "emulator: blazie_files round trip (export, unpack, pack, import)" sh tools/blazie_files_roundtrip.sh \
+    build/linux/blazie_files "$DATA/bl2_2003_warm.state"
+control "emulator: blazie_files round trip CONTROL (flash blocks not marked used, must fail)" \
+    "^NOT saved: .*not marked used" "^FAIL import$" "^round trip: FAILED$" \
+    -- env TEST_FILES_BREAK=2 sh tools/blazie_files_roundtrip.sh build/linux/blazie_files "$DATA/bl2_2003_warm.state"
 if [ -x "$EMU" ]; then
     check "emulator: the program headless" python3 src/apps/blazie/test_emu_linux.py "$EMU" "$DATA"
     control "emulator: program CONTROL (dots 1 and 4 swapped, must fail)" \
@@ -115,7 +128,8 @@ check "package" sh tools/package_linux.sh "$DATA"
 check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
     --out build/audit
 check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \
-    build/linux/sd_ssi263 build/linux/blazie_emu build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
+    build/linux/sd_ssi263 build/linux/blazie_emu build/linux/blazie_files \
+    build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
     build/audit/ssi263speech-*.whl
 # the licences that must ship: MIT (ours, Casso's) and MAME's BSD-3-Clause for the Z180, in the package and the wheel
 check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
@@ -125,7 +139,8 @@ check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speec
     for x in n) != 3)' build/audit/ssi263speech-*.whl && echo 'MIT, Casso MIT, MAME Z180 BSD-3-Clause: in both'"
 check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
     --clean-sample
-check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu"
+check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu \
+    build/linux/blazie_files"
 control "no-GPL audit CONTROL (genuine legacy payloads, must fail)" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: z180emu engine" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: Unicorn engine" \

@@ -22,8 +22,11 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
 | `tns_keys.h` | The Type 'n Speak's key codes by key name: the one table `tns_keymap_win.c` and `tns_term.c` both read. Portable. |
+| `tns_setup.h`, `.c` | The Type 'n Speak's first start: its cold reset's seven questions (measured), what the shells tell the person, and a headless factory setup (the questions answered in the unit's own time) for the tests and the rescue. Portable. |
+| `tns_rescue.h`, `.c` | A saved Type 'n Speak that was never set up (the previews' first start missed the cold reset), told apart and set up anew with its RAM files; the old state kept beside it. Portable. |
+| `test_rescue.c` | A unit made as the previews made it, told apart, rescued (its first file without the character it never stored, the flash file it lost named), and then moving a file to flash with its own command; `TEST_RESCUE_BREAK=1` must fail. |
 | `blazie_files.c` | The command line for a saved unit's files (Windows, Linux, the BTSpeak): list, export to a disk image, import from one, extract to a folder, pack and unpack an image. The portable half is `../../csrc/blazie/bl_files*.c` and `fat_img.c`. |
-| `test_files.c` | Files in and out against the units' own commands, on all four units: the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; `--break=1..5` put one bug back each for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
+| `test_files.c` | Files in and out against the units' own commands, on all four units: the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; the Type 'n Speak from its factory start (its cold reset's questions answered), its first file moved to flash whole; `--break=1..5` put one bug back each, `--break=cold` the old cold start, for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
 
 The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
 
@@ -164,10 +167,41 @@ hour, day or month, while the unit is running.
 As a real unit keeps its battery-backed RAM, its file flash and its clock while switched off, the program saves them
 on exit (and when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or `spanish.state`, and starts from
 them next time. The first time, and after Firmware > Back to the factory state, it starts from the shipped state; the
-Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the unit's own reset to its defaults
-(without it blank RAM leaves the volume at 0), and the unit asks to initialise its flash: y, then y (Spanish: s).
-It asks once: answered, the flash is initialised and saved with the rest, and the unit starts without the question
-from then on (closed while it still asks, it asks again next time, as the unit would).
+Type 'n Speak starts as a new unit, with its cold reset (below, "The Type 'n Speak's first start").
+
+### The Type 'n Speak's first start
+
+The program holds Ctrl+Alt+Del at power-on: the unit's own cold reset, which sets its defaults (without it blank RAM
+leaves the volume at 0) and asks how to set itself up. Before it starts, the program shows what to answer (and the
+Keys box says it again). Press y for each question (the Spanish unit: s), seven times:
+
+1. "initialize file system?" y, "are you sure?" y -- "system initialized".
+2. "initialize flash system?" y, "are you sure?" y -- "please wait", then the flash chip's 32 s erase, with clicks.
+3. "initialize folder system?" y -- "Type 'n Speak ready", the date, "help is open".
+4. "delete all data in file area." y, "are you sure?" y -- about 35 s of silence while it clears its memory (keys are
+   ignored), then "system initialized" and it starts again: ready.
+
+Any other key asks the same question again. n to the flash makes it ask about the flash at its next start; n to the
+last question leaves the file area as it is (a new unit's is empty). But n to the file system or to the folders
+leaves a unit that cannot keep files -- its first file loses its first letter, and a file moved to flash is lost --
+so the program offers to set it up again when it next starts it (below). Closed while it still asks, it is not set
+up either, and is offered the same way.
+
+**Why the questions (0.7.1).** The units shipped set up, but this is the first start a Type 'n Speak owner met after
+the cold reset its help file describes, and testers liked hearing the unit's own setup. The 0.6 and 0.7 previews
+sent the keys in a way the firmware took as its warm reset: it read one key early, and the three it then checks
+(each a different one of Ctrl, Alt, Delete) ended with a key coming up. The warm reset sets up the flash but not the
+file system or the folders, so a new file was put into the program's last byte (its first character lost) and a file
+moved to flash went into folder 0, the deleted mark, without its text: lost (Timothy: "TNS asks to initialize";
+Jayson and Timothy: "flash not working"). Ctrl now goes twice, and the unit runs its real cold reset.
+
+**A Type 'n Speak saved by the previews.** When the program starts a saved Type 'n Speak whose file system or folders
+were never set up, it says so and asks: Yes sets it up now (the unit's own setup, its questions answered for you, a
+few seconds) and keeps its RAM files in its RAM startup folder -- a first character the old unit never stored stays
+missing, and files lost moving to flash are only named, since their text was never written -- with its settings back
+to the factory's; No starts it from the factory state (its questions); Cancel starts it as it is. Yes and No keep
+the old memory beside it as `tns_english.state.before-setup` (or `tns_spanish`). `blazie_files list` also says when
+a saved unit was never set up, and names the flash files it lost.
 
 A state holds no CPU registers (the unit starts from it as from power-on), so the states saved by the builds before
 0.7, on z180emu's Z180, load and run on MAME's unchanged: the same RAM, flash and clock, the same format.
@@ -241,9 +275,9 @@ first: it saves its unit when it closes), for example on Linux or the BTSpeak:
                                                         state as english.state.before-import)
     blazie_files extract english.state myfiles --crlf  (each file as a PC text file, CR LF)
 
-**The Type 'n Speak's first start.** The emulator starts a new Type 'n Speak with its warm reset, which sets up the
-flash but not the file system or the folders (a real unit's cold reset -- Ctrl+Alt+Del held at power-on -- asks for
-all three). On such a unit the import refuses ("the unit's folders were never set up"); export works.
+**A Type 'n Speak that was never set up** (saved by the 0.6 or 0.7 previews, or a setup question answered n: "The
+Type 'n Speak's first start" above): the import refuses ("the unit's folders were never set up"); export works. The
+program offers to set it up, keeping its RAM files, when it starts it.
 
 ## Not yet
 

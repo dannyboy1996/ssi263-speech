@@ -2,7 +2,7 @@
  * PCDISK or the disk drive, answered from here as the far end would.
  *
  *   test_serial bl FIRMWARE STATE     the Braille Lite: s-chord (storage)
- *   test_serial tns FIRMWARE -        the Type 'n Speak from cold: F8 (storage)
+ *   test_serial tns FIRMWARE -        the Type 'n Speak from cold, its setup questions answered: F8 (storage)
  *
  * What the firmware does (measured, see ../../csrc/blazie/bl_serial.h): on the storage key it asks the disk drive's
  * port (ASCI1, not carried) with ENQ, then switches the serial port on at 19200 bit/s and sends XON ENQ.  A far end
@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "emu_unit.h"
+#include "tns_setup.h"
 
 #define RATE 11025
 #define BLOCK (RATE / 200)                 /* 5 ms of the unit per render */
@@ -115,14 +116,16 @@ static int handshake(int kind, const char *fw, const char *st, unsigned char rep
         printf("FAIL attach\n");
         exit(1);
     }
-    if (kind == EMU_TYPE_N_SPEAK) {         /* from cold: "initialize flash system?" y, "are you sure?" y (the
-                                               Spanish unit's yes is s) */
-        int yes = strstr(fw, "SPA") || strstr(fw, "spa") ? 0x2C : 0x3D;
-        run(3.0);
-        key(kind, yes);
-        run(3.0);
-        key(kind, yes);
-        run(10.0);
+    if (kind == EMU_TYPE_N_SPEAK && !st) {  /* from cold: its cold reset's questions, each answered yes (the Spanish
+                                               unit's is s; tns_setup.h) */
+        int yes = tns_setup_yes_code(tns_setup_yes(fw)) & 0x7F, k;
+        double t = 0.0;
+        for (k = 0; k < TNS_SETUP_ANSWERS; k++) {
+            run(tns_setup_answer_at(k, 0) - t);
+            t = tns_setup_answer_at(k, 0);
+            key(kind, yes);
+        }
+        run(tns_setup_ready_at(0) - t);
     } else
         run(8.0);                           /* the greeting is over */
     drain();

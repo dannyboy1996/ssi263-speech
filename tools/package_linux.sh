@@ -45,6 +45,11 @@ if [ -f "$ROOT/build/linux/blazie_emu" ]; then
 else
     echo "note: build/linux/blazie_emu not built, so not packaged"
 fi
+# blazie_files: a saved unit's files from the command line (README-blazie-emu.md, "Files in and out"); no sound needed
+if [ -f "$ROOT/build/linux/blazie_files" ]; then
+    cp "$ROOT/build/linux/blazie_files" "$STAGE/bin/"
+    chmod +x "$STAGE/bin/blazie_files"
+fi
 cat > "$STAGE/share/ssi263-speech/speech-dispatcher/ssi263.conf" <<'EOF'
 # The Braille Lite 2000 voice (sd_ssi263): the unit's own firmware speaking through an emulated SSI-263.
 #

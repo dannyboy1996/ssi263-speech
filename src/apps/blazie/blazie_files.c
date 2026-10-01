@@ -216,8 +216,18 @@ static int list(const blf_fs *fs, int model)
                x->folder, x->type ? x->type : '-', x->prot & 2 ? ", protected" : "",
                x->has_password ? ", password" : "", x->system ? ", the unit's own" : "", x->open ? ", open" : "");
     }
+    for (i = 0; ; i++) {                     /* flash files a unit without folders lost (bl_files.h) */
+        blf_file x;
+        unsigned long n;
+        if (!blf_lost_get(fs, i, &x, &n))
+            break;
+        printf("%-20s %8lu bytes  flash LOST: moved to flash by a unit whose folders were never set up\n", x.name, n);
+    }
     blf_free_space(fs, &ram_free, &flash_free);
     printf("%d files; free: %lu RAM pages, %lu k flash\n", blf_count(fs), ram_free / 4096, flash_free / 1024);
+    if (model == BLF_TYPE_N_SPEAK && (!blf_ram_ok(fs) || !blf_folders_ok(fs)))
+        printf("This Type 'n Speak was never set up: the emulator offers to set it up again, keeping its RAM files, "
+               "when it next starts it.\n");
     return 0;
 }
 
@@ -360,6 +370,8 @@ int main(int argc, char **argv)
     int rc = 0;
     if (getenv("TEST_FILES_FAT_BREAK"))      /* run_tests' must-fail control for the 7-Zip check */
         fat_break = atoi(getenv("TEST_FILES_FAT_BREAK"));
+    if (getenv("TEST_FILES_BREAK"))          /* the Linux round trip's control (bl_files.h blf_break) */
+        blf_break = atoi(getenv("TEST_FILES_BREAK"));
     if (argc < 3)
         return usage();
     if (!strcmp(argv[1], "pack") && argc >= 4)

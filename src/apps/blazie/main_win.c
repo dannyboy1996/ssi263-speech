@@ -24,6 +24,8 @@
 #include "emu_unit.h"
 #include "serial_win.h"
 #include "tns_keymap_win.h"
+#include "tns_rescue.h"
+#include "tns_setup.h"
 #include "../../csrc/blazie/bl_files.h"
 #include "../../csrc/blazie/bl_files_state.h"
 #include "../../csrc/blazie/bl_files_xfer.h"
@@ -41,7 +43,7 @@ enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_FACTORY, ID_EXIT, ID_EXPORT,
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
 
-/* state NULL: a cold start (the Type 'n Speak asks to initialise its flash; answer y twice) */
+/* state NULL: a cold start (the Type 'n Speak's cold reset asks how to set itself up: TNS_FIRST_START) */
 typedef struct { const char *name; int kind; const char *firmware, *state, *saved, *ini; } unit_kind;
 static const unit_kind KINDS[] = {
     {"Braille Lite 2000 (English)", EMU_BRAILLE_LITE, "BL2ENG.BNS", "bl2_2003_warm.state", "english.state",
@@ -156,6 +158,53 @@ static void save_unit(void)
                     MB_OK | MB_ICONWARNING);
 }
 
+/* A saved Type 'n Speak that was never set up (tns_rescue.h: the 0.6 and 0.7 previews' first start missed the unit's
+   cold reset): the person chooses -- set it up now keeping its RAM files, the factory state (its own questions), or
+   as it is.  0: start it from no state (the factory's cold start); 1: from st. */
+static int offer_setup(int kind, const char *fw, const char *st)
+{
+    char msg[4000], lost[300] = "", err[300], before[MAX_PATH + 20];
+    tns_rescue_report r;
+    int answer;
+    if (tns_needs_setup(st, &r) != 1)
+        return 1;
+    if (r.lost_flash)
+        snprintf(lost, sizeof lost, ", and %d it lost when moving them to flash (their text was never written: "
+                 "only their names are left)", r.lost_flash);
+    snprintf(before, sizeof before, "%s.before-setup", st);
+    snprintf(msg, sizeof msg, "This %s was never set up: its file system and folders were not made when it first "
+             "started (the 0.6 and 0.7 previews' first start missed the unit's cold reset; or a setup question was "
+             "answered n). On it a new file can lose its first letter, and a file moved to flash is lost.\n\n"
+             "Its files: %d in RAM%s.\n\n"
+             "Yes: set it up now and keep its RAM files (in its RAM startup folder). Its settings go back to the "
+             "factory's.\n"
+             "No: start it from the factory state: it asks its own setup questions, and its files are not kept.\n"
+             "Cancel: start it as it is.\n\n"
+             "Yes and No keep the old memory as %s.", KINDS[kind].name, r.ram_files, lost, before);
+    answer = MessageBoxA(g_wnd, msg, "Type 'n Speak not set up", MB_YESNOCANCEL | MB_ICONWARNING);
+    if (answer == IDNO) {
+        if (!CopyFileA(st, before, FALSE)) {
+            MessageBoxA(g_wnd, "Could not keep the old memory; the unit starts as it is.", "Blazie emulator",
+                        MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        DeleteFileA(st);
+        return 0;
+    }
+    if (answer != IDYES)
+        return 1;
+    status("Setting up the Type 'n Speak (a few seconds)");
+    if (!tns_rescue(fw, st, 1, &r, err, sizeof err)) {
+        snprintf(msg, sizeof msg, "Could not set the unit up: %s\n\nIt starts as it is.", err);
+        MessageBoxA(g_wnd, msg, "Blazie emulator", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    snprintf(msg, sizeof msg, "The %s is set up: %d files kept%s. The old memory is in %s.\n\n%s", KINDS[kind].name,
+             r.carried, r.first_lost ? " (one had lost its first letter on the old unit)" : "", before, r.log);
+    MessageBoxA(g_wnd, msg, "Type 'n Speak set up", MB_OK | MB_ICONINFORMATION);
+    return 1;
+}
+
 static int start_unit(int kind)
 {
     char fw[MAX_PATH], st[MAX_PATH], err[256];
@@ -164,12 +213,16 @@ static int start_unit(int kind)
     save_unit();                            /* first: the unit being left keeps its memory (it may be this kind) */
     snprintf(fw, sizeof fw, "%s\\%s", g_fw_dir, KINDS[kind].firmware);
     saved_path(kind, st, sizeof st);
-    if (!exists(st)) {                      /* the first time: the unit as it left the factory */
+    if (exists(st) && KINDS[kind].kind == EMU_TYPE_N_SPEAK && !offer_setup(kind, fw, st))
+        state = NULL;                       /* the factory state: the unit's cold reset, its own questions */
+    else if (!exists(st)) {                 /* the first time: the unit as it left the factory */
         if (KINDS[kind].state)
             snprintf(st, sizeof st, "%s\\%s", g_fw_dir, KINDS[kind].state);
         else
             state = NULL;                   /* a cold start */
     }
+    if (!state && KINDS[kind].kind == EMU_TYPE_N_SPEAK)
+        MessageBoxA(g_wnd, TNS_FIRST_START, KINDS[kind].name, MB_OK | MB_ICONINFORMATION);
     status("Starting");
     u = emu_create(KINDS[kind].kind, fw, state, g_rate, g_whine, err, sizeof err);
     if (!u) {
@@ -800,9 +853,8 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
                         "The keys can be changed in blazie_emu.ini, section [keys].\n"
                         "Alt opens this program's menu; Alt+F4 closes it.\n\n"
                         "Type 'n Speak: the whole keyboard is the unit's, Alt and the function keys included.\n"
-                        "Alt+Shift+F (or F11) opens this program's menu (Firmware > Exit closes it).\n"
-                        "The first time, the unit asks to initialize its flash: press y, then y again "
-                        "(the Spanish unit: s, then s).", "Keys", MB_OK);
+                        "Alt+Shift+F (or F11) opens this program's menu (Firmware > Exit closes it).\n\n"
+                        TNS_FIRST_START, "Keys", MB_OK);
             return 0;
         case ID_ABOUT:
             MessageBoxA(w, "Blazie emulator, part of ssi263-speech.\n\n"

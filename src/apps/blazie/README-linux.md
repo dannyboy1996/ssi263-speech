@@ -66,8 +66,21 @@ After a choice the menu says one line; `?` lists it again.
 `blazie_emu.ini`, written the first time with every key setting explained, and each unit's memory --
 `english.state`, `spanish.state`, `tns_english.state`, `tns_spanish.state` -- saved when you exit, when you switch
 units, and every minute (written whole, then put in place: a power cut never leaves half a file). The first time,
-the Braille Lite starts from the shipped state and the Type 'n Speak from cold: it asks to initialise its flash, y
-then y (the Spanish unit s, s), and the erase takes the flash chip's 32 seconds of clicks.
+the Braille Lite starts from the shipped state and the Type 'n Speak as a new unit: its own cold reset (Ctrl+Alt+Del
+held at power-on) asks how to set itself up, and the program says so. Press y for each question (the Spanish unit:
+s), seven times: initialize file system, are you sure; initialize flash system, are you sure (then the flash chip's
+32 seconds of clicks); initialize folder system (it says it is ready and opens its help); delete all data in file
+area, are you sure (then about 35 seconds of silence while it clears its memory, and it starts again). README.md,
+"The Type 'n Speak's first start", says why each one matters.
+
+A Type 'n Speak saved by the 0.6 or 0.7 previews was never set up (their first start missed the unit's cold reset:
+a new file lost its first letter, a file moved to flash was lost). When such a unit starts, the program says so and
+asks: `k` sets it up now and keeps its RAM files (its settings go back to the factory's), `f` starts it from the
+factory state (its own questions again), Enter alone starts it as it is. `k` and `f` keep the old memory beside it
+as `tns_english.state.before-setup`.
+
+`blazie_files` (in the package's `bin`, beside `blazie_emu`) lists, exports, imports, extracts, packs and unpacks a
+saved unit's files from the command line, as on Windows (README.md, "Files in and out"); close the emulator first.
 
 ## Keys
 
@@ -164,9 +177,15 @@ is given):
 - `test_emu_unit`, `test_clock` -- the unit headless as on Windows, here on MAME's Z180: the boot, a chord answered,
   key latency, saving; the clock controller, the date and time set and read with the units' own commands, i-chord
   held through a restart (its control drops the held keys and must fail).
+- `test_rescue` -- a Type 'n Speak made as the previews made it (no file system, no folders; a file moved to flash
+  lost) is told apart and set up anew with its RAM files; its control leaves the old cold start on and must fail.
+- `tools/blazie_files_roundtrip.sh` -- `blazie_files` on a copy of the shipped state: export, unpack, a new file,
+  pack, import; the unit lists it and every old file is unchanged. Its control (`TEST_FILES_BREAK=2`, a new flash
+  file's blocks left unmarked) must fail.
 - `test_emu_linux.py` -- the whole program headless (`--null`, keys typed from a script at their times through the
   terminal's decoding): the Braille Lite boots and answers F (not without it); o-chord t typed as keys and as letters
-  says the host's time; the Type 'n Speak from cold, y y, F4 says the time; the date and time set through the unit's
+  says the host's time; the Type 'n Speak from cold, its seven setup questions answered y, F4 says the time; the date
+  and time set through the unit's
   commands, saved to the memory folder and started from again; i-chord held through a restart by an input device's
   keys; and the program run as a person runs it, in a pseudo-terminal, its serial port on another: s-chord's XON ENQ
   at 19200 bit/s, ACK answered with 'C', NAK (the control) not. Its control (`BLAZIE_KEYS_BREAK=1`) must fail the
