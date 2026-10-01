@@ -809,6 +809,32 @@ if os.path.isfile(os.path.join(SO_LIB, "test_v40_contract.exe")):
         # labelled experimental smoke test only
         CHECKS.append(check("driver_sim speakout on the MAME V40 core (mame at 8 MHz: experimental smoke test)",
                             [PY, "-S", "driver_sim.py", "speakout", NVDA, "rt"], env={"SSI263_SPEAKOUT_CORE": "mame"}))
+    # so_voice (src/csrc/speakout/so_voice.c, so_host.c: the driver's front end and speakout.py's host in C, for
+    # speech-dispatcher and Android): the real driver's PCM, byte for byte, on texts, settings, every sample rate, a
+    # capital and cancels; two controls (the driver's currencies() skipped: from the currency case on; the C host's
+    # cpu_ips 1 % fast: from the first case); its text path on random texts, with a control (strip() to spaces only);
+    # and the C API alone (so_render: the firmware and a text into a WAV, no Python)
+    if os.path.isfile(SO_HEX) and os.path.isfile(os.path.join(SO_LIB, "x64", "so_voice.dll")):
+        CHECKS.append(check("so_voice = the NVDA Speak-Out driver, byte for byte", [PY, "so_voice_equiv.py"]))
+        CHECKS.append(check("so_voice CONTROL (driver's currencies skipped, must fail)", [PY, "so_voice_equiv.py"],
+                            env={"SO_VOICE_EQUIV_BREAK": "currencies"}, expect_fail=True,
+                            fail_marks=[r"^CONTROL: the driver's currencies\(\) is skipped",
+                                        r"^same  plain ", r"^DIFF  numbers\+currency ",
+                                        r"^(?!21 )\d+ of 21 utterances byte-identical to the NVDA driver"]))
+        CHECKS.append(check("so_voice CONTROL (C host's cpu_ips 1 % fast, must fail)", [PY, "so_voice_equiv.py"],
+                            env={"SO_VOICE_EQUIV_BREAK": "timing"}, expect_fail=True,
+                            fail_marks=[r"^CONTROL: the C host's cpu_ips is 1 % fast", r"^DIFF  plain ",
+                                        r"^(?!21 )\d+ of 21 utterances byte-identical to the NVDA driver"]))
+        CHECKS.append(check("so_voice text = the driver's, 5000 random texts", [PY, "so_voice_text_equiv.py", "5000", "1"]))
+        CHECKS.append(check("so_voice text CONTROL (strip() to spaces only, must fail)",
+                            [PY, "so_voice_text_equiv.py", "2000", "1"], env={"SO_VOICE_TEXT_BREAK": "1"},
+                            expect_fail=True,
+                            fail_marks=[r"^DIFF ", r"^(?!2000 )\d+ of 2000 texts give the box the same bytes"]))
+    if os.path.isfile(SO_HEX) and os.path.isfile(os.path.join(SO_LIB, "so_render.exe")):
+        CHECKS.append(check("Speak-Out: the C API alone (so_render)",
+                            [os.path.join(SO_LIB, "so_render.exe"), SO_HEX, "Testing one two three.",
+                             os.path.join(HERE, "out", "so_render_test.wav")],
+                            ok=lambda out: bool(re.search(r"^[1-9]\d*\.\d\d s of audio in ", out, re.M))))
 
 # The Accent SA in C (src/csrc/accentsa: its board on MAME's 8085 and accent_sa.py's host; the add-on's default since
 # 0.7, SSI263_ACCENT_SA_CORE=c; the Python 8085 is the development reference): the board's rules (test_as_board.c; their must-fail

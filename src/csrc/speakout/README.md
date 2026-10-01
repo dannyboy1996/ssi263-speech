@@ -13,7 +13,10 @@ the CPU's. The firmware (`SPEAKOUT.HEX`) is not in the repository.
 | `so_hex.h`, `so_hex.c` | Intel HEX into the 1 MB image, as `speakout.py`'s `load_intel_hex`. |
 | `test_so_board.c` | The board's rules on small programs (no firmware): 11 tests. |
 | `so_controls.py` | Its must-fail controls: each rule undone in a scratch copy, exactly its tests must fail (11). |
-| `build_board.py` | Windows build (w64devkit): `nvda/dist/speakout-lib/` gets `test_v40_contract.exe`, `test_so_board.exe`, `x64/` and `x86/speakout_v40.dll`. `build_linux.sh` builds the same tests and `libspeakout_v40.so`. |
+| `so_host.h`, `so_host.c` | The host in C: `src/hosts/speakout.py`'s `SpeakOutV40` on mame-steps, line for line -- the chip-time lockstep (offer, chip slice, `max(200, int(1.5e6 x dt))` steps, the writes applied in order), `say`, `busy`, `boot`, `cancel`, `skip` -- around this board and `../ssi263.c`. |
+| `so_voice.h`, `so_voice.c` | The voice: the NVDA driver's front end in C (its boot, the ^E settings commands, currencies and `_clean`, a capital's snapped pitch, the speak loop with the lead trim and PCM, cancel and the pitch said again, the sample-rate switch), as `../blazie/bl_voice.h` and `../accentsa/as_voice.h`. For speech-dispatcher and Android. `nvda/tools/so_voice_equiv.py` holds it to the driver byte for byte, `so_voice_text_equiv.py` its text path. |
+| `so_render.c` | The voice's C API alone: SPEAKOUT.HEX and a text into a WAV, the chip built in (a smoke test; the same bytes on Windows x64 and Linux arm64). |
+| `build_board.py` | Windows build (w64devkit): `nvda/dist/speakout-lib/` gets `test_v40_contract.exe`, `test_so_board.exe`, `so_render.exe`, `x64/` and `x86/speakout_v40.dll` (what the add-on ships) and `so_voice.dll` (the host and voice, for the tests; it links `ssi263.dll`). `build_linux.sh` builds the same tests and `libspeakout_v40.so`, and compiles the host and voice; `build_android.sh` compiles the board, host and voice for each ABI. |
 
 The CPU is `../cpu/v40_mame.cpp` (CONTRACT.md 12). Python reaches the board through `src/hosts/speakout_v40.py`;
 `SpeakOut()` selects `mame-steps` by default, keeping the established instruction-count

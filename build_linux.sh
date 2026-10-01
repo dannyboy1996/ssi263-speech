@@ -151,6 +151,15 @@ $CXX -o "$OUT/test_v40_contract" "$OUT/test_v40_contract.o" "$OUT/obj_v40/v40_ma
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC/speakout -c -o "$OUT/test_so_board.o" "$SRC/speakout/test_so_board.c"
 $CXX -o "$OUT/test_so_board" "$OUT/test_so_board.o" "$OUT"/obj_v40/*.o
 $CXX -shared -o "$OUT/libspeakout_v40.so" "$OUT"/obj_v40/*.o
+# The Speak-Out's host and voice in C (so_host.h, so_voice.h: speakout.py and the NVDA driver's front end), compiled
+# only, into their own folder (the board's library and test above link obj_v40/*.o): a front end links them with
+# obj_v40's board and core, numwords.o and the chip's objects (so_voice.h lists them).  -fvisibility=hidden: only
+# SO_API is exported from a library they go into.
+rm -rf "$OUT/obj_sovoice"; mkdir -p "$OUT/obj_sovoice"
+$CC -O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/speakout -I$SRC -c -o "$OUT/obj_sovoice/so_host.o" "$SRC/speakout/so_host.c"
+for f in speakout/so_voice numwords; do
+    $CC -O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/speakout -I$SRC -c -o "$OUT/obj_sovoice/$(basename $f).o" "$SRC/$f.c"
+done
 
 # MAME's 8086 core (src/csrc/cpu/i86_mame.cpp, the Accent-mini's PC): the CPU contract's tests, and libpc86.so
 # (src/csrc/pc86) for the Accent-mini host (src/hosts/pc86.py).  Own folder.

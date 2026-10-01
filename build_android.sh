@@ -63,6 +63,7 @@ FRONT="-O2 -std=c99 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wextra -W
 Z180CXX="-O3 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC"
 MAME="-O2 -std=c++17 -fno-exceptions -fno-rtti -ffp-contract=off -fPIC -fvisibility=hidden -Wall -Wno-sign-compare -I$SRC/cpu -I$SRC"
 ACCENT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/accentsa -I$SRC"
+SPEAKOUT="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC/cpu -I$SRC/speakout -I$SRC"
 CPP="$APP/cpp"
 AICOM="$ROOT/firmware/aicom-accent-sa"
 
@@ -100,6 +101,17 @@ objects() {
     cc --target="$TARGET" $FRONT -c -o "$O/numwords.o" "$SRC/numwords.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_map.o" "$CPP/ssa_map.c"
     cc --target="$TARGET" $FRONT -c -o "$O/ssa_engine.o" "$CPP/ssa_engine.c"
+    # The Speak-Out (MAME's V40, src/csrc/speakout: its board, host and voice), compiled only, into its own folder so
+    # that the library above (every object in obj/) does not take it in yet: a front end links these with obj/'s
+    # numwords.o and chip objects (so_voice.h lists them).
+    S="$OUT/$ABI/obj_speakout"
+    rm -rf "$S"
+    mkdir -p "$S"
+    cxx --target="$TARGET" $MAME -c -o "$S/v40_mame.o" "$SRC/cpu/v40_mame.cpp"
+    for f in so_board so_icu so_scu so_hex so_host; do
+        cc --target="$TARGET" $SPEAKOUT -c -o "$S/$f.o" "$SRC/speakout/$f.c"
+    done
+    cc --target="$TARGET" $FRONT -c -o "$S/so_voice.o" "$SRC/speakout/so_voice.c"
 }
 ACCENT_OBJS="i8085_mame.o as_board.o as_usart.o as_host.o as_voice.o numwords.o"
 BL_OBJS="z180_mame.o z180_asci.o bl_board.o flash29.o bl_serial.o bl_idle.o bl_clock.o bl_host.o bl_voice.o"
