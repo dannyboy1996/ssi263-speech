@@ -5,8 +5,9 @@
  * For front ends without Python: the Linux speech-dispatcher module, Android.  nvda/tools/voice_equiv.py gates it:
  * the real NVDA driver's PCM and this one's, byte for byte, on the same text and settings.
  *
- * Not yet ported (v1): the driver's number words (ssi263_numwords.py); the firmware reads numbers itself up to
- * 999,999,999,999.  Pitch commands inside an utterance (capitals) are not part of this API.
+ * The driver's number words (its "Custom number processing") come in through blv_set_numbers (bl_numbers.h), off
+ * until set: without them the firmware reads numbers itself up to 999,999,999,999.  Pitch commands inside an
+ * utterance (capitals) are not part of this API.
  */
 #ifndef BL_VOICE_H
 #define BL_VOICE_H
@@ -36,6 +37,12 @@ BL_API void blv_set(bl_voice *v, int rate, int pitch, int tone, int volume, int 
    mode (bl_host.h "run_ahead", run_ahead.h): its completion in blv_render's done, its faults in blv_speak's -1 and
    blv_fault, its settle before a cancel in blv_cancel.  Off: the lockstep, byte for byte as before. */
 BL_API void blv_set_run_ahead(bl_voice *v, int on);
+/* The driver's "Custom number processing" (numberWords; the driver's default is on, this voice's off until set): fn
+   rewrites the cleaned text before it is cut into lines, as the driver's _numbers -- bl_numbers.h's bl_numbers is it.
+   A function rather than a flag so this file links without the number words (bl.dll has none).  fn gets the text as
+   UTF-8 and the voice's encoding and returns a malloc'd UTF-8 string (NULL: left as it was).  NULL turns it off. */
+typedef char *(*blv_numbers_fn)(const char *utf8, int encoding);
+BL_API void blv_set_numbers(bl_voice *v, blv_numbers_fn fn);
 
 /* Starts one utterance (UTF-8).  Returns the number of lines sent to the unit (0: nothing to say), or -1 when the
    host refused it (a run-ahead fault); the next blv_speak recovers with a cancel first. */
@@ -56,6 +63,8 @@ BL_API extern int blv_break_fault;
 /* The bytes blv_speak would send the unit for this text (currencies, clean-up, lines, encoding), for tests: returns
    the length, and copies them into out when they fit in cap. */
 BL_API int blv_say_bytes(const char *utf8, int encoding, int pack, unsigned char *out, int cap);
+/* The same with the number words (fn as blv_set_numbers; NULL: as blv_say_bytes). */
+BL_API int blv_say_bytes_with(const char *utf8, int encoding, int pack, blv_numbers_fn fn, unsigned char *out, int cap);
 
 BL_API bl_host *blv_host(bl_voice *v);
 BL_API ssi263 *blv_chip(bl_voice *v);

@@ -6,12 +6,14 @@
  * its own fragment with a bookmark between every pair, and a bookmark's text is its name -- and a space is
  * restored at the seam when neither side brought one.
  *
- * The synthesis path is deliberately not a port.  This DLL launches the embeddable Python installed beside it
- * running ssi_serve.py, which drives the SAME driver files the NVDA add-ons run -- the firmware, the emulators,
- * the chip, number reading, cancel -- so a SAPI voice is the NVDA voice by construction (sapi/test_serve.py).
- * There is no text processing here at all: the server on the other side of the pipe owns every decision about how
- * speech sounds.  The server stays resident; a cancel is graceful (the seq-tagged cancel frame, then a drain to the
- * terminator) and keeps it warm.
+ * The voices run here, in the caller's process, in C: ssi263speech.dll beside this DLL (the same bitness, in x86\ or
+ * x64\) carries the chip, the emulated units and each NVDA driver's text preparation -- the voice table of
+ * src/csrc/voices.h, which the Linux and Android front ends share -- and the firmware sits in {app}\firmware.  Up to
+ * 0.7.0 this DLL launched an embeddable Python running the NVDA drivers behind a pipe (sapi/ssi_serve.py); that script
+ * stays in the repository as the reference, and sapi/test_native.py holds the native voices to it byte for byte, with
+ * this DLL's own mapping of the settings (ssi_native.c).  There is no text processing in this file: the voices own
+ * every decision about how speech sounds.  The units stay booted between utterances (the bank); a cancel is the
+ * voice's own, between two 30 ms blocks.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -23,11 +25,20 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstdarg>
+#include "ssi_native.h"
 
 static HMODULE g_module;
 static long g_objects;
+#ifdef SSI263_SAPI_DEV
+/* The development build (sapi\build.ps1 -Dev, for sapi/test_sapi_engine.py): its own class and its own settings key
+ * (or the one SSI263_SAPI_SETTINGS_KEY names), so it never touches the installed engine or its settings; and the
+ * tests' must-fail hooks (SSI263_SAPI_TEST_BREAK=setting|voice). */
+static const CLSID CLSID_Ssi263 = {0x3c0e5f7a,0x9d21,0x4e83,{0xb1,0x6f,0x52,0x0d,0x8a,0x4c,0x77,0x19}};
+#define SETTINGS_KEY L"Software\\SSI-263 SAPI (development)"
+#else
 static const CLSID CLSID_Ssi263 = {0x616e7e0a,0x7b1a,0x4b94,{0x88,0x12,0xbb,0xb5,0x97,0xd2,0xc0,0x25}};
-static const unsigned REQ_MAGIC = 0x4F535034, RSP_MAGIC = 0x4F535052, CANCEL_MAGIC = 0x4F535043; /* OSP4 / OSPR / OSPC */
+#define SETTINGS_KEY L"Software\\SSI-263 SAPI"
+#endif
 /* SPDFID_WaveFormatEx, by value: the ONE format GUID SAPI recognises as
  * "the WAVEFORMATEX that follows describes the audio".  A fresh GUID here
  * registers fine and then speaks silence -- SAPI cannot negotiate a format
@@ -35,11 +46,12 @@ static const unsigned REQ_MAGIC = 0x4F535034, RSP_MAGIC = 0x4F535052, CANCEL_MAG
  * first build reaching a real SAPI client. */
 static const GUID Ssi263WaveFormatEx = {0xc31adbae,0x527f,0x4ff5,{0xa2,0x30,0xf6,0x2b,0xb6,0x1f,0xf7,0x0c}};
 /* The output rates the add-ons offer (nvda/shared/ssi263_rates.py), 22 kHz by default.  The settings dialog's
- * SampleRate chooses one for every voice; GetOutputFormat declares it, Speak renders at the rate SAPI then hands
- * back (so a setting changed in between can never put audio at an undeclared rate), and the server is started
- * with it (--rate). */
-static const DWORD DEFAULT_RATE = 22050, MAX_RATE = 44100;
+ * SampleRate chooses one for every voice; GetOutputFormat declares it, and Speak renders at the rate SAPI then hands
+ * back (so a setting changed in between can never put audio at an undeclared rate). */
+static const DWORD DEFAULT_RATE = 22050;
 static DWORD valid_rate(DWORD r) { return (r == 11025 || r == 22050 || r == 44100) ? r : DEFAULT_RATE; }
+/* An utterance still rendering after two minutes is cancelled (the Python server's deadline). */
+static const DWORD DEADLINE_MS = 120000;
 
 /* The black box -- **off unless somebody asks for it.**
  *
@@ -63,13 +75,19 @@ static const DWORD LOG_CAP = 4u * 1024u * 1024u;
  * this user's): Inflection (the Braille Lite's own on/off: 1 = on, the default), AccentInflection (the Accent's
  * intonation, 0 25 50 75 100 as its NVDA slider; 100 = full, the default), Whine (0 off, 1 hiss, 2 whine),
  * SampleRate (11025 / 22050 / 44100, every voice), RunAhead (the Braille Lite's "Run the unit ahead", EXPERIMENTAL:
- * 0 = off, the default; 1 = on, both its voices), Diagnostics (0 = off) and ReadTimeoutMs.  Each reaches the
- * next thing spoken: a change respawns the server (host_ensure), since SAPI gives no way to reload a voice. */
+ * 0 = off, the default; 1 = on, both its voices) and Diagnostics (0 = off).  Each reaches the next thing spoken:
+ * read fresh per Speak, and a boot setting that changed (the rate, the inflection, the whine) boots the units again,
+ * as the NVDA drivers do. */
 static DWORD setting_dword(const wchar_t *name, DWORD def) {
     const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    const wchar_t *key = SETTINGS_KEY;
+#ifdef SSI263_SAPI_DEV
+    wchar_t own[256];      /* a test's own key (sapi_harness.cpp), so two tests never share their settings */
+    if (GetEnvironmentVariableW(L"SSI263_SAPI_SETTINGS_KEY", own, 256) - 1u < 255u) key = own;
+#endif
     for (int r = 0; r < 2; r++) {
         DWORD v = 0, size = sizeof v, type = 0;
-        if (RegGetValueW(roots[r], L"Software\\SSI-263 SAPI", name, RRF_RT_REG_DWORD, &type, &v, &size) == ERROR_SUCCESS)
+        if (RegGetValueW(roots[r], key, name, RRF_RT_REG_DWORD, &type, &v, &size) == ERROR_SUCCESS)
             return v;
     }
     return def;
@@ -83,7 +101,8 @@ static int diagLevel() {
  * utterance, with forty characters of each one in it, and turning the tap
  * off does not empty the bucket.  Once per process, with diagnostics off,
  * our own files go -- only the names this engine writes, only in the temp
- * folder, and only when nothing is meant to be being collected. */
+ * folder, and only when nothing is meant to be being collected.  (The
+ * serve logs are 0.7.0's, from the Python server.) */
 static void sweep_logs() {
     static LONG done;
     if (InterlockedExchange(&done, 1) || diagLevel()) return;
@@ -142,20 +161,15 @@ static void logline(const wchar_t *fmt, ...) {
     CloseHandle(f);
 }
 
-static bool exact(HANDLE h, void *p, DWORD n, bool write) {
-    BYTE *b=(BYTE*)p; DWORD done=0, x;
-    while(done<n) {
-        BOOL ok=write?WriteFile(h,b+done,n-done,&x,0):ReadFile(h,b+done,n-done,&x,0);
-        if(!ok || !x) return false; done+=x;
-    }
-    return true;
-}
-static std::wstring module_dir() {
+/* This DLL's folder ({app}\x86 or {app}\x64, where ssi263speech.dll sits beside it), and the install folder above it
+ * ({app}, which holds firmware\). */
+static std::wstring dll_dir() {
     wchar_t p[MAX_PATH]; GetModuleFileNameW(g_module,p,MAX_PATH);
     wchar_t *s=wcsrchr(p,L'\\'); if(s)*s=0;
-    /* The DLL lives in x86\ or x64\; the host program lives one level up,
-     * shared by both bitnesses. */
-    std::wstring d=p; size_t slash=d.rfind(L'\\');
+    return p;
+}
+static std::wstring install_dir() {
+    std::wstring d=dll_dir(); size_t slash=d.rfind(L'\\');
     if(slash!=std::wstring::npos){
         std::wstring leaf=d.substr(slash+1);
         if(leaf==L"x86"||leaf==L"x64") d.resize(slash);
@@ -172,83 +186,15 @@ static std::wstring token_string(ISpObjectToken *t, const wchar_t *name) {
     return r;
 }
 
-/* The resident host: one serve process per SAPI process, guarded.  The
- * protocol is stateless per request, so sharing it between voices is free
- * -- the voice id travels in every request. */
-static CRITICAL_SECTION g_hostLock;
+/* The voices: the library and one bank of booted units per process, shared by every Engine (SAPI makes one per
+ * voice in use) and guarded, as the one pipe host was.  The library is loaded on first use and kept, booted units
+ * and all, for the life of the process (DllCanUnloadNow). */
+static CRITICAL_SECTION g_lock;
 static bool g_lockReady;
-static HANDLE g_proc, g_in, g_out;
-static unsigned g_seq;
-/* The command line the resident host was started with.  The settings it
- * carries -- inflection, how numbers are read -- are read fresh per Speak,
- * and a host started under other values is replaced rather than kept:
- * Panthera's rule, that a settings change must respawn the host and never
- * be quietly ignored by one that read its arguments at startup. */
-static std::wstring g_hostCmd;
-
-static void host_drop() {
-    if(g_proc){TerminateProcess(g_proc,0);CloseHandle(g_proc);g_proc=0;}
-    if(g_in){CloseHandle(g_in);g_in=0;}
-    if(g_out){CloseHandle(g_out);g_out=0;}
-}
-static bool host_alive() {
-    if(!g_proc)return false;
-    DWORD code=0;
-    if(!GetExitCodeProcess(g_proc,&code)||code!=STILL_ACTIVE){host_drop();return false;}
-    return true;
-}
-
-/* The serve side sends one engine buffer per chunk, and no Macintosh sound
- * buffer these engines fill comes anywhere near ten seconds of audio.  A
- * count above this is not a large chunk, it is a desynced pipe being read
- * as one -- and before this check, `audio.resize(frames*2)` on such a
- * count threw bad_alloc straight through the COM boundary into the client
- * application, which is how Panthera's sibling crashed a game.  The serve
- * script now keeps stray prints off the stream entirely; this is armor for
- * whatever corrupts it anyway, because a *small* misread is arithmetic
- * this side cannot detect at all. */
-static const unsigned MAX_CHUNK_FRAMES = MAX_RATE * 10u;
-
-static DWORD read_timeout_ms() {
-    DWORD v = setting_dword(L"ReadTimeoutMs", 30000);
-    return v < 1000 ? 1000 : v;
-}
-
-/* Read exactly `n` response bytes without ever trusting the host to answer.
- *
- * The old reads blocked in ReadFile with no way out: a serve process that
- * wedged mid-render -- alive, silent -- held the client's speech thread
- * forever, lock in hand, and the session's SAPI speech died with it.  The
- * wait now watches the abort flag, the host's death, and a no-progress
- * deadline (ReadTimeoutMs, default thirty seconds).
- *
- * **The abort is only honoured before the first byte of an item.**  This
- * engine's cancel is graceful -- the host stays warm and the response is
- * drained to its terminator -- so returning mid-item would leave the pipe
- * misaligned inside the very stream the drain exists to preserve.  Started
- * items finish or fail; the deadline holds either way. */
-enum ReadWait { RW_OK, RW_FAIL, RW_ABORT };
-static ReadWait exact_wait(HANDLE h, void *p, DWORD n, ISpTTSEngineSite *site) {
-    BYTE *b=(BYTE*)p; DWORD done=0;
-    const DWORD budget=read_timeout_ms();
-    DWORD idle=GetTickCount();
-    while(done<n){
-        DWORD avail=0;
-        if(!PeekNamedPipe(h,0,0,0,&avail,0))return RW_FAIL;
-        if(avail){
-            DWORD want=n-done; if(want>avail)want=avail;
-            DWORD got=0;
-            if(!ReadFile(h,b+done,want,&got,0)||!got)return RW_FAIL;
-            done+=got; idle=GetTickCount();
-            continue;
-        }
-        if(!done&&site&&(site->GetActions()&SPVES_ABORT))return RW_ABORT;
-        if(!g_proc||WaitForSingleObject(g_proc,0)==WAIT_OBJECT_0)return RW_FAIL;
-        if(GetTickCount()-idle>=budget)return RW_FAIL;
-        Sleep(3);
-    }
-    return RW_OK;
-}
+static ssi_api g_api;
+static ssv_bank *g_bank;
+static char g_fwdir[MAX_PATH * 2];
+static bool g_failed;              /* the library would not load: said once in the log, never retried per keystroke */
 
 /* Scoped, so an exception unwinding out of the speak path releases the lock
  * instead of abandoning it -- an abandoned critical section turns the next
@@ -258,56 +204,24 @@ struct CsLock {
     CsLock(CRITICAL_SECTION *c):cs(c){EnterCriticalSection(cs);}
     ~CsLock(){LeaveCriticalSection(cs);}
 };
-static bool host_ensure(DWORD inflection, DWORD whine, DWORD accentInfl, DWORD rate, DWORD runAhead) {
-    sweep_logs();
-    std::wstring base=module_dir();
-    /* The embeddable Python the installer puts beside the DLLs; either DLL bitness uses it -- the server is its
-     * own process.  -I: isolated, nothing from the machine's own Python setup reaches it.  The dialog's settings
-     * ride on the command line, and a server started under other values is replaced (Panthera's rule: a settings
-     * change must respawn the host, never be quietly ignored by one that read its arguments at startup). */
-    std::wstring py=base+L"\\python\\python.exe";
-    const wchar_t *whines[]={L"off",L"hiss",L"whine"};
-    std::wstring cmd=L"\""+py+L"\" -I \""+base+L"\\ssi_serve.py\" --serve --inflection "+
-                     (inflection?L"1":L"0")+L" --whine "+whines[whine<3?whine:0]+
-                     L" --accent-inflection "+std::to_wstring(accentInfl>100?100:accentInfl)+
-                     L" --rate "+std::to_wstring(valid_rate(rate))+
-                     L" --run-ahead "+(runAhead?L"1":L"0");
-    if(host_alive()&&cmd==g_hostCmd)return true;
-    host_drop();
-    /* A megabyte of buffer each way against the four-kilobyte default: a
-     * request larger than the buffer would block the writer until the host
-     * read it, and the response side never has to stall the serve over a
-     * chunk the client has not collected yet. */
-    SECURITY_ATTRIBUTES sa={sizeof(sa),0,TRUE}; HANDLE inR,inW,outR,outW;
-    if(!CreatePipe(&inR,&inW,&sa,1<<20)||!CreatePipe(&outR,&outW,&sa,1<<20))return false;
-    SetHandleInformation(inW,HANDLE_FLAG_INHERIT,0);SetHandleInformation(outR,HANDLE_FLAG_INHERIT,0);
-    /* The serve process never gets a pipe for its stderr.  A resident child
-     * that writes diagnostics into a pipe nobody drains stops dead when the
-     * buffer fills, and that would present as speech ending for good; NUL
-     * discards and cannot block.  With diagnostics on it goes to a file
-     * instead, which is where the host's own complaints are worth having. */
-    HANDLE errH=INVALID_HANDLE_VALUE;
-    {
-        SECURITY_ATTRIBUTES esa={sizeof(esa),0,TRUE};
-        wchar_t epath[MAX_PATH]; DWORD en=GetEnvironmentVariableW(L"TEMP",epath,MAX_PATH);
-        if(diagLevel()&&en&&en<MAX_PATH-40){
-            wchar_t leaf[40];
-            swprintf_s(leaf,40,L"\\ssi263_sapi_serve-%u.log",(unsigned)GetCurrentProcessId());
-            lstrcatW(epath,leaf);
-            errH=CreateFileW(epath,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,&esa,OPEN_ALWAYS,0,0);
-        }
-        if(errH==INVALID_HANDLE_VALUE)
-            errH=CreateFileW(L"NUL",GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&esa,OPEN_EXISTING,0,0);
+
+static bool voices_ready() {
+    if (g_bank) return true;
+    if (g_failed) return false;
+    char err[256];
+    std::wstring fw = install_dir() + L"\\firmware";
+    if (!ssi_load(&g_api, dll_dir().c_str(), err, sizeof err)) {
+        g_failed = true;
+        logline(L"the voices could not load: %hs", err);
+        return false;
     }
-    STARTUPINFOW si={sizeof(si)};si.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;si.hStdInput=inR;si.hStdOutput=outW;
-    si.hStdError=errH!=INVALID_HANDLE_VALUE?errH:GetStdHandle(STD_ERROR_HANDLE);
-    PROCESS_INFORMATION pi={}; std::vector<wchar_t> mutableCmd(cmd.begin(),cmd.end());mutableCmd.push_back(0);
-    BOOL made=CreateProcessW(0,mutableCmd.data(),0,0,TRUE,CREATE_NO_WINDOW,0,base.c_str(),&si,&pi);
-    CloseHandle(inR);CloseHandle(outW);
-    if(errH!=INVALID_HANDLE_VALUE)CloseHandle(errH);
-    if(!made){CloseHandle(inW);CloseHandle(outR);return false;}
-    CloseHandle(pi.hThread);
-    g_proc=pi.hProcess;g_in=inW;g_out=outR;g_hostCmd=cmd;
+    if (!ssi_ansi_path(fw.c_str(), g_fwdir, sizeof g_fwdir) || !(g_bank = g_api.bank_new(g_fwdir))) {
+        g_failed = true;
+        logline(L"the firmware folder cannot be opened");
+        FreeLibrary(g_api.dll);
+        memset(&g_api, 0, sizeof g_api);
+        return false;
+    }
     return true;
 }
 
@@ -334,19 +248,13 @@ public:
     }
     STDMETHODIMP Speak(DWORD,REFGUID,const WAVEFORMATEX *wfx,const SPVTEXTFRAG *frags,ISpTTSEngineSite *site){
         /* A COM method must never let an exception out: SAPI has no
-         * handler for one and the client application dies of it.  The
-         * frame-count clamp below makes the known thrower unreachable,
-         * but the guarantee belongs at the boundary, whatever the cause. */
+         * handler for one and the client application dies of it. */
         try {
             /* Render at the rate SAPI agreed to (what GetOutputFormat declared then), not a setting re-read now. */
             DWORD rate=(wfx&&wfx->wFormatTag==WAVE_FORMAT_PCM)?valid_rate(wfx->nSamplesPerSec)
                                                             :valid_rate(setting_dword(L"SampleRate",DEFAULT_RATE));
             return speakInner(frags,site,rate);
         } catch(...) {
-            if(g_lockReady){
-                CsLock lock(&g_hostLock);
-                host_drop();       /* mid-protocol unwind = desynced pipe */
-            }
             return E_FAIL;
         }
     }
@@ -383,98 +291,74 @@ public:
             text.append(f->pTextStart,f->ulTextLen);
         }
         if(text.empty()&&marks.empty())return S_OK;
-        std::wstring voice=token_string(token,L"VoiceId");
+        std::string voiceId=utf8(token_string(token,L"VoiceId"));
         long sapiRate=0; site->GetRate(&sapiRate);
-        if(sapiRate<-10)sapiRate=-10;if(sapiRate>10)sapiRate=10;
-        /* The driver's own 0-100 scales, linearly: SAPI zero is the middle
-         * of the NVDA slider, and the ten-step ends are its ends. */
-        int rate=(int)((sapiRate+10)*5);
-        int pitch=50;
-        if(frags){
-            long pa=frags->State.PitchAdj.MiddleAdj;
-            if(pa<-10)pa=-10;if(pa>10)pa=10;
-            pitch=(int)(50+pa*5);
-        }
-        int volume=100;   /* SAPI applies the application's volume itself. */
-        std::string v=utf8(voice), u=utf8(text);
-        unsigned req=REQ_MAGIC,nv=(unsigned)v.size(),nt=(unsigned)u.size();
-        CsLock lock(&g_hostLock);
-        bool ok=true;int status=0;bool aborted=false;
+        /* SAPI's scales onto the drivers' 0-100 (ssi_native.c): SAPI zero is the middle of the NVDA slider, and the
+         * ten-step ends are its ends.  SAPI applies the application's volume itself: the voice speaks at 100. */
+        int rate=ssi_sapi_rate(sapiRate);
+        int pitch=ssi_sapi_pitch(frags?frags->State.PitchAdj.MiddleAdj:0);
+        int volume=100;
+        /* The settings SAPI's own request cannot carry, read fresh so a change in the settings dialog reaches the
+         * next thing spoken. */
+        ssi_options o;
+        ssi_options_defaults(&o);
+        o.sample_rate=(int)outRate;
+        o.inflection=setting_dword(L"Inflection",1)!=0;
+        o.whine=(int)setting_dword(L"Whine",0);
+        o.accent_inflection=(int)setting_dword(L"AccentInflection",100);
+        o.run_ahead=setting_dword(L"RunAhead",0)!=0;
+#ifdef SSI263_SAPI_DEV
+        char brk[16]={0}; GetEnvironmentVariableA("SSI263_SAPI_TEST_BREAK",brk,sizeof brk);
+        if(!strcmp(brk,"setting")){int r=o.sample_rate;ssi_options_defaults(&o);o.sample_rate=r;}   /* a control */
+#endif
+        std::string u=utf8(text);
+        CsLock lock(&g_lock);
+        sweep_logs();
+        bool ok=true, aborted=false, done=false;
         unsigned long long total=0;
-        unsigned seq=++g_seq;
         if(!text.empty()){
-            /* The settings SAPI's own request cannot carry, read fresh so a change in the settings dialog reaches
-             * the next thing spoken (the server is replaced when they differ). */
-            ok=host_ensure(setting_dword(L"Inflection",1),setting_dword(L"Whine",0),
-                           setting_dword(L"AccentInflection",100),outRate,setting_dword(L"RunAhead",0));
-            ok=ok&&exact(g_in,&req,4,true)&&exact(g_in,&seq,4,true)&&exact(g_in,&rate,4,true)&&exact(g_in,&pitch,4,true)&&exact(g_in,&volume,4,true)&&exact(g_in,&nv,4,true)&&exact(g_in,&nt,4,true)&&exact(g_in,(void*)v.data(),nv,true)&&exact(g_in,(void*)u.data(),nt,true);
-            unsigned magic=0;status=-1;
-            /* Response reads wait rather than block -- exact_wait watches
-             * the abort flag, the serve's death and a no-progress deadline,
-             * so a wedged serve costs one failed utterance, not the
-             * session.  An abort while waiting takes the same door as the
-             * mid-stream one below: the seq-tagged cancel frame, then a
-             * drain to the terminator with the host kept warm. */
+            ok=voices_ready();
+            int idx=-1; ssv_voice *v=0; char err[256]={0};
             if(ok){
-                ReadWait r=exact_wait(g_out,&magic,4,site);
-                if(r==RW_OK)r=exact_wait(g_out,&status,4,site);
-                if(r==RW_ABORT){
-                    aborted=true;
-                    unsigned c=CANCEL_MAGIC;
-                    if(!exact(g_in,&c,4,true)||!exact(g_in,&seq,4,true)){host_drop();ok=false;}
-                    else{
-                        r=exact_wait(g_out,&magic,4,0);
-                        if(r==RW_OK)r=exact_wait(g_out,&status,4,0);
-                        if(r!=RW_OK||magic!=RSP_MAGIC)ok=false;
-                    }
-                }else if(r!=RW_OK||magic!=RSP_MAGIC)ok=false;
+                idx=ssi_voice(&g_api,voiceId.c_str(),g_fwdir);
+#ifdef SSI263_SAPI_DEV
+                if(idx>=0&&!strcmp(brk,"voice")){                     /* a control: English and Spanish swapped */
+                    int e=g_api.find("blazie:blazie"),s=g_api.find("blazie:blazie_es");
+                    if(idx==e&&g_api.available(s,g_fwdir))idx=s; else if(idx==s&&g_api.available(e,g_fwdir))idx=e;
+                }
+#endif
+                ssv_boot b; ssi_boot(&o,&b); g_api.bank_boot(g_bank,&b);
+                if(idx<0||!(v=g_api.bank_voice(g_bank,idx,err,sizeof err))){
+                    logline(L"no voice for %hs: %hs",voiceId.c_str(),err);
+                    ok=false;
+                }
             }
-            std::vector<BYTE> audio;
-            while(ok&&status==0){
-                unsigned frames=0;
-                ReadWait r=exact_wait(g_out,&frames,4,aborted?0:site);
-                if(r==RW_ABORT){
-                    aborted=true;
-                    unsigned c=CANCEL_MAGIC;
-                    if(!exact(g_in,&c,4,true)||!exact(g_in,&seq,4,true)){host_drop();ok=false;break;}
-                    continue;                      /* drain to terminator */
+            if(ok){
+                ssv_settings s; ssi_settings(&g_api,idx,&o,rate,pitch,volume,&s);
+                int said=g_api.speak(v,&s,u.c_str(),0);
+                DWORD t0=GetTickCount();
+                if(said<0)ok=false;
+                while(ok&&said>0&&!done){
+                    /* The cancel is the voice's own, between two blocks: the unit drops what it has not spoken
+                     * and the next utterance starts clean -- warm, with nothing to drain. */
+                    if((site->GetActions()&SPVES_ABORT)||GetTickCount()-t0>DEADLINE_MS){
+                        aborted=true;
+                        g_api.cancel(v);
+                        break;
+                    }
+                    int isdone=0; const short *pcm=0;
+                    int n=g_api.render(v,&pcm,&isdone);
+                    done=isdone!=0;
+                    if(n>0){
+                        if(!qfirst.QuadPart)QueryPerformanceCounter(&qfirst);
+                        ULONG wrote=0;
+                        if(FAILED(site->Write(pcm,(ULONG)n*2,&wrote))){g_api.cancel(v);ok=false;break;}
+                        total+=(ULONG)n*2;
+                    }
                 }
-                if(r!=RW_OK){ok=false;break;}
-                if(!frames)break;
-                if(frames>MAX_CHUNK_FRAMES){
-                    /* Not a chunk, a desynced stream read as one; see the
-                     * constant.  The pipe is unusable from here. */
-                    logline(L"desync: frame count %u refused",frames);
-                    ok=false;break;
-                }
-                unsigned bytes=frames*2; audio.resize(bytes);
-                if(exact_wait(g_out,audio.data(),bytes,0)!=RW_OK){ok=false;break;}
-                if(!aborted&&(site->GetActions()&SPVES_ABORT)){
-                    /* Graceful cancel keeps the host warm: the serve side
-                     * runs the driver's own instant cancel when the OSPC
-                     * frame lands, so the terminator follows fast and the
-                     * next utterance costs 21 ms, not a cold start.  The
-                     * first build killed the process here, and every
-                     * arrow after a cancel paid 158 ms plus engine
-                     * warm-up -- the reported arrowing lag. */
-                    aborted=true;
-                    /* The cancel names its target: pipes buffer, and an
-                     * untagged cancel arriving after this utterance
-                     * finished was cutting the NEXT one -- the black box
-                     * showed aborted=0 utterances ending at a fraction of
-                     * their audio, which is what the ear heard as tails
-                     * clipping on the slow engines. */
-                    unsigned c=CANCEL_MAGIC;
-                    if(!exact(g_in,&c,4,true)||!exact(g_in,&seq,4,true)){host_drop();break;}
-                    continue;                      /* drain to terminator */
-                }
-                if(aborted)continue;               /* draining, not speaking */
-                if(!qfirst.QuadPart)QueryPerformanceCounter(&qfirst);
-                ULONG wrote=0;if(FAILED(site->Write(audio.data(),bytes,&wrote))){ok=false;break;}
-                total+=bytes;
             }
         }
-        if(ok&&status==0&&!aborted){
+        if(ok&&!aborted){
             /* The pacing contract: one TTS_BOOKMARK event per bookmark
              * fragment.  The audio streamed as one utterance, so the
              * offsets are proportional estimates by character position --
@@ -501,29 +385,32 @@ public:
                 ULONG wrote=0;site->Write(pad.data(),(ULONG)pad.size(),&wrote);
             }
         }
-        /* A desynced pipe is never reused -- and that has to include a
-         * drain that failed after an abort: the old guard kept the host
-         * when `aborted` was set, so a read error mid-drain left a pipe
-         * full of leftovers for the next utterance to misread. */
-        if(!ok)host_drop();
         /* The measurements convicted all four bugs; the words never did. */
         LARGE_INTEGER qend; QueryPerformanceCounter(&qend);
         unsigned firstMs=qfirst.QuadPart?(unsigned)((qfirst.QuadPart-qt0.QuadPart)*1000/qpf.QuadPart):0;
         unsigned endMs=(unsigned)((qend.QuadPart-qt0.QuadPart)*1000/qpf.QuadPart);
         if(diagLevel()>=2)
-            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d first-audio=%ums end=%ums text=\"%.40s\"",
+            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d aborted=%d first-audio=%ums end=%ums text=\"%.40s\"",
                     (unsigned)text.size(),(unsigned)marks.size(),(unsigned)total,
-                    ok?1:0,status,aborted?1:0,firstMs,endMs,text.c_str());
+                    ok?1:0,aborted?1:0,firstMs,endMs,text.c_str());
         else
-            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d status=%d aborted=%d first-audio=%ums end=%ums",
+            logline(L"speak done: chars=%u marks=%u bytes-written=%u ok=%d aborted=%d first-audio=%ums end=%ums",
                     (unsigned)text.size(),(unsigned)marks.size(),(unsigned)total,
-                    ok?1:0,status,aborted?1:0,firstMs,endMs);
-        return aborted||(ok&&status==0)?S_OK:E_FAIL;
+                    ok?1:0,aborted?1:0,firstMs,endMs);
+        return aborted||ok?S_OK:E_FAIL;
     }
 };
 class Factory:public IClassFactory{LONG refs;public:Factory():refs(1){InterlockedIncrement(&g_objects);} ~Factory(){InterlockedDecrement(&g_objects);} STDMETHODIMP QueryInterface(REFIID i,void**p){if(!p)return E_POINTER;*p=0;if(i==IID_IUnknown||i==IID_IClassFactory)*p=this;else return E_NOINTERFACE;AddRef();return S_OK;} STDMETHODIMP_(ULONG)AddRef(){return InterlockedIncrement(&refs);} STDMETHODIMP_(ULONG)Release(){ULONG n=InterlockedDecrement(&refs);if(!n)delete this;return n;} STDMETHODIMP CreateInstance(IUnknown*o,REFIID i,void**p){if(o)return CLASS_E_NOAGGREGATION;Engine*e=new Engine;HRESULT h=e->QueryInterface(i,p);e->Release();return h;} STDMETHODIMP LockServer(BOOL x){InterlockedExchangeAdd(&g_objects,x?1:-1);return S_OK;}};
 
-STDAPI DllCanUnloadNow(){return g_objects?S_FALSE:S_OK;}
+/* The booted units stay for the life of the process, as 0.7.0's resident server did: a client that lets go of its
+ * last engine object and makes a new one (System.Speech's SelectVoice does) must not pay a cold boot on its next
+ * utterance.  So nothing is torn down here, and so this DLL never unloads while its voices are loaded (it holds the
+ * library; FreeLibrary is not for DllMain either). */
+STDAPI DllCanUnloadNow(){
+    if(g_objects)return S_FALSE;
+    if(g_lockReady){CsLock lock(&g_lock);if(g_bank||g_api.dll)return S_FALSE;}
+    return S_OK;
+}
 STDAPI DllGetClassObject(REFCLSID c,REFIID i,void **p){if(c!=CLSID_Ssi263)return CLASS_E_CLASSNOTAVAILABLE;Factory*f=new Factory;HRESULT h=f->QueryInterface(i,p);f->Release();return h;}
 static HRESULT reg(bool add){
     wchar_t cls[64];StringFromGUID2(CLSID_Ssi263,cls,64);std::wstring key=L"Software\\Classes\\CLSID\\"+std::wstring(cls);
@@ -538,7 +425,6 @@ static HRESULT reg(bool add){
 STDAPI DllRegisterServer(){return reg(true);} STDAPI DllUnregisterServer(){return reg(false);}
 BOOL WINAPI DllMain(HINSTANCE h,DWORD why,LPVOID){
     if(why==DLL_PROCESS_ATTACH){g_module=h;DisableThreadLibraryCalls(h);
-        if(!g_lockReady){InitializeCriticalSection(&g_hostLock);g_lockReady=true;}}
-    if(why==DLL_PROCESS_DETACH){if(g_proc){TerminateProcess(g_proc,0);CloseHandle(g_proc);}}
+        if(!g_lockReady){InitializeCriticalSection(&g_lock);g_lockReady=true;}}
     return TRUE;
 }

@@ -166,6 +166,43 @@ if os.path.isdir(os.path.join(os.path.dirname(HERE), "dist", "blazie-build")):
                                     # 2 or more: how much of the cancelled line runs on depends on the load, so its
                                     # phonemes with and without run ahead can differ too
                                     r"^serve \(run ahead only\): \d+ FAILED$"]))
+# The SAPI engine's native voices (0.7.5: no Python): ssi263speech.dll (src/csrc/voices.h) through the native serve
+# host, which maps settings with the SAPI DLL's own code (sapi/ssi_native.c), against the pipe server above -- the
+# 0.7.0 engine -- byte for byte over the same wire, 64- and 32-bit: texts with numbers and money, SAPI's rates and
+# pitches, the voices in turn, the dialog's settings, every sample rate, a cancel and the utterance after it.  Its
+# controls: the dialog's settings dropped, English and Spanish swapped, the drivers' number words off.
+SAPI_NATIVE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_native.py")
+if os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(HERE)), "build", "win", "x86", "ssi263_serve.exe")):
+    CHECKS.append(check("SAPI native voices = the Python server, byte for byte", [PY, SAPI_NATIVE]))
+    CHECKS.append(check("SAPI native voices CONTROL (the dialog's settings dropped, must fail)",
+                        [PY, SAPI_NATIVE, "--only", "dialog", "--arch", "x64"], env={"SSI263_SERVE_BREAK": "setting"},
+                        expect_fail=True,
+                        fail_marks=[r"^DIFF dialog  x64 blazie:blazie text 0 ", r"^DIFF dialog  x64 blazie:blazie_es text 0 ",
+                                    r"^DIFF dialog  x64 accentmini:sa text 0 ", r"^native: \d+ FAILED$"]))
+    CHECKS.append(check("SAPI native voices CONTROL (English and Spanish swapped, must fail)",
+                        [PY, SAPI_NATIVE, "--only", "default", "--arch", "x64"], env={"SSI263_SERVE_BREAK": "voice"},
+                        expect_fail=True,
+                        fail_marks=[r"^DIFF default x64 blazie:blazie text 0 ", r"^DIFF default x64 blazie:blazie_es text 0 ",
+                                    r"^native: \d+ FAILED$"]))
+    CHECKS.append(check("SAPI native voices CONTROL (the number words off, must fail)",
+                        [PY, SAPI_NATIVE, "--only", "default", "--arch", "x64"], env={"SSI263_SERVE_BREAK": "numbers"},
+                        expect_fail=True,
+                        fail_marks=[r"^DIFF default x64 blazie:blazie text 1 ", r"^DIFF default x64 blazie:blazie_es text 1 ",
+                                    r"^DIFF default x64 accentmini:sa text 1 ", r"^native: \d+ FAILED$"]))
+    # the number words alone, on random texts: the driver's _numbers against bl_numbers (English, and Spain's Spanish)
+    CHECKS.append(check("bl_voice number words = the driver's, 5000 random texts",
+                        [PY, "voice_text_equiv.py", "5000", "1", "--numbers"]))
+    CHECKS.append(check("bl_voice number words CONTROL (the driver's _numbers skipped, must fail)",
+                        [PY, "voice_text_equiv.py", "2000", "1", "--numbers"], env={"VOICE_TEXT_BREAK": "numbers"},
+                        expect_fail=True,
+                        fail_marks=[r"^DIFF ", r"^(?!2000 )\d+ of 2000 texts give the unit the same bytes"]))
+# ... and the SAPI engine DLL itself, driven through SAPI's own interface (ISpTTSEngine, an engine site of the test's)
+# with nothing registered (sapi\build.ps1 -Dev's harness): every case byte-identical to the Python server, the
+# declared rate, bookmarks, SAPI's abort; its controls (English and Spanish swapped, the dialog's settings dropped)
+# run in the same check and must be caught
+SAPI_ENGINE = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_sapi_engine.py")
+if os.path.isfile(os.path.join(os.path.dirname(HERE), "dist", "sapi-dev", "x86", "sapi_harness.exe")):
+    CHECKS.append(check("SAPI engine DLL = the Python server, through SAPI's interface", [PY, SAPI_ENGINE]))
 # the golden vectors: every SSI-263 write with its time, the serial output and the audio hash of a fixed scenario, on
 # MAME's Z180 (0.7).  Two hosts, two baselines: the in-process host (bl.dll, the add-on's) has the lockstep cancel
 # protection on by default (blazie_{en,es}.txt, Astra's Replies 124-128); the pipe host (bns_live.exe / bl_live.exe,

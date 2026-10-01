@@ -39,7 +39,7 @@ $bad = 0
 try {
     Set-S 'Diagnostics' 1; Set-S 'Inflection' 1; Set-S 'Whine' 0; Set-S 'AccentInflection' 100; Set-S 'SampleRate' 22050
     $default = Say 'default'
-    # every setting change restarts the server cold; the control must be cold too, so toggle one and come back
+    # every boot setting changed boots the units again; the control must be fresh too, so toggle one and come back
     Set-S 'Whine' 1; $null = Say 'toggle'; Set-S 'Whine' 0
     $again = Say 'again'
     Set-S 'Inflection' 0
@@ -49,8 +49,8 @@ try {
     Set-S 'Whine' 0
     $spanish = 'Braille Lite 2000 (espa' + [char]0x00F1 + 'ol)'     # this file stays ASCII (PowerShell 5.1 reads it as ANSI)
     $esText = 'Hola, como estas?'
-    # run ahead: each voice's first utterance on a fresh server (the Whine change above respawns it), against its
-    # default, also its first on a fresh server -- so a setting the DLL dropped compares like with like and fails
+    # run ahead: each voice's first utterance on freshly booted units (the Whine change above reboots them), against its
+    # default, also its first on fresh units -- so a setting the DLL dropped compares like with like and fails
     Set-S 'RunAhead' 1
     $ahead = Say 'run_ahead'
     $esAhead = Say 'es_run_ahead' $spanish $esText

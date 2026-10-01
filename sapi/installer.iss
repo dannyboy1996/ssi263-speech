@@ -1,12 +1,14 @@
 ; SSI-263 SAPI -- the Braille Lite 2000 (English and Spanish), the Speak-Out, the Accent-mini and the Accent SA as
 ; SAPI 5 voices, for any Windows screen reader or program that speaks through SAPI.
 ;
-; It carries the same driver files the NVDA add-ons run -- the emulators, the SSI-263 chip model and each device's
-; own firmware -- and python.org's embeddable interpreter that runs them behind the engine DLL.  The firmware is not
-; ours: it is here, as in the add-ons, so these machines can talk again, and it will come down if its rights
-; holders ask.  A fork of outspoken-nvda's sapi/installer.iss (panthera-speech's).
+; It carries the engine DLLs, the native voices beside each (ssi263speech.dll: the SSI-263 chip model, the emulated
+; units and each NVDA driver's text preparation, in C, run inside the program that speaks) and each device's own
+; firmware.  No Python and no helper process.  The firmware is not ours: it is here, as in the add-ons, so these
+; machines can talk again, and it will come down if its rights holders ask.  A fork of outspoken-nvda's
+; sapi/installer.iss (panthera-speech's).
 ;
-; Build:  powershell -ExecutionPolicy Bypass -File .\sapi\build.ps1
+; Build:  python src\csrc\build_ssi263speech.py
+;         powershell -ExecutionPolicy Bypass -File .\sapi\build.ps1
 ;         ISCC .\sapi\installer.iss
 #ifndef StageDir
 #define StageDir "..\nvda\dist\sapi"
@@ -20,8 +22,7 @@ AppVersion={#AppVer}
 AppPublisher=SSI-263 speech project
 AppSupportURL=https://github.com/tgeczy/ssi263-speech
 DefaultDirName={autopf}\SSI-263 SAPI
-; 64-bit Windows, ARM64 included through its x64 emulation: the bundled Python is amd64 (a 32-bit build later)
-ArchitecturesAllowed=x64compatible
+; 32- and 64-bit Windows (ARM64 through its x64 emulation): the x86 engine everywhere, the x64 one on a 64-bit Windows
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 Compression=lzma2
@@ -33,18 +34,24 @@ UninstallDisplayName=SSI-263 SAPI voices {#AppVer}
 
 [Files]
 Source: "{#StageDir}\x86\ssi263_sapi.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
-Source: "{#StageDir}\x64\ssi263_sapi.dll"; DestDir: "{app}\x64"; Flags: ignoreversion
-Source: "{#StageDir}\ssi_serve.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\x86\ssi263speech.dll"; DestDir: "{app}\x86"; Flags: ignoreversion
+Source: "{#StageDir}\x64\ssi263_sapi.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; Check: Is64BitInstallMode
+Source: "{#StageDir}\x64\ssi263speech.dll"; DestDir: "{app}\x64"; Flags: ignoreversion; Check: Is64BitInstallMode
+Source: "{#StageDir}\voices.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\register.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\settings.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\settings.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\ssi263_settings.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#StageDir}\synthDrivers\*"; DestDir: "{app}\synthDrivers"; Flags: recursesubdirs ignoreversion
-Source: "{#StageDir}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs ignoreversion
+Source: "{#StageDir}\firmware\*"; DestDir: "{app}\firmware"; Flags: recursesubdirs ignoreversion
+Source: "{#StageDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: recursesubdirs ignoreversion
 
 [InstallDelete]
-; the driver folders are replaced whole: an old engine file left beside a new driver is a trap
+; the firmware is replaced whole: a file a voice no longer reads is not left behind
+Type: filesandordirs; Name: "{app}\firmware"
+; 0.7.0's Python server, its interpreter and the NVDA driver files it ran: gone with the upgrade
+Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\synthDrivers"
+Type: files; Name: "{app}\ssi_serve.py"
 
 [Icons]
 ; the launcher rather than the batch file: a GUI-subsystem program creates no console, so nothing flashes or
@@ -52,8 +59,8 @@ Type: filesandordirs; Name: "{app}\synthDrivers"
 Name: "{autoprograms}\SSI-263 SAPI settings"; Filename: "{app}\ssi263_settings.exe"; WorkingDir: "{app}"
 
 [Run]
-; regsvr32 for both registry views, then one token per voice the server lists.  Every install re-registers:
-; these voices carry their firmware, so there is no data folder or choice of voices to preserve.
+; regsvr32 for both registry views, then one token per voice in voices.txt.  Every install re-registers: these
+; voices carry their firmware, so there is no data folder or choice of voices to preserve.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Register"; StatusMsg: "Registering the SSI-263 voices..."; Flags: runhidden
 Filename: "{app}\ssi263_settings.exe"; Description: "Open SSI-263 SAPI settings"; Flags: postinstall nowait skipifsilent
 
@@ -61,8 +68,9 @@ Filename: "{app}\ssi263_settings.exe"; Description: "Open SSI-263 SAPI settings"
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register.ps1"" -Unregister"; RunOnceId: "UnregisterSsi263"; Flags: runhidden
 
 [Code]
-{ A speech program may still hold our server (python.exe) and the Braille Lite emulator (bns_live.exe) open from
-  the install folder: stop those, and only those, so their files can be replaced or removed. }
+{ An upgrade from 0.7.0: a speech program may still hold its server (python.exe) and the Braille Lite emulator
+  (bns_live.exe) open from the install folder.  Stop those, and only those, so their files can be removed.  The
+  engine itself now runs inside the speech programs: one holding its DLLs is Setup's to ask about (Restart Manager). }
 procedure StopOurProcesses;
 var
   Code: Integer;

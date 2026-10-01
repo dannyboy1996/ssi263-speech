@@ -1,7 +1,8 @@
 param([switch]$Register, [switch]$Unregister)
-# Voice tokens for the SSI-263 SAPI engine: the COM class (both DLL bitnesses) and one token per voice the pipe
-# server lists, in both registry views.  A trimmed fork of outspoken-nvda's sapi/register.ps1: the voices here
-# come with their firmware, so there is no data root to find.
+# Voice tokens for the SSI-263 SAPI engine: the COM class (both DLL bitnesses) and one token per voice in voices.txt
+# (the native library's list, made at build time), in both registry views.  A trimmed fork of outspoken-nvda's
+# sapi/register.ps1: the voices here come with their firmware, so there is no data root to find.  The token names
+# and VoiceIds are 0.7.0's, so a voice someone chose stays chosen across the upgrade.
 #
 # PowerShell 2.0's dialect on purpose (stock Windows 7): no $PSScriptRoot, the 32-bit view written directly.
 # Run elevated: -Register or -Unregister.
@@ -44,30 +45,27 @@ if ($Unregister) {
 }
 if (!$Register) { Write-Host 'Use -Register or -Unregister (elevated).'; exit 2 }
 
-# The COM class, in each view: the x64 DLL for 64-bit programs, the x86 DLL for 32-bit ones.
-$p = Start-Process -FilePath $sys64 -ArgumentList @('/s', "`"$(Join-Path $stage 'x64\ssi263_sapi.dll')`"") -Wait -PassThru
-if ($p.ExitCode) { throw "regsvr32 (x64) failed: $($p.ExitCode)" }
+# The COM class, in each view: the x64 DLL for 64-bit programs, the x86 DLL for 32-bit ones.  A 32-bit Windows has
+# only the x86 DLL (no SysWOW64 there: its own regsvr32 is the 32-bit one).
+$x64dll = Join-Path $stage 'x64\ssi263_sapi.dll'
+$x86dll = Join-Path $stage 'x86\ssi263_sapi.dll'
 if (Test-Path $sys32) {
-    $p = Start-Process -FilePath $sys32 -ArgumentList @('/s', "`"$(Join-Path $stage 'x86\ssi263_sapi.dll')`"") -Wait -PassThru
+    if (Test-Path $x64dll) {
+        $p = Start-Process -FilePath $sys64 -ArgumentList @('/s', "`"$x64dll`"") -Wait -PassThru
+        if ($p.ExitCode) { throw "regsvr32 (x64) failed: $($p.ExitCode)" }
+    }
+    $p = Start-Process -FilePath $sys32 -ArgumentList @('/s', "`"$x86dll`"") -Wait -PassThru
     if ($p.ExitCode) { throw "regsvr32 (x86) failed: $($p.ExitCode)" }
 } else {
-    $p = Start-Process -FilePath $sys64 -ArgumentList @('/s', "`"$(Join-Path $stage 'x86\ssi263_sapi.dll')`"") -Wait -PassThru
+    $p = Start-Process -FilePath $sys64 -ArgumentList @('/s', "`"$x86dll`"") -Wait -PassThru
+    if ($p.ExitCode) { throw "regsvr32 (x86) failed: $($p.ExitCode)" }
 }
 
-# The voices, as the server lists them: "id<TAB>name<TAB>language", UTF-8.
-$py = Join-Path $stage 'python\python.exe'
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $py
-$psi.Arguments = "-I `"$(Join-Path $stage 'ssi_serve.py')`" --list"
-$psi.UseShellExecute = $false
-$psi.RedirectStandardOutput = $true
-$psi.CreateNoWindow = $true
-$psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-$proc = [System.Diagnostics.Process]::Start($psi)
-$listing = $proc.StandardOutput.ReadToEnd()
-$proc.WaitForExit()
+# The voices, as the native library listed them from the installed firmware when the stage was built (sapi\build.ps1,
+# voices.txt): "id<TAB>name<TAB>language", UTF-8.
+$listing = [System.IO.File]::ReadAllText((Join-Path $stage 'voices.txt'), [System.Text.Encoding]::UTF8)
 $voices = @($listing -split "`r?`n" | Where-Object { $_ -match "`t" })
-if ($voices.Count -eq 0) { throw 'the server listed no voices' }
+if ($voices.Count -eq 0) { throw 'voices.txt lists no voices' }
 
 Remove-Voices
 foreach ($line in $voices) {
