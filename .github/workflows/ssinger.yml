@@ -99,7 +99,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pv-arm64
-          key: pluginval-${{ env.PLUGINVAL_VERSION }}-linux-arm64-v1
+          key: pluginval-${{ env.PLUGINVAL_VERSION }}-${{ matrix.runner }}-v1   # per runner: a 24.04 build needs glibc 2.38
 
       - name: Build pluginval from source (arm64)
         if: matrix.arch == 'arm64' && steps.pvcache.outputs.cache-hit != 'true'
