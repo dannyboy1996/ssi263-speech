@@ -63,6 +63,8 @@ void bl_hold(bl_unit *u, int chord);
    drivers' path), nothing changes. */
 void bl_keys_down(bl_unit *u, int bits);
 extern int bl_keys_break;   /* the tests' control (an app never sets it): nonzero delivers that chord again */
+/* how many times the firmware has run from its reset vector (power-on, and each restart: p-chord l) */
+int  bl_starts(const bl_unit *u);
 /* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
    with the clock controller on (bl_clock_on), the controller follows them (bl_clock.h); 1 on success */
 int  bl_save_state(const bl_unit *u, const char *path);

@@ -1,7 +1,7 @@
 # z180emu, as vendored here
 
 The Z180 core of [z180emu](https://github.com/mtdev79/z180emu) (GPL-2.0-or-later, `COPYING`; the core is Juergen
-Buchmueller's MAME-era Z180, see the file headers) at upstream commit 32592c7, with this project's four changes.
+Buchmueller's MAME-era Z180, see the file headers) at upstream commit 32592c7, with this project's five changes.
 `local.patch` is exactly them (`git diff` against upstream); `UPSTREAM.json` holds the upstream commit and the
 sha256 of every file as vendored. Only `z180/` is here: the Braille Lite board is this project's own
 (`src/csrc/blazie`), reaching the core through `src/csrc/cpu/z180_legacy.c`.

@@ -6,9 +6,14 @@
  * used to reach into -- the ASCI's baud ticking and request level, /DCD0 -- so the golden vectors hold bit for bit.
  *
  * Memory: ROM image from file offset 3000h at physical 00000h (256 KB, FFh-padded); 40000h..FFFFFh RAM, except that
- * port E0h bit 3 maps the AMD 29F040-style file flash over 80000h..FFFFFh.  SSI-263 at ports C0h..C4h, its A/R
+ * port E0h bit 3 maps the AMD 29F040-style file flash over 80000h..FFFFFh.  E0h bit 4 picks the program flash's
+ * other bank (p-chord l: the firmware checks a program is there and restarts into it): the same image is in both
+ * here, so the unit restarts in its own language.  SSI-263 at ports C0h..C4h, its A/R
  * request on /INT1.  Braille keyboard on port 40h, /INT2.  Serial on ASCI0 (9600 bit/s at 6.144 MHz), with the
  * host honouring the unit's XON/XOFF.  Port A0h bit 0 switches the serial port's line drivers on (bl_serial.h).
+ * An 8255 at 80h-83h: its control word at 83h sets and clears port C's bits (bits 0-2 clock the braille display;
+ * bit 4 calls the clock controller, which the firmware talks to over the Z180's CSI/O: bl_clock.h, on with
+ * bl_clock_on).  Port 40h also reads the keys held down (bl_keys_down) while no chord waits.
  * With bl_serial_attach the serial port is carried to a real port instead (the emulator app's COM port): bytes
  * both ways through a bl_serial_line, the host's XON/XOFF handling left to the far end.
  */
@@ -65,6 +70,7 @@ struct bl_unit {
     int held;                                /* bl_keys_down: the braille keys physically down now */
     int boot_phase;                          /* from a (re)start until the firmware reads its first chord */
     int held_seen;                           /* the firmware read the keys held now during its start */
+    int starts;                              /* bl_starts: times the firmware ran from its reset vector */
     unsigned char ppi_c;                     /* the 8255's port C outputs (control word at port 83h) */
     blc_clock *clk;                          /* bl_clock_on: the clock controller on the CSI/O */
     unsigned char clk_tail[BLC_SAVE_SIZE];   /* the state's saved controller, until bl_clock_on */
@@ -265,8 +271,10 @@ static void boundary(void *ctx, uint32_t pc)
 {
     bl_unit *u = (bl_unit *)ctx;
     u->instr_pc = pc & 0xFFFF;               /* read by the key-release check (port reads) */
-    if (!u->instr_pc)
+    if (!u->instr_pc) {
         u->boot_phase = 1;                   /* the reset vector: power-on, or the firmware restarting itself */
+        u->starts++;
+    }
     if (u->clk)
         blc_step(u->clk, u->cpu, (u->ppi_c & 0x10) != 0);
     if (!u->live_on && !u->ssi_ar && z180_cycles(u->cpu) >= u->ssi_ready_at) {
@@ -512,6 +520,11 @@ void bl_hold(bl_unit *u, int chord)
 }
 
 int bl_keys_break;
+
+int bl_starts(const bl_unit *u)
+{
+    return u->starts;
+}
 
 void bl_keys_down(bl_unit *u, int bits)
 {

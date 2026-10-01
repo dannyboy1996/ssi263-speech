@@ -12,7 +12,8 @@
  * "Wednesday September 30, 2015", "initialize file system").  The controls put one bug back and must fail:
  * TEST_CLOCK_BREAK=1 a clock that never advances, 2 year fields dropped, 3 the clock left out of a saved state
  * (bl_clock.h blc_break); TEST_CLOCK_HOLD_BREAK=1 keys never reported held (the app before), 2 a chord read held at
- * the start delivered again when it comes up (bl_board.h bl_keys_break).
+ * the start delivered again when it comes up (bl_board.h bl_keys_break), 3 quick key response left on through the
+ * restart (emu_unit.h emu_restart_break).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -296,6 +297,24 @@ static void restart_checks(const char *fw, const char *st)
     check("the held chord is not sent again", heard > 1e-5, d);
     emu_destroy(g_u);
     bl_keys_break = 0;
+
+    /* the same with quick key response on: it ends at the restart, so the start reads the keys at its own pace */
+    emu_restart_break = brk == 3;
+    start(EMU_BRAILLE_LITE, fw, st, T2015);
+    emu_set_quick(g_u, 1);
+    key(8.0, 0x4F);
+    key(10.0, 0x07);
+    run_to(10.25);
+    emu_keys_down(g_u, 0x4A);
+    run_to(12.0);
+    emu_keys_down(g_u, 0);
+    emu_key(g_u, 0x4A);
+    run_to(14.0);
+    snprintf(d, sizeof d, "with quick key response: the unit asked \"initialize file system\": %s",
+             ram_has("initialize file system") ? "yes" : "no");
+    check("held through the restart, quick", ram_has("initialize file system"), d);
+    emu_destroy(g_u);
+    emu_restart_break = 0;
 }
 
 int main(int argc, char **argv)

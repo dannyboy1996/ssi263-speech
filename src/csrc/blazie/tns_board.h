@@ -10,6 +10,8 @@
  *   bit 2 = 0 power switch off; FFh when idle.  80h (read): watchdog.  B0h (write): power/control latch.
  *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the 4 MB 29F016, the low 5 bits pick
  *   the page.
+ *   C3h (write): the 8255's control word; port C bit 4 calls the clock controller, which the firmware talks to over
+ *   the Z180's CSI/O (bl_clock.h; on with tns_clock_on).
  *   Memory: the firmware image from physical 00000h; RAM everywhere else, including 0-3FFFFh past the image's end
  *   (a new file's text starts right after the program).
  *

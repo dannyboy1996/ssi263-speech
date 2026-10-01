@@ -211,6 +211,10 @@ if os.path.isfile(CLOCK):
     CHECKS.append(check("Blazie emulator: held keys CONTROL (sent again, must fail)", [CLOCK, "bl"] + BL_ENG
                         + ["restart"], env={"TEST_CLOCK_HOLD_BREAK": "2"}, expect_fail=True,
                         fail_marks=[r"^ok +i-chord held through the restart ", r"^FAIL the held chord is not sent again "]))
+    CHECKS.append(check("Blazie emulator: held keys CONTROL (quick response through the restart, must fail)",
+                        [CLOCK, "bl"] + BL_ENG + ["restart"], env={"TEST_CLOCK_HOLD_BREAK": "3"}, expect_fail=True,
+                        fail_marks=[r"^ok +i-chord held through the restart ",
+                                    r"^FAIL held through the restart, quick "]))
     CHECKS.append(check("Blazie emulator: clock controller CONTROL (never moves, must fail)", [CLOCK, "unit"],
                         env={"TEST_CLOCK_BREAK": "1"}, expect_fail=True,
                         fail_marks=[r"^FAIL time passes \(a leap day\) ", r"^ok +set and read over its bytes "]))

@@ -80,6 +80,9 @@ int emu_serial_read(emu_unit *u, unsigned char *out, int cap, bl_serial_status *
 #define EMU_QUICK_TURBO 8.0
 #define EMU_QUICK_LIMIT_S 1.0
 void emu_set_quick(emu_unit *u, int on);
+/* Quick response also ends when the Braille Lite firmware restarts (p-chord l): its start reads the keys held at the
+   unit's own pace.  emu_restart_break: the tests' control (an app never sets it), nonzero keeps the old rule. */
+extern int emu_restart_break;
 /* chip time in seconds (tests) */
 double emu_time(const emu_unit *u);
 

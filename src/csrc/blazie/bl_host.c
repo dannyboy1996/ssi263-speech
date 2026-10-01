@@ -915,3 +915,8 @@ void bh_clock_wall(bl_host *h, long long unix_now)
 {
     bl_clock_wall(h->unit, unix_now);
 }
+
+int bh_starts(const bl_host *h)
+{
+    return bl_starts(h->unit);
+}

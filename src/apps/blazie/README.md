@@ -41,8 +41,8 @@ held is the cold reset ("initialize file system?", then the flash, the folders, 
 all seven keys the warm reset, space a silent start, and so on (the Help file's list). The unit starts when it is
 switched on and when p-chord, l restarts it. So: p-chord, l, then press and hold i-chord at once, until the unit asks
 its first question. The firmware reads the keys about 0.45 s after l comes up (0.1 s to restart, 0.35 s into the
-start): hold the chord by then. A chord the start has read is not sent again when you let go of it. With Settings >
-Quick key response on, the start runs eight times faster and that moment comes much sooner: turn it off for this.
+start): hold the chord by then. A chord the start has read is not sent again when you let go of it. Settings > Quick
+key response ends at the restart, so the start keeps the unit's own pace.
 
 **p-chord, l** (switch languages) is the Braille Lite 2000's other firmware bank: the firmware switches the program
 flash's bank (port E0h bit 4), checks that a program is there, and restarts into it. The emulator holds the same

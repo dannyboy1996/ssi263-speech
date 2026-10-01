@@ -130,6 +130,7 @@ int main(void)
     t_nmi_entry();
     t_burst();
     t_slp_slice();
+    t_csio(z180_run_legacy);
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

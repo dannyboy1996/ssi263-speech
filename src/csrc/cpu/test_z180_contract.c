@@ -876,6 +876,7 @@ int main(void)
     t_im0_transfer();
     t_trap_bus();
     t_priority();
+    t_csio(z180_run);
     printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

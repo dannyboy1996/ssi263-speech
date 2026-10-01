@@ -67,6 +67,7 @@ struct emu_unit {
     int hurry;                      /* a key taken, no spoken phoneme loaded since: the CPU at EMU_QUICK_TURBO */
     double hurry_from;              /* chip time of that key */
     int tns_r3;                     /* the Type 'n Speak's R3 as written (a load with bit 7 clear is a phoneme) */
+    int starts;                     /* the Braille Lite firmware's starts seen (bh_starts) */
 };
 
 emu_unit *emu_create(int kind, const char *firmware, const char *state, double out_rate, int whine, char *err,
@@ -189,8 +190,21 @@ static int tns_render(emu_unit *u, double seconds, const double **out)
 
 /* quick response ends at the first spoken phoneme (bl_host clears `preparing` there; the Type 'n Speak's lockstep
    clears hurry) or after EMU_QUICK_LIMIT_S: a key that brings no speech must not leave the unit fast */
+int emu_restart_break;
+
 static void hurry_check(emu_unit *u)
 {
+    if (u->host) {                  /* the firmware restarted (p-chord l): its start reads the keys held at its own
+                                       pace, so quick response ends there (8 times faster, no hand could be in time) */
+        int s = bh_starts(u->host);
+        if (s != u->starts) {
+            u->starts = s;
+            if (u->hurry && !emu_restart_break) {
+                u->hurry = 0;
+                bh_set_int(u->host, "preparing", 0);
+            }
+        }
+    }
     if (!u->hurry)
         return;
     if (u->host && !bh_get_int(u->host, "preparing"))
