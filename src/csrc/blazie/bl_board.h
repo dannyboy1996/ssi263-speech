@@ -11,6 +11,7 @@
 #define BL_BOARD_H
 
 #include "bl_serial.h"
+#include "bl_clock.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,9 +55,26 @@ void bl_battery(bl_unit *u, int level);
 /* a braille chord held down at power-on (bns --hold): port 40h reads it (chord & 7Fh) until the firmware reaches the
    point where it waits for the keys' release, or a key is pressed.  Call before the first bl_boot. */
 void bl_hold(bl_unit *u, int chord);
+/* The braille keys physically down now (bl_key's bits), for a host whose keyboard reports each key (the emulator):
+   port 40h reads them while no chord waits to be read.  The firmware reads that port only for a chord it was
+   interrupted for, and while it starts (power-on, or its own restart such as p-chord l's): there it looks for a
+   chord held down (i-chord: the cold reset; all seven keys: the warm reset; ...).  A chord the starting firmware
+   read that way is not delivered again when its keys come up: bl_key takes it and does nothing.  Never called (the
+   drivers' path), nothing changes. */
+void bl_keys_down(bl_unit *u, int bits);
+extern int bl_keys_break;   /* the tests' control (an app never sets it): nonzero delivers that chord again */
 /* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
-   1 on success */
+   with the clock controller on (bl_clock_on), the controller follows them (bl_clock.h); 1 on success */
 int  bl_save_state(const bl_unit *u, const char *path);
+
+/* The clock controller on the Z180's CSI/O (bl_clock.h): the time and date the firmware reads and sets.  Off by
+   default (the screen-reader drivers' path: the firmware then finds no clock, as it always did).  bl_clock_on
+   switches it on: with the controller saved in the state, it goes on from there, plus the time between unix_now and
+   when it was saved (bl_clock_wall; both in seconds, -1 unknown); without one, it starts at `now` (NULL: every field
+   0).  0 if out of memory.  bl_clock_time: the clock's (alarm 0) or the alarm's (1) fields; 0 when off. */
+int  bl_clock_on(bl_unit *u, const blc_time *now, long long unix_now);
+int  bl_clock_time(const bl_unit *u, int alarm, blc_time *t);
+void bl_clock_wall(bl_unit *u, long long unix_now);   /* the host's time, saved with the controller by bl_save_state */
 
 /* The serial port carried to a real port (the emulator's COM port; bl_serial.h): from bl_serial_attach(u, 1) the
    unit's serial bytes no longer come back as 'T' events, nor does bl_queue feed it -- bl_serial_write gives it what

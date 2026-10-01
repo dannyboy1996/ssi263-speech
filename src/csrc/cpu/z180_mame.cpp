@@ -395,6 +395,9 @@ void z180_asci_get(const z180 *c, int channel, z180_asci_regs *out)
     out->astc = (uint16_t)(a.astcl_r() | (a.astch_r() << 8));
 }
 
+int z180_csio_clock(z180 *c, uint8_t in, uint8_t *sent) { return c->dev->m_csio_0.clock(in, sent); }
+uint8_t z180_csio_cntr(const z180 *c) { return c->dev->m_csio_0.cntr_r(); }
+
 uint64_t z180_cycles(const z180 *c) { return c->cycles; }
 uint64_t z180_steps(const z180 *c) { return c->steps; }
 uint32_t z180_pc(const z180 *c) { return c->pc; }

@@ -3,6 +3,7 @@
   blazie_emu.exe   the app (one static program: the chip, the board with z180emu, the host, the shell)
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
+  test_clock.exe     the clock controller and the keys held while the unit starts (Jayson), headless
   test_serial.exe    the serial port plugged in, headless: the storage handshake answered from the far end
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
@@ -63,6 +64,9 @@ def main():
     unit = [o for o in objs if not o.endswith(("main_win.c.o", "tns_keymap_win.c.o", "serial_win.c.o"))]
     subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_emu_unit.exe"),
                     os.path.join(HERE, "test_emu_unit.c")] + unit + ["-lm"], env=env, check=True)
+    # the clock controller and the keys held while the unit starts (Jayson), headless
+    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_clock.exe"),
+                                  os.path.join(HERE, "test_clock.c")] + unit + ["-lm"], env=env, check=True)
     # the serial port plugged in, and its control: the same board with the receive path cut (bl_serial.c)
     subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_serial.exe"),
                                   os.path.join(HERE, "test_serial.c")] + unit + ["-lm"], env=env, check=True)

@@ -52,6 +52,7 @@ def build_mame(gcc, env):
             ("z180_asci", os.path.join(cpu, "z180_asci.cpp"), gxx, MAME_CXX),
             ("bl_board", os.path.join(HERE, "bl_board.c"), gcc, ["-O3", "-std=gnu89", "-DBL_Z180_MAME"]),
             ("flash29", os.path.join(HERE, "flash29.c"), gcc, ["-O3", "-std=gnu89"]),
+            ("bl_clock", os.path.join(HERE, "bl_clock.c"), gcc, ["-O3", "-std=gnu89", "-I" + cpu]),
             ("bl_serial", os.path.join(HERE, "bl_serial.c"), gcc, ["-O3", "-std=gnu89"]),
             ("bl_live", os.path.join(HERE, "bl_live.c"), gcc, ["-O3", "-std=gnu89"]),
             ("test_bl_board", os.path.join(HERE, "test_bl_board.c"), gcc, ["-O3", "-std=gnu89"]),
@@ -62,7 +63,7 @@ def build_mame(gcc, env):
             ("test_i86_contract", os.path.join(cpu, "test_i86_contract.c"), gcc, ["-O2", "-std=gnu89"])):
         objs[name] = os.path.join(obj, name + ".o")
         subprocess.run([cc] + flags + inc + ["-c", "-o", objs[name], src], env=env, check=True)
-    core = [objs["bl_board"], objs["flash29"], objs["bl_serial"], objs["z180_mame"], objs["z180_asci"]]
+    core = [objs["bl_board"], objs["flash29"], objs["bl_clock"], objs["bl_serial"], objs["z180_mame"], objs["z180_asci"]]
     for exe, main_o in (("bl_live_mame.exe", "bl_live"), ("test_bl_board_mame.exe", "test_bl_board")):
         subprocess.run([gxx] + MAME_LINK + ["-o", os.path.join(OUT, exe), objs[main_o]] + core, env=env, check=True)
     # the CPU contract's tests (no board): ../cpu/test_z180_contract.c

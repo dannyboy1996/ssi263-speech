@@ -184,6 +184,36 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
         if os.path.isfile(os.path.join(TNS_DIR, name)):
             CHECKS.append(check("Blazie emulator: Type 'n Speak %s, headless" % name[3:6],
                                 [os.path.join(EMU, "test_emu_unit.exe"), "tns", os.path.join(TNS_DIR, name), "-"]))
+# the units' clock controller (src/csrc/blazie/bl_clock.c; Jayson: the clock asked to be reset, did not move, lost
+# the year) and keys held while the unit starts (Jayson: i-chord held through p-chord l's restart): the controller
+# alone; the English Braille Lite and Type 'n Speak setting, reading and keeping time through their own commands; and
+# the controls, each with one bug put back (a clock that never moves, year fields dropped, the clock left out of the
+# saved state; keys never reported held, a chord read at the start sent again)
+CLOCK = os.path.join(EMU, "test_clock.exe")
+if os.path.isfile(CLOCK):
+    BL_ENG = [os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]
+    CHECKS.append(check("Blazie emulator: clock controller", [CLOCK, "unit"]))
+    CHECKS.append(check("Blazie emulator: clock and held keys, Braille Lite ENG", [CLOCK, "bl"] + BL_ENG))
+    CHECKS.append(check("Blazie emulator: clock, Braille Lite SPA", [CLOCK, "bl", os.path.join(ENG, "BL2SPA.BNS"),
+                                                                     os.path.join(ENG, "bl2spa_fresh.state"), "start"]))
+    TNS_ENG = os.path.join(os.path.dirname(os.path.dirname(HERE)), "firmware", "blazie", "tns", "TNSENG.TNS")
+    if os.path.isfile(TNS_ENG):
+        CHECKS.append(check("Blazie emulator: clock, Type 'n Speak ENG", [CLOCK, "tns", TNS_ENG]))
+    for brk, marks in (("1", [r"^FAIL the clock goes on +a minute on: 12:34:00", r"^FAIL switched off and on "]),
+                       ("2", [r"^FAIL set through the unit's commands +the clock holds 2012-09-30",
+                              r"^FAIL the year read back ", r"^ok +the clock goes on "]),
+                       ("3", [r"^ok +the clock goes on ", r"^FAIL switched off and on .*12:37: no$"])):
+        CHECKS.append(check("Blazie emulator: clock CONTROL (break %s, must fail)" % brk, [CLOCK, "bl"] + BL_ENG
+                            + ["clock"], env={"TEST_CLOCK_BREAK": brk}, expect_fail=True, fail_marks=marks))
+    CHECKS.append(check("Blazie emulator: held keys CONTROL (never held, must fail)", [CLOCK, "bl"] + BL_ENG
+                        + ["restart"], env={"TEST_CLOCK_HOLD_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL i-chord held through the restart "]))
+    CHECKS.append(check("Blazie emulator: held keys CONTROL (sent again, must fail)", [CLOCK, "bl"] + BL_ENG
+                        + ["restart"], env={"TEST_CLOCK_HOLD_BREAK": "2"}, expect_fail=True,
+                        fail_marks=[r"^ok +i-chord held through the restart ", r"^FAIL the held chord is not sent again "]))
+    CHECKS.append(check("Blazie emulator: clock controller CONTROL (never moves, must fail)", [CLOCK, "unit"],
+                        env={"TEST_CLOCK_BREAK": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL time passes \(a leap day\) ", r"^ok +set and read over its bytes "]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
 # storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
 # paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end

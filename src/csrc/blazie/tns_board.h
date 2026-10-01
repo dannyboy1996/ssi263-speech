@@ -50,8 +50,17 @@ int  tns_serial_write(tns_unit *u, const unsigned char *bytes, int n);
 int  tns_serial_space(const tns_unit *u);
 int  tns_serial_read(tns_unit *u, unsigned char *out, int cap, bl_serial_status *status);
 
-/* the RAM (1 MB) and the file flash (4 MB), as a switched-off unit keeps them; 1 on success */
+/* the RAM (1 MB) and the file flash (4 MB), as a switched-off unit keeps them (and the clock controller when it is
+   on); 1 on success */
 int  tns_save_state(const tns_unit *u, const char *path);
+
+/* The clock controller on the CSI/O (bl_clock.h), called through the 8255 at C3h: as bl_board.h's bl_clock_on,
+   bl_clock_time and bl_clock_wall. */
+int  tns_clock_on(tns_unit *u, const blc_time *now, long long unix_now);
+int  tns_clock_time(const tns_unit *u, int alarm, blc_time *t);
+void tns_clock_wall(tns_unit *u, long long unix_now);
+/* tests: which 0, the 1 MB address space's RAM (the program at its start); which 1, the 4 MB file flash; the size */
+int  tns_memory(const tns_unit *u, int which, const unsigned char **bytes);
 
 #ifdef __cplusplus
 }

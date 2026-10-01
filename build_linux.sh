@@ -56,6 +56,7 @@ $CXX $MAME -c -o "$OUT/obj_mame/z180_mame.o" "$SRC/cpu/z180_mame.cpp"
 $CXX $MAME -c -o "$OUT/obj_mame/z180_asci.o" "$SRC/cpu/z180_asci.cpp"
 $CC -O3 -std=gnu89 -ffp-contract=off -DBL_Z180_MAME -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/bl_board.o" "$SRC/blazie/bl_board.c"
 $CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -c -o "$OUT/obj_mame/flash29.o" "$SRC/blazie/flash29.c"
+$CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -I$SRC/cpu -c -o "$OUT/obj_mame/bl_clock.o" "$SRC/blazie/bl_clock.c"
 $CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -c -o "$OUT/obj_mame/bl_serial.o" "$SRC/blazie/bl_serial.c"
 $CC -O3 -std=gnu89 -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/obj_mame/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
 $CXX -o "$OUT/test_bl_board_mame" "$OUT"/obj_mame/*.o -lm

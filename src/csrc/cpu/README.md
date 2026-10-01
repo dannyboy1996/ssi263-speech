@@ -14,7 +14,7 @@ The cores never know which board they are in.
 | `z180_mame.hpp` | Our class around MAME's code: the member names it expects (from MAME's `z180.h`), the flag tables as members, and small stand-ins for the MAME framework (the bus, the daisy chain, logging). The class is the Z8S180. |
 | `z180_mame.cpp` | **Our step driver** (the contract's phases A-G, following MAME's `execute_run`) and the `cpu.h` functions with C linkage. It includes `z180_mame_machine.cpp`: build this file, never the generated one alone. The header comment lists every deliberate difference from MAME. |
 | `z180_trap.hpp` | Which prefixed opcodes the Z180 defines, from the manual's op code maps; every other one TRAPs. Ours; it decides, not MAME's tables. |
-| `z180_asci.hpp`, `z180_asci.cpp` | Our own byte-level serial ports (ASCI 0 and 1) with MAME's register method names, and a CSI/O stub. Divisors from the chip's registers, `/DCD0`, the interrupt as a level. |
+| `z180_asci.hpp`, `z180_asci.cpp` | Our own byte-level serial ports (ASCI 0 and 1) with MAME's register method names, and the CSI/O with an external clock (`z180_csio_clock`: the far end clocks each byte). Divisors from the chip's registers, `/DCD0`, the interrupts as levels. |
 | `test_z180_zex.c` | Runs a CP/M instruction exerciser (zexdoc/zexall, not in the repo) on either core. |
 | `mame_i8085/` | Where MAME's 8085 comes from: `PINNED.txt` (the upstream revision, the files' hashes) and the licence text (BSD-3-Clause; Juergen Buchmueller, Roberto Fresca, Grull Osgo). Nothing of it is copied unchanged. |
 | `extract_i8085_machine.py` | Generates `i8085_mame_machine.cpp` from MAME's `i8085.cpp` (pinned by revision and sha256): exact line ranges, each anchored, every change named and marked `CHANGED`. |

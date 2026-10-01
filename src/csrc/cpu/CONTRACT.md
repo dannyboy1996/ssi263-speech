@@ -314,8 +314,14 @@ opcode fetch already happens before the charge), not by a constant. Before migra
 - **Instances.** No global mutable state. Distinct instances may run on distinct threads, and two instances
   interleaved in one thread must behave as each alone (a required test; `test_bl_board.c` does it today for the
   board).
-- **Re-entry.** A callback may call `*_cycles`, `*_steps`, `*_pc`, `*_regs_get`, `z180_asci_get` and `*_set_irq`,
-  but not `*_step`, `*_run`, `*_reset` or `*_destroy`.
+- **Re-entry.** A callback may call `*_cycles`, `*_steps`, `*_pc`, `*_regs_get`, `z180_asci_get`, `z180_csio_*` and
+  `*_set_irq`, but not `*_step`, `*_run`, `*_reset` or `*_destroy`.
+- **Z180 only:** the CSI/O with an external clock (CNTR SS = 111): `z180_csio_clock` is the far end's 8 clocks. An
+  armed transfer moves TRDR out (TE) and the given byte in (RE), clears TE and RE and sets EF; reading or writing TRDR
+  clears EF; the request is EF and EIE, a level (section 4). Nothing happens when nothing is armed. The Z180's own
+  clock (SS < 111) is not modelled. On z180emu the CNTR read still masks TE (upstream's), so a firmware waiting for TE
+  to clear never waits there; the Blazie clock controller (`../blazie/bl_clock.h`) takes the byte at the next step
+  boundary anyway. `z180_csio_cntr` reads CNTR without side effects.
 - **Z180 only:** `z180_asci_get` reads an ASCI channel's control registers without side effects, so a board that
   carries the serial line to a real port can set that port to the format the firmware programmed (the Blazie
   emulator's COM port, `../blazie/bl_serial.h`). The pin bits are each core's own: z180emu's CNTLA0 readback sets

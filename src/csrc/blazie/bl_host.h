@@ -101,6 +101,11 @@ BL_API int bh_serial_read(bl_host *h, unsigned char *out, int cap, bl_serial_sta
 BL_API int bh_key(bl_host *h, int chord);   /* a braille chord pressed live (bl_key) */
 BL_API void bh_battery(bl_host *h, int level);   /* the battery gauge's reading (bl_battery) */
 BL_API int bh_save_state(const bl_host *h, const char *path);   /* bl_save_state: 1 on success */
+/* the emulator's (bl_board.h's bl_keys_down and bl_clock_*): keys held down, the clock controller */
+BL_API void bh_keys_down(bl_host *h, int bits);
+BL_API int bh_clock_on(bl_host *h, const blc_time *now, long long unix_now);
+BL_API int bh_clock_time(const bl_host *h, int alarm, blc_time *t);
+BL_API void bh_clock_wall(bl_host *h, long long unix_now);
 
 #ifdef __cplusplus
 }

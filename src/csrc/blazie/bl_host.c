@@ -894,3 +894,24 @@ void bh_battery(bl_host *h, int level)
 {
     bl_battery(h->unit, level);
 }
+
+/* ---- the emulator's: keys held down, the clock controller (bl_board.h); the drivers never call these ---------- */
+void bh_keys_down(bl_host *h, int bits)
+{
+    bl_keys_down(h->unit, bits);
+}
+
+int bh_clock_on(bl_host *h, const blc_time *now, long long unix_now)
+{
+    return bl_clock_on(h->unit, now, unix_now);
+}
+
+int bh_clock_time(const bl_host *h, int alarm, blc_time *t)
+{
+    return bl_clock_time(h->unit, alarm, t);
+}
+
+void bh_clock_wall(bl_host *h, long long unix_now)
+{
+    bl_clock_wall(h->unit, unix_now);
+}

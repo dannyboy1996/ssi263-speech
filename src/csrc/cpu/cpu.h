@@ -22,7 +22,7 @@ extern "C" {
 /* What a core sees of its board.  *_create COPIES this struct; ctx must outlive the core.  Every callback gets ctx,
    the board's own instance: no globals anywhere, so two boards (two units) run side by side in one process, and on
    different threads.  Required: read, write, in, out.  Optional (NULL): fetch (-> read), irq_ack (-> FFh), serial_*,
-   boundary.  A callback may call *_cycles, *_steps, *_pc, *_regs_get and *_set_irq; never *_step, *_run, *_reset or
+   boundary.  A callback may call *_cycles, *_steps, *_pc, *_regs_get, *_set_irq and z180_csio_*; never *_step, *_run, *_reset or
    *_destroy.  CONTRACT.md 7 says what each callback sees, phase by phase. */
 typedef struct cpu_bus {
     void *ctx;
@@ -86,6 +86,15 @@ typedef struct {                                               /* an ASCI channe
    the pin bits differ between cores).  A board whose host carries the serial line to a real port programs that
    port from them (the line format the firmware chose). */
 void z180_asci_get(const z180 *c, int channel, z180_asci_regs *out);
+/* The CSI/O (clocked serial I/O) driven by an EXTERNAL clock (CNTR's SS = 111): the device on the far end is the
+   master and clocks 8 bits whenever it likes.  z180_csio_clock is those 8 clocks: when a transfer is armed (CNTR TE
+   and/or RE), TRDR's byte goes out (into *sent, when TE) and `in` comes into TRDR (when RE); TE and RE clear and EF
+   sets, which requests the CSI/O interrupt while EIE is set (a level: reading or writing TRDR clears EF).  Returns
+   the CNTR bits that were armed (10h TE, 20h RE), 0 when none was (the clocks move nothing a program can see).  The
+   Z180's own clock (SS < 111) is not modelled.  z180_csio_cntr: CNTR as the core holds it, no side effects.  Both
+   may be called from bus->boundary. */
+int z180_csio_clock(z180 *c, uint8_t in, uint8_t *sent);
+uint8_t z180_csio_cntr(const z180 *c);
 
 /* ---- 8085 (Intel 8085A: the Accent SA) ------------------------------------------------------------------------- */
 typedef struct i8085 i8085;

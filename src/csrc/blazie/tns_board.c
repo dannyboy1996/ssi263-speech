@@ -7,6 +7,7 @@
 #include <string.h>
 #include "../cpu/cpu.h"
 #include "tns_board.h"
+#include "bl_clock.h"
 #include "flash29.h"
 
 #define RAM_SIZE 0x100000
@@ -30,6 +31,11 @@ struct tns_unit {
     int n_keyq, key_ready;
     bl_event *ev;
     int n_ev, cap_ev;
+    unsigned char ppi_c;                     /* the 8255's port C outputs (control word at port C3h) */
+    blc_clock *clk;                          /* tns_clock_on: the clock controller on the CSI/O (bl_clock.h) */
+    unsigned char clk_tail[BLC_SAVE_SIZE];   /* the state's saved controller, until tns_clock_on */
+    int has_clk_tail;
+    long long clk_wall;
 };
 
 static void event(tns_unit *u, unsigned char type, unsigned char a, unsigned char b)
@@ -113,6 +119,8 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
 {
     tns_unit *u = (tns_unit *)ctx;
     int p = Port & 0xFF;
+    if (p == 0xC3)
+        blc_ppi_control(&u->ppi_c, V);       /* the 8255's control word: port C bit 4 calls the clock controller */
     if (p == 0xF0)
         u->port_f0 = V;
     else if (p == 0xB0)
@@ -162,6 +170,8 @@ static void boundary(void *ctx, uint32_t pc)
 {
     tns_unit *u = (tns_unit *)ctx;
     (void)pc;
+    if (u->clk)
+        blc_step(u->clk, u->cpu, (u->ppi_c & 0x10) != 0);
     if (u->n_keyq && !u->key_ready) {
         u->key_latch = u->keyq[0];
         memmove(u->keyq, u->keyq + 1, (size_t)--u->n_keyq);
@@ -192,6 +202,7 @@ tns_unit *tns_create(const char *firmware, const char *state, char *err, int err
     u->ram = (unsigned char *)calloc(1, RAM_SIZE);
     u->fdata = (unsigned char *)malloc(FLASH_SIZE);
     file = (unsigned char *)malloc(0x100000);
+    u->clk_wall = -1;
     if (!u->ram || !u->fdata || !file) { snprintf(err, errlen, "out of memory"); free(file); tns_destroy(u); return NULL; }
     memset(u->ram, 0xFF, IMAGE_MAX);
     memset(u->fdata, 0xFF, FLASH_SIZE);
@@ -209,6 +220,7 @@ tns_unit *tns_create(const char *firmware, const char *state, char *err, int err
             tns_destroy(u);
             return NULL;
         }
+        u->has_clk_tail = blc_read_tail(s, u->clk_tail);   /* the clock controller, when it was on */
         fclose(s);
     }
     f = fopen(firmware, "rb");
@@ -256,6 +268,7 @@ void tns_destroy(tns_unit *u)
     if (u->cpu)
         z180_destroy(u->cpu);
     bl_serial_free(u->line);
+    free(u->clk);
     free(u->ram);
     free(u->fdata);
     free(u->ev);
@@ -344,5 +357,44 @@ int tns_save_state(const tns_unit *u, const char *path)
     if (!s)
         return 0;
     ok = fwrite(u->ram, 1, RAM_SIZE, s) == RAM_SIZE && fwrite(u->fdata, 1, FLASH_SIZE, s) == FLASH_SIZE;
+    if (ok && u->clk)
+        ok = blc_write_tail(s, u->clk, u->clk_wall);
     return fclose(s) == 0 && ok;
+}
+
+int tns_clock_on(tns_unit *u, const blc_time *now, long long unix_now)
+{
+    long long saved_at = -1;
+    if (u->clk)
+        return 1;
+    u->clk = (blc_clock *)malloc(sizeof(blc_clock));
+    if (!u->clk)
+        return 0;
+    blc_init(u->clk, CLOCK_HZ, z180_cycles(u->cpu));
+    if (u->has_clk_tail && blc_load(u->clk, u->clk_tail, &saved_at)) {
+        if (saved_at >= 0 && unix_now >= 0)
+            blc_advance_off(u->clk, (double)(unix_now - saved_at));   /* it kept time while the unit was off */
+    } else if (now)
+        blc_set(u->clk, now);
+    u->clk_wall = unix_now;
+    return 1;
+}
+
+int tns_clock_time(const tns_unit *u, int alarm, blc_time *t)
+{
+    if (!u->clk)
+        return 0;
+    blc_get(u->clk, alarm, t);
+    return 1;
+}
+
+void tns_clock_wall(tns_unit *u, long long unix_now)
+{
+    u->clk_wall = unix_now;
+}
+
+int tns_memory(const tns_unit *u, int which, const unsigned char **bytes)
+{
+    *bytes = which ? u->fdata : u->ram;
+    return which ? FLASH_SIZE : RAM_SIZE;
 }

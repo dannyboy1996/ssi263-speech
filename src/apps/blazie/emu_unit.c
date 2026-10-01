@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "../../csrc/ssi263.h"
 #include "../../csrc/blazie/bl_host.h"
 #include "../../csrc/blazie/tns_board.h"
@@ -25,6 +26,30 @@
 #define BATTERY_LEVEL 128           /* the gauge's raw reading: "100 percent", not charging (255: charging) */
 
 void ssi_onepole(double *x, int n, double b0, double b1, double a1, double *state);   /* ssi263dsp.c */
+
+static long long g_fake_now = -1;   /* emu_fake_host_time */
+
+/* the host's local time as a calendar time, and its seconds since 1970 (for the time a unit was switched off) */
+static long long host_now(blc_time *t)
+{
+    time_t now = g_fake_now >= 0 ? (time_t)g_fake_now : time(NULL);
+    struct tm *tm = g_fake_now >= 0 ? gmtime(&now) : localtime(&now);
+    memset(t, 0, sizeof *t);
+    if (tm) {
+        t->year = tm->tm_year + 1900;
+        t->month = tm->tm_mon + 1;
+        t->day = tm->tm_mday;
+        t->hour = tm->tm_hour;
+        t->minute = tm->tm_min;
+        t->second = tm->tm_sec > 59 ? 59 : tm->tm_sec;
+    }
+    return (long long)now;
+}
+
+void emu_fake_host_time(long long seconds)
+{
+    g_fake_now = seconds;
+}
 
 struct emu_unit {
     int kind;
@@ -61,6 +86,14 @@ emu_unit *emu_create(int kind, const char *firmware, const char *state, double o
         double k = tan(M_PI * BOARD_LOWPASS_HZ / out_rate);   /* dsp.onepole_coeffs, as bl_host */
         u->tns = tns_create(firmware, state, err, errlen);
         if (!u->tns) { ssi263_free(u->chip); free(u); return NULL; }
+        {
+            blc_time now;
+            long long secs = host_now(&now);
+            if (!tns_clock_on(u->tns, &now, secs)) {
+                snprintf(err, errlen, "out of memory");
+                tns_destroy(u->tns); ssi263_free(u->chip); free(u); return NULL;
+            }
+        }
         u->b0 = u->b1 = k / (1.0 + k);
         u->a1 = (k - 1.0) / (k + 1.0);
         u->ar = -1;
@@ -70,6 +103,14 @@ emu_unit *emu_create(int kind, const char *firmware, const char *state, double o
         if (!u->host) { ssi263_free(u->chip); free(u); return NULL; }
         bh_set_whine(u->host, whine);
         bh_battery(u->host, BATTERY_LEVEL);   /* the status menu's % reads the gauge (without it: frozen) */
+        {   /* the clock controller: the saved one goes on, or it starts at the host's time */
+            blc_time now;
+            long long secs = host_now(&now);
+            if (!bh_clock_on(u->host, &now, secs)) {
+                snprintf(err, errlen, "out of memory");
+                bh_destroy(u->host); ssi263_free(u->chip); free(u); return NULL;
+            }
+        }
     }
     u->out_rate = out_rate;
     u->gain = MAKEUP;
@@ -214,9 +255,32 @@ double emu_time(const emu_unit *u)
     return ssi263_time(u->chip);
 }
 
-int emu_save(const emu_unit *u, const char *path)
+int emu_save(emu_unit *u, const char *path)
 {
-    return u->tns ? tns_save_state(u->tns, path) : bh_save_state(u->host, path);
+    blc_time now;
+    long long secs = host_now(&now);   /* when it was switched off: the controller keeps time from here */
+    if (u->tns) {
+        tns_clock_wall(u->tns, secs);
+        return tns_save_state(u->tns, path);
+    }
+    bh_clock_wall(u->host, secs);
+    return bh_save_state(u->host, path);
+}
+
+void emu_keys_down(emu_unit *u, int bits)
+{
+    if (u->host)
+        bh_keys_down(u->host, bits);
+}
+
+int emu_memory(const emu_unit *u, const unsigned char **ram)
+{
+    return u->tns ? tns_memory(u->tns, 0, ram) : bh_memory(u->host, 0, ram);
+}
+
+int emu_clock_time(const emu_unit *u, int alarm, blc_time *t)
+{
+    return u->tns ? tns_clock_time(u->tns, alarm, t) : bh_clock_time(u->host, alarm, t);
 }
 
 void emu_set_whine(emu_unit *u, int whine)

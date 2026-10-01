@@ -18,6 +18,7 @@
 #include "../cpu/cpu.h"
 #include "bl_board.h"
 #include "bl_serial.h"
+#include "bl_clock.h"
 #include "flash29.h"
 
 #ifdef BH_TRACE                              /* a scratch build's trace (never in a release build) */
@@ -61,6 +62,14 @@ struct bl_unit {
     uint32_t instr_pc;
     bl_event *ev;
     int n_ev, cap_ev;
+    int held;                                /* bl_keys_down: the braille keys physically down now */
+    int boot_phase;                          /* from a (re)start until the firmware reads its first chord */
+    int held_seen;                           /* the firmware read the keys held now during its start */
+    unsigned char ppi_c;                     /* the 8255's port C outputs (control word at port 83h) */
+    blc_clock *clk;                          /* bl_clock_on: the clock controller on the CSI/O */
+    unsigned char clk_tail[BLC_SAVE_SIZE];   /* the state's saved controller, until bl_clock_on */
+    int has_clk_tail;
+    long long clk_wall;                      /* bl_clock_wall: the host's time for the next save */
 };
 
 static void event(bl_unit *u, unsigned char type, unsigned char a, unsigned char b)
@@ -151,9 +160,15 @@ static uint8_t io_read(void *ctx, uint16_t Port)
         else
             v = (unsigned char)u->hold_chord;
     }
+    if (p == 0x40 && u->hold_chord < 0 && u->held) {
+        v = (unsigned char)u->held;          /* keys held down (bl_keys_down): read as they are */
+        if (u->boot_phase)
+            u->held_seen = 1;                /* the start-up read them: their chord is the firmware's already */
+    }
     if (p == 0x40 && u->key_latched) {
         v = u->key_latch;
         u->key_latched = 0;
+        u->boot_phase = 0;
         z180_set_irq(u->cpu, Z180_INT2, 0);
     }
     return v;
@@ -165,6 +180,8 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     int p = Port & 0xFF;
     if (p == 0xE0)
         u->port_e0 = V;
+    if (p == 0x83)
+        blc_ppi_control(&u->ppi_c, V);       /* the 8255's control word: port C bit 4 calls the clock controller */
     if (p == 0xA0)
         u->port_a0 = V;                      /* bit 0: the serial port's line drivers on; bit 1: the speech
                                                 channel's power (bl_port_a0) */
@@ -248,6 +265,10 @@ static void boundary(void *ctx, uint32_t pc)
 {
     bl_unit *u = (bl_unit *)ctx;
     u->instr_pc = pc & 0xFFFF;               /* read by the key-release check (port reads) */
+    if (!u->instr_pc)
+        u->boot_phase = 1;                   /* the reset vector: power-on, or the firmware restarting itself */
+    if (u->clk)
+        blc_step(u->clk, u->cpu, (u->ppi_c & 0x10) != 0);
     if (!u->live_on && !u->ssi_ar && z180_cycles(u->cpu) >= u->ssi_ready_at) {
         u->ssi_ar = 1;
         ar_line(u);
@@ -318,6 +339,8 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
     u->urgent = -1;
     u->batt_level = -1;                      /* no battery gauge unless asked for (bl_battery) */
     u->hold_chord = -1;
+    u->boot_phase = 1;
+    u->clk_wall = -1;
     for (i = 0; i < n_keys && i < MAX_KEYS; i++) {
         u->key_at[i] = key_at[i];
         u->key_val[i] = key_val[i];
@@ -333,6 +356,7 @@ bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
             bl_destroy(u);
             return NULL;
         }
+        u->has_clk_tail = blc_read_tail(s, u->clk_tail);   /* the clock controller, when it was on (bl_clock_on) */
         fclose(s);
     }
     f = fopen(firmware, "rb");
@@ -374,6 +398,7 @@ void bl_destroy(bl_unit *u)
     if (u->cpu)
         z180_destroy(u->cpu);
     bl_serial_free(u->line);
+    free(u->clk);
     free(u->flash);
     free(u->ram);
     free(u->fflash);
@@ -457,6 +482,8 @@ int bl_save_state(const bl_unit *u, const char *path)
     if (!s)
         return 0;
     ok = fwrite(u->ram + 0x40000, 1, 0x40000, s) == 0x40000 && fwrite(u->fflash, 1, 0x80000, s) == 0x80000;
+    if (ok && u->clk)
+        ok = blc_write_tail(s, u->clk, u->clk_wall);
     return fclose(s) == 0 && ok;
 }
 
@@ -469,6 +496,10 @@ void bl_battery(bl_unit *u, int level)
 
 int bl_key(bl_unit *u, int chord)
 {
+    if (u->held_seen && !bl_keys_break) {    /* held through a start, which read it (bl_keys_down): not again */
+        u->held_seen = 0;
+        return 1;
+    }
     if (u->n_live_keys == (int)sizeof u->live_keys)
         return 0;
     u->live_keys[u->n_live_keys++] = (unsigned char)chord;
@@ -478,6 +509,46 @@ int bl_key(bl_unit *u, int chord)
 void bl_hold(bl_unit *u, int chord)
 {
     u->hold_chord = chord & 0x7F;            /* bns.c's --hold */
+}
+
+int bl_keys_break;
+
+void bl_keys_down(bl_unit *u, int bits)
+{
+    if (!u->held && bits)
+        u->held_seen = 0;                    /* a new chord begins */
+    u->held = bits & 0xFF;
+}
+
+int bl_clock_on(bl_unit *u, const blc_time *now, long long unix_now)
+{
+    long long saved_at = -1;
+    if (u->clk)
+        return 1;
+    u->clk = (blc_clock *)malloc(sizeof(blc_clock));
+    if (!u->clk)
+        return 0;
+    blc_init(u->clk, u->clock_hz, z180_cycles(u->cpu));
+    if (u->has_clk_tail && blc_load(u->clk, u->clk_tail, &saved_at)) {
+        if (saved_at >= 0 && unix_now >= 0)
+            blc_advance_off(u->clk, (double)(unix_now - saved_at));   /* it kept time while the unit was off */
+    } else if (now)
+        blc_set(u->clk, now);
+    u->clk_wall = unix_now;
+    return 1;
+}
+
+int bl_clock_time(const bl_unit *u, int alarm, blc_time *t)
+{
+    if (!u->clk)
+        return 0;
+    blc_get(u->clk, alarm, t);
+    return 1;
+}
+
+void bl_clock_wall(bl_unit *u, long long unix_now)
+{
+    u->clk_wall = unix_now;
 }
 
 unsigned long long bl_cycles(const bl_unit *u)
