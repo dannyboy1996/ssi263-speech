@@ -84,6 +84,8 @@ static int g_kind;
 static int g_rate = 44100, g_block_ms = BLOCK_MS_DEFAULT;
 static int g_whine = 3, g_keep_open = 1, g_popclick = 1, g_tick = 1, g_quick;
 static char g_cfg_dir[PATH_MAX], g_ini_path[PATH_MAX], g_fw_dir[PATH_MAX], g_serial[PATH_MAX];
+static char g_serial_want[PATH_MAX], g_serial_shown[PATH_MAX + 32];   /* the port, as the menu says it */
+       /* the setting: kept when the port is missing at the start */
 static ini *g_ini;
 static bl_keys g_blk;
 static term_dec g_term;
@@ -349,7 +351,7 @@ static void save_settings(void)
     ini_set(g_ini, "sound", "tick", g_tick ? "1" : "0");
     snprintf(v, sizeof v, "%d", g_rate);
     ini_set(g_ini, "sound", "rate", v);
-    ini_set(g_ini, "serial", "port", g_serial[0] ? g_serial : "none");
+    ini_set(g_ini, "serial", "port", g_serial_want[0] ? g_serial_want : "none");
     ini_set(g_ini, "keys", "mode", g_blk.mode == BLK_LETTERS ? "letters" : "keys");
     if (!ini_save(g_ini, g_ini_path))
         say("Could not write the settings to %s.", g_ini_path);
@@ -514,8 +516,9 @@ static void audio_stop(void)
 }
 
 /* ---- the serial port ------------------------------------------------------------------------------------------- */
-/* plugs the unit's serial port into `name` ("" or "none": unplugged); 1 on success */
-static int set_serial(const char *name)
+/* plugs the unit's serial port into `name` ("" or "none": unplugged); 1 on success.  at_start: the port saved last
+   time -- if it cannot be opened the unit starts unplugged and the setting stays for next time */
+static int set_serial(const char *name, int at_start)
 {
     char err[300], other[PATH_MAX], link_path[PATH_MAX + 16];
     tty_link *old, *t = NULL;
@@ -529,12 +532,15 @@ static int set_serial(const char *name)
     snprintf(link_path, sizeof link_path, "%s/serial", g_cfg_dir);
     unlink(link_path);
     g_serial[0] = 0;
+    snprintf(g_serial_shown, sizeof g_serial_shown, "none");
     if (name[0] && strcmp(name, "none")) {
         t = tty_open(name, other, sizeof other, err, sizeof err);
         if (!t)
             say("The serial port is not connected: %s.", err);
         else {
             snprintf(g_serial, sizeof g_serial, "%s", name);
+            snprintf(g_serial_shown, sizeof g_serial_shown, other[0] ? "a pseudo-terminal, its other end %s" : "%s",
+                     other[0] ? other : name);
             pthread_mutex_lock(&g_lock);
             if (g_unit)
                 emu_serial_attach(g_unit, 1);
@@ -548,8 +554,10 @@ static int set_serial(const char *name)
             } else
                 say("The serial port is on %s.", name);
         }
-    } else if (!g_headless)
+    } else if (!at_start)
         say("The serial port is not connected.");
+    if (!at_start || t)
+        snprintf(g_serial_want, sizeof g_serial_want, "%s", t ? name : "none");
     return t != NULL;
 }
 
@@ -680,7 +688,7 @@ static void menu_serial(void)
     char line[PATH_MAX], p[64];
     unsigned i;
     int k, any = 0;
-    say("Serial port, now %s. Ports here:", g_serial[0] ? g_serial : "none");
+    say("Serial port, now %s. Ports here:", g_serial_shown);
     for (i = 0; i < sizeof PATTERNS / sizeof PATTERNS[0]; i++)
         for (k = 0; k < 8; k++) {
             snprintf(p, sizeof p, PATTERNS[i], k);
@@ -694,7 +702,7 @@ static void menu_serial(void)
     say("Type a port, pty (a pseudo-terminal for a program on this machine), or none; Enter alone keeps it:");
     read_line(line, sizeof line);
     if (line[0]) {
-        set_serial(line);
+        set_serial(line, 0);
         save_settings();
     }
 }
@@ -739,7 +747,7 @@ static void menu(void)
         say("  9 The pop when the channel opens, the click when it clicks off: %s", g_popclick ? "on" : "off");
         say("  10 The 10 Hz tick of the open channel: %s", g_tick ? "on" : "off");
         say("  11 Quick key response (faster than the real unit): %s", g_quick ? "on" : "off");
-        say("  12 Serial port: %s", g_serial[0] ? g_serial : "none");
+        say("  12 Serial port: %s", g_serial_shown[0] ? g_serial_shown : "none");
         say("  13 Braille Lite keyboard: %s", g_blk.mode == BLK_LETTERS
             ? "letters (each character its braille cell)" : "keys (F D S J K L)");
         say("  14 Keys (help)");
@@ -1232,18 +1240,17 @@ int main(int argc, char **argv)
     }
     term_raw();
     atexit(term_restore);
+    snprintf(g_serial_want, sizeof g_serial_want, "%s", ini_get(g_ini, "serial", "port", "none"));
     if (!start_unit(kind, NULL)) {
         say("Choose a unit with --unit, or set firmware_dir in %s.", g_ini_path);
         term_restore();
         return 1;
     }
     audio_start();
-    {
-        const char *port = ini_get(g_ini, "serial", "port", "none");
+    if (strcmp(g_serial_want, "none") && g_serial_want[0]) {
         char p[PATH_MAX];
-        snprintf(p, sizeof p, "%s", port);
-        if (strcmp(p, "none") && p[0])
-            set_serial(p);
+        snprintf(p, sizeof p, "%s", g_serial_want);
+        set_serial(p, 1);                       /* the port chosen last time */
     }
     {
         double next_save = mono() + AUTOSAVE_S;
@@ -1306,7 +1313,7 @@ int main(int argc, char **argv)
         }
     }
     say("Switching off: the unit's memory is saved.");
-    set_serial("none");
+    set_serial("none", 1);
     audio_stop();
     save_unit();
     save_settings();
