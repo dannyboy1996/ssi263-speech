@@ -57,7 +57,7 @@ def diff(a, b):
 
 def main():
     tool, state = sys.argv[1], sys.argv[2]
-    seven = sys.argv[3] if len(sys.argv) > 3 else shutil.which("7z") or r"C:\Program Files\7-Zip\7z.exe"
+    seven = sys.argv[3] if len(sys.argv) > 3 else shutil.which("7z") or os.path.join(os.environ.get("ProgramFiles", ""), "7-Zip", "7z.exe")
     work = tempfile.mkdtemp(prefix="files_7zip_")
     try:
         src = os.path.join(work, "src")

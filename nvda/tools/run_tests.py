@@ -304,7 +304,7 @@ if os.path.isfile(FILES):
                             fail_marks=[r"^FAIL the open file goes on after the import", r"^FAILED$"]))
     # ... and the images in another program: 7-Zip (when this machine has it) extracts a packed image and a unit's
     # export exactly; its control writes the long names with a wrong checksum (7-Zip then shows 8.3 aliases)
-    SEVEN = shutil.which("7z") or r"C:\Program Files\7-Zip\7z.exe"
+    SEVEN = shutil.which("7z") or os.path.join(os.environ.get("ProgramFiles", ""), "7-Zip", "7z.exe")
     if os.path.isfile(SEVEN) and os.path.isfile(os.path.join(EMU, "blazie_files.exe")):
         Z7 = [PY, "files_7zip.py", os.path.join(EMU, "blazie_files.exe"),
               os.path.join(FW_BLAZIE, "bl2_2003_warm.state"), SEVEN]
