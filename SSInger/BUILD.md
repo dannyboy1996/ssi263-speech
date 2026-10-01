@@ -199,7 +199,10 @@ screen-reader-friendly way to play SSInger, on every OS:
 | MIDI embodiment | N/N+1 phoneme+pitch, Expander (PC) |
 | Wheel map | Patent (bend=filter), Clock bend (Polaxis-style) |
 | Articulation (ART) | 0 to 7 |
-| Filter frequency (FF) | 0 to 255 |
+| Filter frequency (FF) | 0 to 255 (with four chips: chip 1's, and the base the others follow) |
+| Chip 2 filter offset (tour rig) | "0 (same as chip 1)", "+12 from chip 1", "-30 from chip 1" (-255 to +255) |
+| Chip 3 filter offset (tour rig) | as above |
+| Chip 4 filter offset (tour rig) | as above |
 | Rate | 0 to 15 |
 | Pitch glide (R1) | 0 to 7 |
 | Phoneme DUR | 0 to 3 |
@@ -208,6 +211,18 @@ screen-reader-friendly way to play SSInger, on every OS:
 | Master clock (st) | "+0.0 st (1.000 MHz)" (-24 to +24) |
 | Carrier | Internal, External (sidechain) |
 | Volume | "-1.9 dB" (-inf to +3.5 dB) |
+
+The three "Chip N filter offset (tour rig)" parameters only do something
+when Voices is "Quad (tour rig)"; with one voice they are stored and have
+no effect. In the tour rig the mod wheel (CC1, with the default Clock bend
+wheel map; the pitch wheel with the Patent map) moves all four chips'
+filters at once, whichever of channels 1-8 it comes on: chip 1 goes to the
+wheel's value and chips 2-4 to that value plus their offsets, clamped to
+0-255. "Filter frequency (FF)" sets chip 1 and the others the same way.
+So, for a choir of different-sized voices: set chip 2 to -20, chip 3 to
+-40, chip 4 to +15, and the wheel sweeps all four together, keeping the
+spread. Like any parameter, the offsets can be automated and are saved
+with the project.
 
 - **REAPER + OSARA (Windows, macOS, Linux)**: the action "OSARA: View FX
   parameters for current track" lists every parameter with its value text.
@@ -257,7 +272,9 @@ output, not gated).
    (defaults; "Phoneme channel" param moves the pair).
 2. Channel 1 alone sings at ~30 Hz — near-inaudible without channel 2.
    That is the patented method, not a bug.
-3. Key→phoneme layout: `note_map.txt` (reference; C4 = middle C).
+3. Key→phoneme layout: `note_map.txt` (reference; C4 = middle C). All 64
+   chip phonemes: notes 36-89 (C2-F6) E to TH, 90-93 PA, and 94-102
+   (A#6-F#7) M, N, NG, :A, :OH, :U, :UH, E2, LB.
 4. No audio checklist: MIDI reaching the track (armed/monitored?) →
    channels 1+2 → pitch velocity > 0 (it owns volume; phoneme velocity is
    ignored) → Volume param up → pitch notes present (pitch latches, so one

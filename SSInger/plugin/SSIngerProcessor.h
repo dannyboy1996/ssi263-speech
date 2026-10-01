@@ -34,6 +34,11 @@ inline constexpr const char* bendRange = "bendRange";
 inline constexpr const char* clockSt = "clockSt";
 inline constexpr const char* carrier = "carrier";
 inline constexpr const char* volume = "volume";
+/* Tour rig: chips 2-4's filter, in R4 steps from chip 1's (FF). */
+inline constexpr const char* ffOff2 = "ffOff2";
+inline constexpr const char* ffOff3 = "ffOff3";
+inline constexpr const char* ffOff4 = "ffOff4";
+inline constexpr const char* const ffOff[3] = { ffOff2, ffOff3, ffOff4 };
 }
 
 class SSIngerProcessor : public juce::AudioProcessor, private juce::Timer {
