@@ -2,7 +2,8 @@
 # The Linux gate (x86_64 or aarch64), run on the Linux box itself -- separate from nvda/tools/run_tests.py, which is
 # Windows and NVDA.  Needs a build (./build_linux.sh; LEGACY=1 adds the z180emu reference checks and the audit's
 # real-GPL control) and the unit's firmware in a data folder: the built NVDA add-on's engine folder, or any folder
-# with BL2ENG.BNS + bl2_2003_warm.state (and BL2SPA.BNS + bl2spa_fresh.state).
+# with BL2ENG.BNS + bl2_2003_warm.state (and BL2SPA.BNS + bl2spa_fresh.state; the emulator's checks also need the
+# Type 'n Speak's TNSENG.TNS, in its tns/ folder or beside them).
 #
 #   tools/linux_tests.sh [data folder]      (default: nvda/dist/blazie-build/synthDrivers/_ssi263_blazie)
 #
@@ -68,6 +69,42 @@ control "module CONTROL (no cancel, must fail)" "^speak +module .*identical" "^s
     "^after +module .*DIFFER" "^set +module .*DIFFER" "^key +module .*DIFFER" "^spanish +module .*identical" \
     "^7 of 10 checks passed" -- env SD_SSI263_TEST_NO_CANCEL=1 \
     python3 src/platforms/speechd/test_sd_ssi263.py build/linux/sd_ssi263 "$LIB" "$DATA"
+# The Blazie emulator in a terminal (src/apps/blazie/README-linux.md), on MAME's Z180: its keyboard without a unit
+# (test_keys), the unit headless as on Windows (test_emu_unit, test_clock), and the whole program headless
+# (test_emu_linux.py: boot and a chord answered, the clock from the system time typed as keys and as computer-braille
+# letters, the Type 'n Speak from cold, its memory saved and started from, a chord held through a restart).  The
+# Type 'n Speak's firmware: $DATA/tns/TNSENG.TNS or $DATA/TNSENG.TNS.  The controls swap dots 1 and 4
+# (BLAZIE_KEYS_BREAK) and drop the held keys (TEST_CLOCK_HOLD_BREAK): each must fail its own checks.
+EMU=build/linux/blazie_emu
+TNS="$DATA/tns/TNSENG.TNS"; [ -f "$TNS" ] || TNS="$DATA/TNSENG.TNS"
+check "emulator: the keyboard (terminal, chords, letters, hold, Type 'n Speak)" ./build/linux/test_keys build
+control "emulator: keyboard CONTROL (dots 1 and 4 swapped, must fail)" "^FAIL +keys mode: o-chord, then t" \
+    "^FAIL +letters mode: computer braille" "^ok +tns: y " "^ok +terminal: F12" "^test_keys: [0-9]+ of [0-9]+ FAILED$" \
+    -- env BLAZIE_KEYS_BREAK=1 ./build/linux/test_keys build
+check "emulator: the unit headless (Braille Lite)" ./build/linux/test_emu_unit bl "$DATA/BL2ENG.BNS" \
+    "$DATA/bl2_2003_warm.state"
+check "emulator: the unit headless (Type 'n Speak)" ./build/linux/test_emu_unit tns "$TNS" -
+check "emulator: the clock controller" ./build/linux/test_clock unit
+check "emulator: the clock and keys held at a restart (Braille Lite)" ./build/linux/test_clock bl "$DATA/BL2ENG.BNS" \
+    "$DATA/bl2_2003_warm.state"
+check "emulator: the clock (Type 'n Speak)" ./build/linux/test_clock tns "$TNS"
+control "emulator: held keys CONTROL (never reported held, must fail)" "^FAIL i-chord held through the restart" \
+    "^FAILED$" -- env TEST_CLOCK_HOLD_BREAK=1 ./build/linux/test_clock bl "$DATA/BL2ENG.BNS" \
+    "$DATA/bl2_2003_warm.state" restart
+if [ -x "$EMU" ]; then
+    check "emulator: the program headless" python3 src/apps/blazie/test_emu_linux.py "$EMU" "$DATA"
+    control "emulator: program CONTROL (dots 1 and 4 swapped, must fail)" \
+        "^ok +boot greeting" "^FAIL +the clock, from the system time \(keys\)" \
+        "^FAIL +the clock, from the system time \(letters\)" "^emulator: [23] of 4 FAILED$" \
+        -- env BLAZIE_KEYS_BREAK=1 python3 src/apps/blazie/test_emu_linux.py "$EMU" "$DATA" \
+        --only boot,clock-keys,clock-letters
+    check "emulator: libraries needed (libc, libm, libasound/libpulse; libstdc++ inside)" sh -c "! ldd $EMU | \
+        grep -v -E 'linux-vdso|ld-linux|libc\.so|libm\.so|libpthread|libasound|libpulse|libdl' | grep -q . && \
+        ! ldd $EMU | grep -q -E 'libstdc|libgcc_s' && echo 'only the C library and the sound library'"
+else
+    echo "FAIL  emulator: build/linux/blazie_emu not built (sudo apt install libasound2-dev, then ./build_linux.sh)"
+    fail=1
+fi
 # the Python wheel: built from build/linux, installed into a fresh venv, the Braille Lite as the library directly
 check "Python wheel" python3 python/test_wheel.py --build "$DATA"
 control "Python wheel CONTROL (rate 70, must fail)" "^ok +the chip alone:" "^FAIL +the Braille Lite:" \
@@ -78,7 +115,8 @@ check "package" sh tools/package_linux.sh "$DATA"
 check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
     --out build/audit
 check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \
-    build/linux/sd_ssi263 build/ssi263-speech-*-linux-"$(uname -m)".tar.gz build/audit/ssi263speech-*.whl
+    build/linux/sd_ssi263 build/linux/blazie_emu build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
+    build/audit/ssi263speech-*.whl
 # the licences that must ship: MIT (ours, Casso's) and MAME's BSD-3-Clause for the Z180, in the package and the wheel
 check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
     grep -c -E '/(LICENSE|licenses/Casso-MIT\.txt|licenses/MAME-Z180-core-BSD-3-Clause\.txt)\$' | grep -qx 3 && \
@@ -87,7 +125,7 @@ check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speec
     for x in n) != 3)' build/audit/ssi263speech-*.whl && echo 'MIT, Casso MIT, MAME Z180 BSD-3-Clause: in both'"
 check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
     --clean-sample
-check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263"
+check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu"
 control "no-GPL audit CONTROL (genuine legacy payloads, must fail)" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: z180emu engine" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: Unicorn engine" \

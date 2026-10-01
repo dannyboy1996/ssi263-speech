@@ -59,6 +59,43 @@ $CC $BOARD -c -o "$OUT/sd_ssi263.o" "$ROOT/src/platforms/speechd/sd_ssi263.c"
 $CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" $LIB_OBJS -lm
 rm -f "$OUT/test_bl_board_mame"                     # the old name of test_bl_board on MAME
 
+# The Blazie emulator in a terminal (src/apps/blazie, README-linux.md): the Braille Lite 2000 and the Type 'n Speak
+# running their own firmware, on MAME's Z180 only (the same objects as the library: no z180emu).  One program,
+# libstdc++ inside: it needs libc, libm, libpthread and libasound.  Its sound is ALSA's (libasound2-dev to build), or
+# PulseAudio's simple API when only that is there (libpulse-dev; or BLAZIE_AUDIO=pulse).  Without either it is not
+# built, and tools/linux_tests.sh says so.  test_keys: its keyboard without a unit (no sound, no firmware).
+APP="$ROOT/src/apps/blazie"
+APPF="-O2 -std=gnu99 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -I$APP -I$SRC -fmacro-prefix-map=$ROOT=."
+rm -rf "$OUT/obj_emu" "$OUT/blazie_emu"; mkdir -p "$OUT/obj_emu"
+$CC $BOARD -c -o "$OUT/obj_emu/tns_board.o" "$SRC/blazie/tns_board.c"
+for f in emu_unit chords keys term_keys bl_keys tns_term ini; do
+    $CC $APPF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
+done
+KEY_OBJS="$OUT/obj_emu/chords.o $OUT/obj_emu/keys.o $OUT/obj_emu/term_keys.o $OUT/obj_emu/bl_keys.o $OUT/obj_emu/tns_term.o $OUT/obj_emu/ini.o"
+EMU_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj_emu/tns_board.o $OUT/obj_emu/emu_unit.o"
+$CC $APPF -o "$OUT/test_keys" "$APP/test_keys.c" $KEY_OBJS
+# the unit's own headless tests, as on Windows (build_app.py's test_emu_unit, test_clock), on MAME's Z180
+$CC $APPF -c -o "$OUT/obj_emu/test_emu_unit.o" "$APP/test_emu_unit.c"
+$CXX $SHARED_CXX -o "$OUT/test_emu_unit" "$OUT/obj_emu/test_emu_unit.o" $EMU_OBJS -lm
+$CC $APPF -c -o "$OUT/obj_emu/test_clock.o" "$APP/test_clock.c"
+$CXX $SHARED_CXX -o "$OUT/test_clock" "$OUT/obj_emu/test_clock.o" $EMU_OBJS -lm
+AUDIO_DEF=""; AUDIO_LIBS=""; SOUND=""
+if [ "${BLAZIE_AUDIO:-alsa}" != pulse ] && pkg-config --exists alsa 2>/dev/null; then
+    AUDIO_LIBS="$(pkg-config --libs alsa)"; SOUND=ALSA
+elif pkg-config --exists libpulse-simple 2>/dev/null; then
+    AUDIO_DEF="-DBLAZIE_AUDIO_PULSE"; AUDIO_LIBS="$(pkg-config --libs libpulse-simple)"; SOUND=PulseAudio
+fi
+if [ -n "$AUDIO_LIBS" ]; then
+    for f in audio_linux serial_linux evdev_linux main_linux; do
+        $CC $APPF $AUDIO_DEF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
+    done
+    $CXX $SHARED_CXX -o "$OUT/blazie_emu" "$OUT/obj_emu/main_linux.o" "$OUT/obj_emu/audio_linux.o" \
+        "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $EMU_OBJS $AUDIO_LIBS -lpthread -lm
+    echo "built $OUT/blazie_emu (sound: $SOUND)"
+else
+    echo "NOT built: blazie_emu -- no ALSA (sudo apt install libasound2-dev) nor PulseAudio (libpulse-dev) headers"
+fi
+
 # MAME's Z180 core's own tests (CONTRACT.md's clauses, and white-box)
 $CC -O2 -std=gnu89 -I$SRC/cpu -I$SRC -c -o "$OUT/test_z180_contract.o" "$SRC/cpu/test_z180_contract.c"
 $CXX -o "$OUT/test_z180_contract" "$OUT/test_z180_contract.o" "$OUT/obj/z180_mame.o" "$OUT/obj/z180_asci.o"

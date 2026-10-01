@@ -35,6 +35,16 @@ cp "$HERE"/share/ssi263-speech/*.BNS "$HERE"/share/ssi263-speech/*.state "$DATA/
 cp "$HERE/lib/libssi263speech.so" "$PREFIX/lib/"
 cp "$HERE/bin/sd_ssi263" "$MODBIN/sd_ssi263"
 chmod 755 "$MODBIN/sd_ssi263"
+if [ -f "$HERE/bin/blazie_emu" ]; then   # the Blazie emulator (README-blazie-emu.md), its firmware in $DATA
+    mkdir -p "$PREFIX/bin"
+    cp "$HERE/bin/blazie_emu" "$PREFIX/bin/blazie_emu"
+    chmod 755 "$PREFIX/bin/blazie_emu"
+    if [ -d "$HERE/share/ssi263-speech/tns" ]; then
+        mkdir -p "$DATA/tns"
+        cp "$HERE"/share/ssi263-speech/tns/* "$DATA/tns/"
+    fi
+    echo "  emulator: $PREFIX/bin/blazie_emu"
+fi
 {
     cat "$HERE/share/ssi263-speech/speech-dispatcher/ssi263.conf"
     echo "SSI263DataDir \"$DATA\""
