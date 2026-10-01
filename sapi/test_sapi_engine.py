@@ -79,7 +79,8 @@ def cases(voices):
         texts = TEXT_ES if lang == "es" else TEXT_EN
         if vid.startswith("blazie:"):
             out.append(("%s CONTROL voice" % vid, vid, 0, 0, DEFAULTS, "voice", 0, texts[0], None))
-        out.append(("%s CONTROL setting" % vid, vid, 0, 0, DIALOG, "setting", 0, texts[-1], None))
+        if not vid.startswith("speakout:"):    # the dialog has nothing for the Speak-Out: dropping it changes nothing
+            out.append(("%s CONTROL setting" % vid, vid, 0, 0, DIALOG, "setting", 0, texts[-1], None))
     return out
 
 
