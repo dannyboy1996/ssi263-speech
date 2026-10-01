@@ -16,6 +16,7 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `build_app.py` | Builds `blazie_emu.exe` and the test programs into `nvda/dist/blazie-emu/` (w64devkit, x64, static). |
 | `test_chords.c` | The chord logic. |
 | `test_emu_unit.c` | The unit headless: the boot greeting is heard, a chord is answered (a no-chord run is the control), faster than real time. |
+| `test_flash.c` | The file flash: the Type 'n Speak's ID check passes and its flash is initialised, the erase takes 32 s with the firmware's clicks, the flash kept across a save and restart; the Braille Lite's reset erases the same way, and a file moved to flash lands in the 2 MB and survives a restart. `test_flash_break.exe` (the old flash put back) and `--break=instant|persist` must fail. |
 | `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
@@ -112,6 +113,19 @@ when you switch units) to `%APPDATA%\ssi263-speech\blazie-emu\english.state` or 
 them next time. The first time, and after Firmware > Back to the factory state, it starts from the shipped state; the
 Type 'n Speak starts cold -- the program holds Ctrl+Alt+Del at power-on, the unit's own reset to its defaults
 (without it blank RAM leaves the volume at 0), and the unit asks to initialise its flash: y, then y (Spanish: s).
+It asks once: answered, the flash is initialised and saved with the rest, and the unit starts without the question
+from then on (closed while it still asks, it asks again next time, as the unit would).
+
+## The file flash
+
+Both units keep their files in a 29F016-style flash chip, 2 MB as the firmware manages it (`../../csrc/blazie/flash29.c`;
+the Braille Lite pages it 512 KB at a time through port E0h bits 0-1, the Type 'n Speak 128 KB through F0h). The
+Type 'n Speak's firmware reads the chip's ID before it offers the flash at all. An erase takes the chip's typical time
+(the Am29F016 data sheet: 32 s for the whole chip, 1 s a sector) and the firmware waits on the chip's status, clicking
+through the speech chip every ~2 s meanwhile (each click: R4 F0, R1 F0, R2 FE, R3 58, phoneme 17h): initialising the
+flash -- the Type 'n Speak's first start, the Braille Lite's reset -- is 32 s of clicks, then "flash initialized" or
+"ready". A Braille Lite state is 768 KB (256 KB RAM + the flash's first 512 KB) while the rest of the flash is erased,
+2.25 MB once files reach it; both load.
 
 ## Not yet
 

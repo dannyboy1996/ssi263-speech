@@ -66,5 +66,11 @@ int emu_serial_read(emu_unit *u, unsigned char *out, int cap, bl_serial_status *
 void emu_set_quick(emu_unit *u, int on);
 /* chip time in seconds (tests) */
 double emu_time(const emu_unit *u);
+/* The file flash (../../csrc/blazie/flash29.h): its erases and writes take a 29F016's typical time, on by default --
+   initialising the flash (the Type 'n Speak's first start, the Braille Lite's reset) is a 32 s chip erase, with the
+   firmware's chirps while it waits.  emu_set_flash_timed(u, 0): done at once (tests' controls).  emu_flash: 1 while
+   an erase runs, 2 while a byte programs, 0 idle; the chip erases so far. */
+void emu_set_flash_timed(emu_unit *u, int on);
+int emu_flash(const emu_unit *u, int *chip_erases);
 
 #endif

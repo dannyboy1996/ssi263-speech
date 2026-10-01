@@ -184,6 +184,40 @@ if os.path.isfile(os.path.join(EMU, "test_emu_unit.exe")):
         if os.path.isfile(os.path.join(TNS_DIR, name)):
             CHECKS.append(check("Blazie emulator: Type 'n Speak %s, headless" % name[3:6],
                                 [os.path.join(EMU, "test_emu_unit.exe"), "tns", os.path.join(TNS_DIR, name), "-"]))
+    # the file flash (src/apps/blazie/test_flash.c; Jayson, Timothy): the Type 'n Speak's ID check passes and its flash
+    # is initialised, the erase takes a 29F016's 32 s with the firmware's chirps through the chip, the initialised flash
+    # kept across a save and restart; the Braille Lite's reset erases with the same chirps, and a file moved to flash
+    # lands in the 2 MB chip the firmware manages and survives a restart.  Controls: each must fail on its checks.
+    FLASH = os.path.join(EMU, "test_flash.exe")
+    if os.path.isfile(FLASH):
+        BL_FLASH = ["bl", os.path.join(ENG, "BL2ENG.BNS"), os.path.join(ENG, "bl2_2003_warm.state")]
+        CHECKS.append(check("Blazie emulator: file flash, Braille Lite", [FLASH] + BL_FLASH))
+        CHECKS.append(check("Blazie emulator: file flash CONTROL (Braille Lite, erase at once, must fail)",
+                            [FLASH] + BL_FLASH + ["--break=instant"], expect_fail=True,
+                            fail_marks=[r"^FAIL Braille Lite reset: erase and chirps .* ran 0\.0 s.* 0 chirps",
+                                        r"^ok +a flash file in the fourth 512 KB", r"^FAILED$"]))
+        CHECKS.append(check("Blazie emulator: file flash CONTROL (Braille Lite, banks on 512 KB, must fail)",
+                            [os.path.join(EMU, "test_flash_break.exe")] + BL_FLASH, expect_fail=True,
+                            fail_marks=[r"^ok +Braille Lite reset: erase and chirps",
+                                        r"^FAIL a flash file in the fourth 512 KB +top of the 2 MB: FF FF",
+                                        r"^FAIL the flash file kept across a restart +saved 786432 bytes", r"^FAILED$"]))
+        for name in ("TNSENG.TNS", "TNSSPA.TNS"):
+            if os.path.isfile(os.path.join(TNS_DIR, name)):
+                CHECKS.append(check("Blazie emulator: file flash, Type 'n Speak %s" % name[3:6],
+                                    [FLASH, "tns", os.path.join(TNS_DIR, name)]))
+        TNS_FLASH = ["tns", os.path.join(TNS_DIR, "TNSENG.TNS")]
+        if os.path.isfile(TNS_FLASH[1]):
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, erase at once, must fail)",
+                                [FLASH] + TNS_FLASH + ["--break=instant"], expect_fail=True,
+                                fail_marks=[r"^ok +flash ID accepted", r"^FAIL erase takes the chip's time +the erase ran 0\.0",
+                                            r"^FAIL erase chirps +0 sounds", r"^FAILED$"]))
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, saved before initialising, must fail)",
+                                [FLASH] + TNS_FLASH + ["--break=persist"], expect_fail=True,
+                                fail_marks=[r"^ok +erase chirps", r"^FAIL flash kept across save and restart .* 1 chip erases",
+                                            r"^FAILED$"]))
+            CHECKS.append(check("Blazie emulator: file flash CONTROL (Type 'n Speak, a 29F040's ID, must fail)",
+                                [os.path.join(EMU, "test_flash_break.exe")] + TNS_FLASH, expect_fail=True,
+                                fail_marks=[r"^FAIL flash ID accepted, flash initialised +0 chip erase", r"^FAILED$"]))
 # the emulator's serial port plugged in (src/apps/blazie/test_serial.c; Tomi: WinDisk to the emulated unit): the
 # storage handshake WinDisk and PCDISK answer -- XON ENQ out at 19200 8N1, ACK answered with 'C' and NAK not, input
 # paced at the baud rate, the directory command out -- on every unit; the Windows COM side (serial_win.c) end to end

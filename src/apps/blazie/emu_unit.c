@@ -71,6 +71,7 @@ emu_unit *emu_create(int kind, const char *firmware, const char *state, double o
         bh_set_whine(u->host, whine);
         bh_battery(u->host, BATTERY_LEVEL);   /* the status menu's % reads the gauge (without it: frozen) */
     }
+    emu_set_flash_timed(u, 1);      /* erases take the chip's time: the unit chirps while it initialises its flash */
     u->out_rate = out_rate;
     u->gain = MAKEUP;
     return u;
@@ -212,6 +213,26 @@ void emu_set_quick(emu_unit *u, int on)
 double emu_time(const emu_unit *u)
 {
     return ssi263_time(u->chip);
+}
+
+void emu_set_flash_timed(emu_unit *u, int on)
+{
+    if (u->tns)
+        tns_flash_timed(u->tns, on);
+    else
+        bh_set_int(u->host, "flash_timed", on);
+}
+
+int emu_flash(const emu_unit *u, int *chip_erases)
+{
+    if (u->tns) {
+        unsigned long n;
+        int busy = tns_flash_busy(u->tns, &n, NULL);
+        if (chip_erases) *chip_erases = (int)n;
+        return busy;
+    }
+    if (chip_erases) *chip_erases = bh_get_int(u->host, "flash_chip_erases");
+    return bh_get_int(u->host, "flash_busy");
 }
 
 int emu_save(const emu_unit *u, const char *path)

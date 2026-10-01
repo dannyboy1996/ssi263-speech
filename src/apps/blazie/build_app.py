@@ -3,6 +3,7 @@
   blazie_emu.exe   the app (one static program: the chip, the board with z180emu, the host, the shell)
   test_chords.exe  the chord logic's tests (run_tests runs it)
   test_emu_unit.exe  the unit, headless: boot speech, a chord answered, real-time speed
+  test_flash.exe     the file flash: the ID check, the erase's time and chirps, files kept; _break: its control
   test_serial.exe    the serial port plugged in, headless: the storage handshake answered from the far end
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
@@ -63,6 +64,19 @@ def main():
     unit = [o for o in objs if not o.endswith(("main_win.c.o", "tns_keymap_win.c.o", "serial_win.c.o"))]
     subprocess.run([gcc, "-static", "-s", "-o", os.path.join(OUT, "test_emu_unit.exe"),
                     os.path.join(HERE, "test_emu_unit.c")] + unit + ["-lm"], env=env, check=True)
+    # the file flash (test_flash.c), and its control: the boards built with BLAZIE_FLASH_BREAK (the Type 'n Speak's
+    # chip answers a 29F040's ID; the Braille Lite's banks all on one 512 KB)
+    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_flash.exe"),
+                                  os.path.join(HERE, "test_flash.c")] + unit + ["-lm"], env=env, check=True)
+    brk_bl = os.path.join(obj, "bl_unity_flash_break.o")
+    brk_tns = os.path.join(obj, "tns_board_flash_break.o")
+    subprocess.run([gcc] + BOARD + zinc + ["-DBLAZIE_FLASH_BREAK", "-c", os.path.join(CSRC, "blazie", "bl_unity.c"),
+                                           "-o", brk_bl], env=env, check=True)
+    subprocess.run([gcc] + BOARD + ["-DBLAZIE_FLASH_BREAK", "-c", os.path.join(CSRC, "blazie", "tns_board.c"),
+                                    "-o", brk_tns], env=env, check=True)
+    unit_brk = [brk_bl if o.endswith("bl_unity.c.o") else brk_tns if o.endswith("tns_board.c.o") else o for o in unit]
+    subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_flash_break.exe"),
+                                  os.path.join(HERE, "test_flash.c")] + unit_brk + ["-lm"], env=env, check=True)
     # the serial port plugged in, and its control: the same board with the receive path cut (bl_serial.c)
     subprocess.run([gcc] + APP + ["-static", "-s", "-o", os.path.join(OUT, "test_serial.exe"),
                                   os.path.join(HERE, "test_serial.c")] + unit + ["-lm"], env=env, check=True)

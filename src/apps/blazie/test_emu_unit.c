@@ -19,6 +19,16 @@ static int g_kind;
 
 static int failures;
 
+/* the unit, its flash done at once: these checks keep the Type 'n Speak's cold-start timeline (y, y, then ready by
+   12 s); the flash's own time, with its 32 s erase and chirps, is test_flash.c's */
+static emu_unit *make(const char *fw, const char *st, char *err, int errlen)
+{
+    emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, errlen);
+    if (u)
+        emu_set_flash_timed(u, 0);
+    return u;
+}
+
 static double rms(const short *x, int n)
 {
     double s = 0;
@@ -33,7 +43,7 @@ static double rms(const short *x, int n)
 static double run(const char *fw, const char *st, int press, double at, double from, double to, double *secs)
 {
     char err[256];
-    emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+    emu_unit *u = make(fw, st, err, sizeof err);
     int n = (int)(to * RATE), i, block = RATE / 50;
     short *buf;
     double r;
@@ -74,7 +84,7 @@ static void check(const char *name, int ok, const char *detail)
 static double key_latency(const char *fw, const char *st, int quick)
 {
     char err[256];
-    emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+    emu_unit *u = make(fw, st, err, sizeof err);
     int block = RATE / 100, i, j;
     short buf[RATE / 100];
     double t0 = -1, found = -1;
@@ -149,7 +159,7 @@ int main(int argc, char **argv)
         long size = -1;
         double again;
         snprintf(path, sizeof path, "test_emu_unit.%d.saved.state", (int)_getpid());
-        u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+        u = make(fw, st, err, sizeof err);
         emu_render(u, buf, RATE);
         emu_key(u, g_kind == EMU_TYPE_N_SPEAK ? 0xBD : 0x01);
         emu_render(u, buf, RATE);
@@ -170,7 +180,7 @@ int main(int argc, char **argv)
     if (g_kind == EMU_TYPE_N_SPEAK && !st) {  /* the options menu (F9), up arrow -- it polls the 8255's port B for the
                                                  chip's A/R; answered FFh it hung -- then escape must be answered */
         char err[256];
-        emu_unit *u = emu_create(g_kind, fw, NULL, RATE, 0, err, sizeof err);
+        emu_unit *u = make(fw, NULL, err, sizeof err);
         static const struct { double t; int down, up; } keys[] = {
             {3.0, 0xBD, 0x3D}, {6.0, 0xBD, 0x3D}, {12.0, 0xC6, 0x46}, {15.0, 0xDA, 0x5A}, {18.0, 0x89, 0x09}};
         int n = 21 * RATE, i, k, block = RATE / 50;
@@ -193,7 +203,7 @@ int main(int argc, char **argv)
     if (g_kind == EMU_BRAILLE_LITE) {   /* the status menu's % (dots 146) reads the battery gauge; then the unit must
                                            still answer (without the gauge it waited forever) */
         char err[256];
-        emu_unit *u = emu_create(g_kind, fw, st, RATE, 0, err, sizeof err);
+        emu_unit *u = make(fw, st, err, sizeof err);
         int n = 18 * RATE, i, block = RATE / 50;
         short *buf = (short *)calloc((size_t)n, sizeof(short));
         double after;

@@ -24,7 +24,7 @@ typedef struct {
 } bl_event;
 
 /* firmware: a .BNS update file (the ROM image from file offset 3000h); state: battery-backed RAM (256 KB) + the file
-   flash (512 KB), as make_states.sh saves them; phon_ms: the stand-in A/R timing before live mode (bns --phon-ms);
+   flash (512 KB or 2 MB: bl_save_state), as make_states.sh saves them; phon_ms: the stand-in A/R timing before live mode (bns --phon-ms);
    keys: braille chords pressed at those instruction counts during the boot (bns --key INSTR=CHORD).
    NULL on failure, with a reason in err. */
 bl_unit *bl_create(const char *firmware, const char *state, double phon_ms,
@@ -55,8 +55,16 @@ void bl_battery(bl_unit *u, int level);
    point where it waits for the keys' release, or a key is pressed.  Call before the first bl_boot. */
 void bl_hold(bl_unit *u, int chord);
 /* the battery-backed RAM + file flash, in bl_create's state format (what a real unit keeps while switched off);
-   1 on success */
+   1 on success.  The file flash is 2 MB; while all but its first 512 KB is erased the state keeps the 786432-byte
+   format (256 KB + 512 KB) every earlier state has, otherwise it is 256 KB + 2 MB.  bl_create reads both. */
 int  bl_save_state(const bl_unit *u, const char *path);
+/* The file flash's busy time (flash29.h): off (the default) every erase and program is done at once, as the
+   screen-reader drivers and their state recipes need; on (the emulator), an erase takes the chip's typical time and the
+   firmware chirps through the speech chip while it waits (an initialisation's chip erase: 32 s).  bl_flash_busy: 1
+   while an erase runs, 2 while a byte programs, 0 idle; the counts of chip and sector erases so far (NULL: not
+   wanted). */
+void bl_flash_timed(bl_unit *u, int on);
+int  bl_flash_busy(const bl_unit *u, unsigned long *chip_erases, unsigned long *sector_erases);
 
 /* The serial port carried to a real port (the emulator's COM port; bl_serial.h): from bl_serial_attach(u, 1) the
    unit's serial bytes no longer come back as 'T' events, nor does bl_queue feed it -- bl_serial_write gives it what
@@ -82,7 +90,7 @@ typedef struct {
     int asci_cntla, asci_cntlb, asci_stat, asci_asext, asci_astc;
 } bl_probe;
 void bl_probe_get(const bl_unit *u, bl_probe *p);
-/* which 0: the 1 MB address space's RAM (00000-3FFFF unused: the ROM), which 1: the 512 KB file flash; the size */
+/* which 0: the 1 MB address space's RAM (00000-3FFFF unused: the ROM), which 1: the 2 MB file flash; the size */
 int bl_memory(const bl_unit *u, int which, const unsigned char **bytes);
 
 /* the events since the last bl_clear_events, in order */

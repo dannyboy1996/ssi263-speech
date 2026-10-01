@@ -69,7 +69,7 @@ static uint8_t mem_read(void *ctx, uint32_t A)
     tns_unit *u = (tns_unit *)ctx;
     A &= 0xFFFFF;
     if (in_window(u, A))
-        return flash29_read(&u->ff, window_off(u, A));
+        return flash29_read(&u->ff, window_off(u, A), z180_cycles(u->cpu));
     return u->ram[A];
 }
 
@@ -78,7 +78,7 @@ static void mem_write(void *ctx, uint32_t A, uint8_t V)
     tns_unit *u = (tns_unit *)ctx;
     A &= 0xFFFFF;
     if (in_window(u, A)) {
-        flash29_write(&u->ff, window_off(u, A), V);
+        flash29_write(&u->ff, window_off(u, A), V, z180_cycles(u->cpu));
         return;
     }
     if (A < u->image_len)
@@ -92,10 +92,12 @@ static uint8_t io_read(void *ctx, uint16_t Port)
     int p = Port & 0xFF;
     if (p >= 0x90 && p <= 0x94)
         return u->ssi_ar ? 0x80 : 0x00;
-    if (p == 0xC1)                           /* the 8255's port B: bit 7 = the SSI-263's A/R request, the rest high.
-                                                The options menu's up arrow polls it; answered FFh the unit waited
-                                                forever (Tomi) */
-        return (unsigned char)((u->ssi_ar ? 0x80 : 0x00) | 0x7F);
+    if (p == 0xC1)                           /* the 8255's port B: bit 7 = the SSI-263 busy (its A/R request NOT
+                                                asserted), the rest high.  The options menu's up arrow polls it;
+                                                answered FFh the unit waited forever (Tomi).  The flash erase's clicks
+                                                wait on it for 0 before each write: with bit 7 = A/R itself the unit
+                                                hung at the first click, the chip idle and requesting */
+        return (unsigned char)((u->ssi_ar ? 0x00 : 0x80) | 0x7F);
     if (p == 0xE0)                           /* status: battery good, switched on; bit 0 low while a key waits */
         return (unsigned char)(0xFE | (u->key_ready ? 0 : 1));
     if (p == 0xD0) {
@@ -198,7 +200,12 @@ tns_unit *tns_create(const char *firmware, const char *state, char *err, int err
     u->ff.data = u->fdata;                   /* an Am29F016 */
     u->ff.size = FLASH_SIZE;
     u->ff.maker = 0x01;
+#ifdef BLAZIE_FLASH_BREAK
+    u->ff.device = 0xA4;                     /* test_emu_unit's must-fail control: a 29F040's ID, which the firmware
+                                                refuses ("no superflash detected", no erase) */
+#else
     u->ff.device = 0xAD;
+#endif
     u->ff.short_decode = 1;
     if (state) {
         FILE *s = fopen(state, "rb");
@@ -345,4 +352,16 @@ int tns_save_state(const tns_unit *u, const char *path)
         return 0;
     ok = fwrite(u->ram, 1, RAM_SIZE, s) == RAM_SIZE && fwrite(u->fdata, 1, FLASH_SIZE, s) == FLASH_SIZE;
     return fclose(s) == 0 && ok;
+}
+
+void tns_flash_timed(tns_unit *u, int on)
+{
+    u->ff.hz = on ? CLOCK_HZ : 0.0;
+}
+
+int tns_flash_busy(const tns_unit *u, unsigned long *chip_erases, unsigned long *sector_erases)
+{
+    if (chip_erases) *chip_erases = u->ff.n_chip_erase;
+    if (sector_erases) *sector_erases = u->ff.n_sector_erase;
+    return flash29_busy(&u->ff, z180_cycles(u->cpu));
 }

@@ -107,6 +107,8 @@ static int handshake(int kind, const char *fw, const char *st, unsigned char rep
         printf("FAIL create: %s\n", err);
         exit(1);
     }
+    emu_set_flash_timed(u, 0);              /* the cold start's flash erase done at once (its 32 s and chirps are
+                                               test_flash.c's): the storage handshake follows within seconds */
     rendered = 0;
     n_got = 0;
     if (!emu_serial_attach(u, 1)) {
