@@ -54,9 +54,7 @@ $CXX -shared $SHARED_CXX -o "$OUT/libssi263speech.so" $LIB_OBJS -lm
 # two units in one process, on the shipping board
 $CC -O3 -std=gnu89 -ffp-contract=off -I$SRC/blazie -I$SRC/cpu -I$SRC -c -o "$OUT/test_bl_board.o" "$SRC/blazie/test_bl_board.c"
 $CXX -o "$OUT/test_bl_board" "$OUT/test_bl_board.o" $BOARD_OBJS -lm
-# the speech-dispatcher module: one program with the library inside (no .so to install beside it)
-$CC $BOARD -c -o "$OUT/sd_ssi263.o" "$ROOT/src/platforms/speechd/sd_ssi263.c"
-$CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" $LIB_OBJS -lm
+# (the speech-dispatcher module is linked below, after the other engines' objects)
 rm -f "$OUT/test_bl_board_mame"                     # the old name of test_bl_board on MAME
 
 # The Blazie emulator in a terminal (src/apps/blazie, README-linux.md): the Braille Lite 2000 and the Type 'n Speak
@@ -184,6 +182,38 @@ $CXX -o "$OUT/test_as_board" "$OUT/test_as_board.o" "$OUT/obj_accentsa/as_board.
 $CC -O2 -std=gnu89 -I$SRC/accentsa -I$SRC -c -o "$OUT/as_render.o" "$SRC/accentsa/as_render.c"
 $CXX -o "$OUT/as_render" "$OUT/as_render.o" "$OUT"/obj_accentsa/*.o $CHIP_OBJS -lm
 $CXX -shared -o "$OUT/libaccent_sa.so" "$OUT"/obj_accentsa/*.o -lm
+
+# The speech-dispatcher module (src/platforms/speechd): one program with every voice's engine inside (no .so to
+# install beside it) -- the Braille Lite (the library's objects), the Accent SA (as_voice on the board above), and
+# the Accent-mini (am_voice, MAME's 8086) and the Speak-Out (so_voice, MAME's V40) once their voices' sources are in
+# the tree: sd_voices.c's SD_ACCENT_MINI and SD_SPEAKOUT switch their table entries on.  libsd_voices_ref.so: the same
+# engine objects with the chip, the test's reference (test_sd_ssi263.py drives the voices directly); never shipped.
+rm -rf "$OUT/obj_voices"; mkdir -p "$OUT/obj_voices"
+VOICE="-O2 -std=gnu89 -ffp-contract=off -fPIC -fvisibility=hidden -Wall -I$SRC -I$SRC/cpu -I$SRC/accentsa -I$SRC/pc86 -I$SRC/speakout"
+VOICE_SRCS="$SRC/accentsa/as_voice.c $SRC/numwords.c"
+[ -f "$SRC/accent_text.c" ] && VOICE_SRCS="$VOICE_SRCS $SRC/accent_text.c"   # the Accents' shared text rules
+SD_DEFS=""
+ENGINE_OBJS="$OUT/obj_accentsa/i8085_mame.o $OUT/obj_accentsa/as_board.o $OUT/obj_accentsa/as_usart.o $OUT/obj_accentsa/as_host.o"
+if [ -f "$SRC/accentmini/am_voice.c" ]; then
+    VOICE_SRCS="$VOICE_SRCS $SRC/accentmini/am_voice.c $SRC/accentmini/am_host.c"
+    ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_i86/pc86.o $OUT/obj_i86/i86_mame.o"
+    SD_DEFS="$SD_DEFS -DSD_ACCENT_MINI"
+fi
+if [ -f "$SRC/speakout/so_voice.c" ]; then
+    VOICE_SRCS="$VOICE_SRCS $SRC/speakout/so_voice.c $SRC/speakout/so_host.c"
+    ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_v40/so_board.o $OUT/obj_v40/so_icu.o $OUT/obj_v40/so_scu.o $OUT/obj_v40/so_hex.o $OUT/obj_v40/v40_mame.o"
+    SD_DEFS="$SD_DEFS -DSD_SPEAKOUT"
+fi
+for f in $VOICE_SRCS; do
+    $CC $VOICE -I"$(dirname "$f")" -c -o "$OUT/obj_voices/$(basename "$f" .c).o" "$f"
+done
+ENGINE_OBJS="$ENGINE_OBJS $OUT/obj_voices/*.o"
+$CC $BOARD -c -o "$OUT/sd_ssi263.o" "$ROOT/src/platforms/speechd/sd_ssi263.c"
+$CC $BOARD -I$SRC/accentsa -I$SRC/pc86 -I$SRC/speakout $SD_DEFS -c -o "$OUT/sd_voices.o" \
+    "$ROOT/src/platforms/speechd/sd_voices.c"
+$CXX $SHARED_CXX -o "$OUT/sd_ssi263" "$OUT/sd_ssi263.o" "$OUT/sd_voices.o" $LIB_OBJS $ENGINE_OBJS -lm
+$CXX -shared $SHARED_CXX -o "$OUT/libsd_voices_ref.so" $CHIP_OBJS $ENGINE_OBJS -lm
+echo "built $OUT/sd_ssi263: $("$OUT/sd_ssi263" --voices | cut -f3 | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 
 # DEVELOPMENT ONLY (LEGACY=1): the board on z180emu's Z180 (GPL-2.0-or-later, third_party/z180emu), as references
 # for comparing the cores and as tools/check_no_gpl.py's must-fail control.  Its own folder, build/linux/legacy;
