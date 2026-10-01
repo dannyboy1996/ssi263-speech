@@ -1,7 +1,12 @@
 # SSInger on every desktop OS: build each plug-in format, run the offline C
 # tests, validate with pluginval (VST3, and AU on macOS), auval and
-# clap-validator, and keep the bundles as workflow artifacts.
+# clap-validator, then pack each OS's release download and check it.
 # Formats: VST3 + CLAP + Standalone everywhere, AU on macOS, LV2 on Linux.
+# The download (SSInger/packaging/release.py) holds the bundles, LICENSE,
+# licenses/ (AGPLv3, Casso, every bundled third-party notice), README.md,
+# BUILD.md and SOURCE.txt (the AGPLv3 source offer: this repo at the commit
+# built). Its name carries the project's release version
+# (python/ssi263speech/_version.py), e.g. SSInger-0.7.0-linux-x86_64.tar.gz.
 # Nothing here signs for distribution, releases or tags.
 name: SSInger
 
@@ -33,6 +38,9 @@ env:
   STRICTNESS: "10"
   ART: build/SSInger_artefacts/Release
   GH_TOKEN: ${{ github.token }} # gh release download (the validator binaries)
+  REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  COMMIT: ${{ github.sha }}
 
 jobs:
   linux:
@@ -47,8 +55,13 @@ jobs:
             arch: x86_64
           - runner: ubuntu-24.04-arm
             arch: arm64
+    env:
+      PLATFORM: linux-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Release version
+        run: echo "SSINGER_VERSION=$(python3 SSInger/packaging/release.py version)" >> "$GITHUB_ENV"
 
       - name: Install JUCE's Linux build dependencies
         run: |
@@ -124,29 +137,42 @@ jobs:
           grep -q 'lv2:InstrumentPlugin' "$ART"/LV2/SSInger.lv2/*.ttl
           LV2_PATH="$PWD/$ART/LV2" lv2info urn:ssi263-speech:ssinger | head -n 40
 
-      - name: Pack bundles
-        if: always()
+      - name: Assemble and pack the release download
         run: |
-          mkdir -p dist
-          cd "$ART"
-          tar czf "$GITHUB_WORKSPACE/dist/SSInger-linux-${{ matrix.arch }}.tar.gz" \
-            VST3/SSInger.vst3 CLAP/SSInger.clap LV2/SSInger.lv2 Standalone/SSInger
+          python3 SSInger/packaging/release.py build --platform "$PLATFORM" \
+            --artefacts "$ART" --deps build/_deps --out dist \
+            --repo-url "$REPO_URL" --commit "$COMMIT" --run-url "$RUN_URL"
+
+      - name: Check the release download
+        run: |
+          python3 SSInger/packaging/release.py check "dist/SSInger-$SSINGER_VERSION-$PLATFORM.tar.gz" \
+            --platform "$PLATFORM" --commit "$COMMIT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}
+          path: dist/SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}.tar.gz
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SSInger-linux-${{ matrix.arch }}
-          path: |
-            dist/
-            pluginval-logs/
-          if-no-files-found: warn
+          name: pluginval-logs-${{ env.PLATFORM }}
+          path: pluginval-logs/
+          if-no-files-found: ignore
 
   windows:
     name: Windows x64
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      PLATFORM: windows-x64
     steps:
       - uses: actions/checkout@v4
+
+      - name: Release version
+        shell: pwsh
+        run: '"SSINGER_VERSION=$(python SSInger/packaging/release.py version)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV'
 
       - name: Configure (MSVC)
         run: cmake -S SSInger -B build -A x64
@@ -189,28 +215,48 @@ jobs:
           & $cv.FullName validate "$env:ART/CLAP/SSInger.clap"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Pack bundles
-        if: always()
+      # Python's zipfile, not Compress-Archive: forward-slash entry names.
+      - name: Assemble and pack the release download
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "$env:ART/VST3/SSInger.vst3", "$env:ART/CLAP/SSInger.clap", "$env:ART/Standalone/SSInger.exe" -DestinationPath dist/SSInger-windows-x64.zip
+          python SSInger/packaging/release.py build --platform $env:PLATFORM `
+            --artefacts $env:ART --deps build/_deps --out dist `
+            --repo-url $env:REPO_URL --commit $env:COMMIT --run-url $env:RUN_URL
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the release download
+        shell: pwsh
+        run: |
+          python SSInger/packaging/release.py check "dist/SSInger-$env:SSINGER_VERSION-$env:PLATFORM.zip" `
+            --platform $env:PLATFORM --commit $env:COMMIT
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}
+          path: dist/SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}.zip
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SSInger-windows-x64
+          name: pluginval-logs-${{ env.PLATFORM }}
           path: |
-            dist/
             pluginval-logs/
-          if-no-files-found: warn
+            pluginval-stdout.txt
+          if-no-files-found: ignore
 
   macos:
     name: macOS universal
     runs-on: macos-latest
     timeout-minutes: 75
+    env:
+      PLATFORM: macos-universal
     steps:
       - uses: actions/checkout@v4
+
+      - name: Release version
+        run: echo "SSINGER_VERSION=$(python3 SSInger/packaging/release.py version)" >> "$GITHUB_ENV"
 
       - name: Install Ninja
         run: brew install ninja
@@ -280,21 +326,35 @@ jobs:
           xattr -dr com.apple.quarantine cv 2>/dev/null || true
           "$CV" validate "$ART/CLAP/SSInger.clap"
 
-      - name: Pack bundles
-        if: always()
+      # On macOS the script copies and zips with ditto, so the ad-hoc
+      # signatures survive; the check unzips the download and verifies them.
+      - name: Assemble and pack the release download
         run: |
-          mkdir -p dist
-          cd "$ART"
-          ditto -c -k --sequesterRsrc --keepParent VST3/SSInger.vst3 "$GITHUB_WORKSPACE/dist/SSInger-macos-VST3.zip"
-          ditto -c -k --sequesterRsrc --keepParent AU/SSInger.component "$GITHUB_WORKSPACE/dist/SSInger-macos-AU.zip"
-          ditto -c -k --sequesterRsrc --keepParent CLAP/SSInger.clap "$GITHUB_WORKSPACE/dist/SSInger-macos-CLAP.zip"
-          ditto -c -k --sequesterRsrc --keepParent Standalone/SSInger.app "$GITHUB_WORKSPACE/dist/SSInger-macos-Standalone.zip"
+          python3 SSInger/packaging/release.py build --platform "$PLATFORM" \
+            --artefacts "$ART" --deps build/_deps --out dist \
+            --repo-url "$REPO_URL" --commit "$COMMIT" --run-url "$RUN_URL"
+
+      - name: Check the release download (and its signatures)
+        run: |
+          ZIP="dist/SSInger-$SSINGER_VERSION-$PLATFORM.zip"
+          python3 SSInger/packaging/release.py check "$ZIP" --platform "$PLATFORM" --commit "$COMMIT"
+          rm -rf unpacked && mkdir unpacked
+          ditto -x -k "$ZIP" unpacked
+          R="unpacked/SSInger-$SSINGER_VERSION-$PLATFORM"
+          for b in "$R/VST3/SSInger.vst3" "$R/AU/SSInger.component" "$R/CLAP/SSInger.clap" "$R/Standalone/SSInger.app"; do
+            codesign --verify --deep --strict --verbose=2 "$b"
+            lipo "$b/Contents/MacOS/SSInger" -verify_arch arm64 x86_64
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}
+          path: dist/SSInger-${{ env.SSINGER_VERSION }}-${{ env.PLATFORM }}.zip
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: SSInger-macos-universal
-          path: |
-            dist/
-            pluginval-logs/
-          if-no-files-found: warn
+          name: pluginval-logs-${{ env.PLATFORM }}
+          path: pluginval-logs/
+          if-no-files-found: ignore
