@@ -20,6 +20,7 @@
 #include <unistd.h>
 #define _getpid getpid
 #endif
+#include "audio_pace.h"
 #include "emu_unit.h"
 #include "tns_setup.h"
 
@@ -189,6 +190,20 @@ int main(int argc, char **argv)
         emu_key(u, g_kind == EMU_TYPE_N_SPEAK ? 0xBD : 0x01);
         emu_render(u, buf, RATE);
         check("save", emu_save(u, path), "emu_save returned 1");
+        {   /* the minute's save runs on the sound thread with AP_SAVE_AHEAD_MS rendered ahead (audio_pace.h): it must
+               take well under that, or the card runs dry while it writes (test_audio.c's autosave check) */
+            double worst = 0;
+            int k;
+            for (k = 0; k < 5; k++) {
+                clock_t s0 = clock();
+                emu_save(u, path);
+                if ((double)(clock() - s0) * 1000.0 / CLOCKS_PER_SEC > worst)
+                    worst = (double)(clock() - s0) * 1000.0 / CLOCKS_PER_SEC;
+            }
+            snprintf(d, sizeof d, "the worst of 5 saves %.1f ms (the sound thread renders %d ms ahead of a save)",
+                     worst, AP_SAVE_AHEAD_MS);
+            check("save time", worst < AP_SAVE_AHEAD_MS, d);
+        }
         emu_destroy(u);
         if ((f = fopen(path, "rb")) != NULL) {
             fseek(f, 0, SEEK_END);

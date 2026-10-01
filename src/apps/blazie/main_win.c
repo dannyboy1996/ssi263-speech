@@ -6,9 +6,14 @@
  *   menu and Alt+F4 closes it.
  *   Type 'n Speak: the whole keyboard is the unit's (tns_keymap_win.c) -- Alt and F10 included -- except F11, which
  *   opens this program's menu.
- * Sound: waveOut, four blocks of 10 ms ([sound] block_ms, 5-20), each rendered by the unit when the card gives one
- * back -- the card's clock paces the unit.  A key reaches the unit at the next block rendered, which plays behind the
- * blocks already queued: four blocks of 20 ms (0.6.0) made that 60-80 ms, 10 ms blocks make it 30-40.
+ * Sound: waveOut, blocks of 10 ms ([sound] block_ms, 5-20), each rendered by the unit when the card gives one back --
+ * the card's clock paces the unit.  A key reaches the unit at the next block rendered, which plays behind the blocks
+ * already queued.  How many are kept queued is Settings > Sound buffer (audio_pace.h): automatic (60 ms, growing to at
+ * most 250 ms each time the card is found to have run dry), short (40 ms, the 0.7.0 draft's four blocks), medium
+ * (100 ms) or long (250 ms, for Remote Desktop).  The minute's save runs on the sound thread with the queue rendered
+ * ahead, so the card plays on while the memory is written (Tomi: the emulator's speech stutters, the add-on's
+ * doesn't).  BLAZIE_EMU_AUDIO_LOG=file logs each wake of the sound thread (its renders, the queue, the gaps found);
+ * BLAZIE_EMU_AUDIO_STALL=ms holds the thread up to that long before 5% of its blocks (a test of the queue).
  * Settings: blazie_emu.ini beside the program.  Settings > Serial port plugs the unit's serial port
  * into a COM port (serial_win.c), for WinDisk, PCDISK or a terminal on the other end.
  *
@@ -22,6 +27,7 @@
 #include <mmsystem.h>
 #include <stdio.h>
 #include <string.h>
+#include "audio_pace.h"
 #include "chords.h"
 #include "emu_unit.h"
 #include "serial_win.h"
@@ -35,13 +41,14 @@
 
 #define RATE_MAX 48000
 #define BLOCK_MAX (RATE_MAX / 50)
-#define NBLOCKS 4
 #define BLOCK_MS_DEFAULT 10
+#define WM_SAVE_FAILED (WM_APP + 1)        /* the sound thread's save failed: the message box, from the window */
 
 enum { ID_EN = 100, ID_ES, ID_TNS_EN, ID_TNS_ES, ID_BNS_EN, ID_BNS_SK, ID_FACTORY, ID_EXIT, ID_EXPORT, ID_IMPORT,
        ID_HISS = 200, ID_WHINE, ID_QUIET, ID_UNITSOUND,
        ID_OPEN_OFF = 210, ID_OPEN_UNTIL, ID_OPEN_ALWAYS, ID_POPCLICK = 215, ID_TICK, ID_QUICK = 218,
        ID_RATE = 220,
+       ID_BUFFER = 230,                     /* ID_BUFFER + AP_AUTO .. AP_LONG: Sound buffer */
        ID_KEYS = 300, ID_ABOUT,
        ID_SERIAL_NONE = 400, ID_SERIAL_PORT };   /* ID_SERIAL_PORT + k: g_ports[k] */
 
@@ -74,8 +81,12 @@ static int g_keep_open = 1;              /* 0 off, 1 until the unit clicks off, 
 static int g_popclick = 1, g_tick = 1;   /* the channel's pop and click-off, its 10 Hz tick */
 static chord_state g_chord;
 static HWAVEOUT g_wave;
-static WAVEHDR g_hdr[NBLOCKS];
-static short g_buf[NBLOCKS][BLOCK_MAX];
+static WAVEHDR g_hdr[AP_MAX_BLOCKS];
+static short g_buf[AP_MAX_BLOCKS][BLOCK_MAX];
+static int g_n_hdr;                      /* the blocks in use (ap_capacity) */
+static int g_audio_ok;                   /* the card open and its thread running */
+static volatile LONG g_buffer_mode = AP_AUTO;   /* Settings > Sound buffer, read by the sound thread */
+static volatile LONG g_save_due;         /* the minute's save, waiting for the sound thread */
 static int g_rate = 44100;               /* the sound card's rate; the unit renders at it */
 static int g_block_ms = BLOCK_MS_DEFAULT;
 static int g_quick;                      /* quick key response (emu_set_quick): off, as the real unit */
@@ -478,25 +489,126 @@ static void import_files(void)
 }
 
 /* ---- the sound card: the unit renders each block as the card hands it back ---------------------------------- */
+static double now_ms(void)
+{
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER c;
+    if (!freq.QuadPart)
+        QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart * 1000.0 / (double)freq.QuadPart;
+}
+
+/* the card's played position in ms since it opened (unwrapped); -1 when the card does not tell */
+static double played_ms(DWORD *last, unsigned long long *total)
+{
+    MMTIME mt;
+    DWORD cur;
+    mt.wType = TIME_SAMPLES;
+    if (waveOutGetPosition(g_wave, &mt, sizeof mt) != MMSYSERR_NOERROR)
+        return -1.0;
+    if (mt.wType == TIME_SAMPLES)
+        cur = mt.u.sample;
+    else if (mt.wType == TIME_BYTES)
+        cur = mt.u.cb / 2;
+    else
+        return -1.0;
+    *total += (DWORD)(cur - *last);
+    *last = cur;
+    return (double)*total * 1000.0 / g_rate;
+}
+
+/* the minute's save, on the sound thread with the queue rendered ahead (audio_pace.h): the card plays on meanwhile,
+   and no key waits for it */
+static double autosave(void)
+{
+    char path[MAX_PATH];
+    int ok = 1;
+    double t0 = now_ms();
+    EnterCriticalSection(&g_lock);
+    if (g_unit) {                           /* (none: switched off, as while Back to the factory state asks) */
+        CreateDirectoryA(g_save_dir, NULL);
+        saved_path(g_kind, path, sizeof path);
+        ok = emu_save(g_unit, path);
+    }
+    LeaveCriticalSection(&g_lock);
+    if (!ok)
+        PostMessageA(g_wnd, WM_SAVE_FAILED, 0, 0);
+    return now_ms() - t0;
+}
+
 static DWORD WINAPI audio_thread(LPVOID arg)
 {
-    int i;
+    int i, n = g_rate * g_block_ms / 1000, mode = (int)g_buffer_mode, stall = 0;
+    audio_pace pace;
+    DWORD pos_last = 0;
+    unsigned long long pos_total = 0, blocks_out = 0;
+    FILE *log = NULL;
+    const char *env;
     (void)arg;
+    ap_init(&pace, mode, g_block_ms);
+    if ((env = getenv("BLAZIE_EMU_AUDIO_LOG")) != NULL && *env && (log = fopen(env, "a")) != NULL)
+        fprintf(log, "open: %d Hz, blocks of %d ms, %d blocks, sound buffer %s (%d ms)\n", g_rate, g_block_ms, g_n_hdr,
+                ap_mode_name(mode), ap_target(&pace) * g_block_ms);
+    if ((env = getenv("BLAZIE_EMU_AUDIO_STALL")) != NULL)
+        stall = atoi(env);
     while (!g_quit) {
+        int in_flight = 0, want, wrote = 0, save;
+        double t, played, gap = 0, worst = 0;
         WaitForSingleObject(g_wave_event, 100);
-        for (i = 0; i < NBLOCKS && !g_quit; i++) {
+        if (g_quit)
+            break;
+        if ((int)g_buffer_mode != mode) {   /* Settings > Sound buffer changed */
+            mode = (int)g_buffer_mode;
+            ap_set_mode(&pace, mode);
+        }
+        for (i = 0; i < g_n_hdr; i++)
+            in_flight += !(g_hdr[i].dwFlags & WHDR_DONE);
+        t = now_ms();
+        played = played_ms(&pos_last, &pos_total);
+        if (played >= 0)
+            gap = ap_observe(&pace, t, played);
+        save = g_save_due != 0;
+        want = ap_want(&pace, in_flight, save);
+        for (i = 0; i < g_n_hdr && wrote < want && !g_quit; i++) {
+            double r0;
             if (!(g_hdr[i].dwFlags & WHDR_DONE))
                 continue;
+            r0 = now_ms();
             EnterCriticalSection(&g_lock);
             if (g_unit)
-                emu_render(g_unit, g_buf[i], g_rate * g_block_ms / 1000);
+                emu_render(g_unit, g_buf[i], n);
             else
                 memset(g_buf[i], 0, sizeof g_buf[i]);
             com_kick(g_link);               /* the unit ran: its serial bytes may be waiting, both ways */
             LeaveCriticalSection(&g_lock);
+            if (now_ms() - r0 > worst)
+                worst = now_ms() - r0;
+            if (stall > 0 && rand() % 20 == 0)
+                Sleep((DWORD)(rand() % stall));
             g_hdr[i].dwFlags &= ~WHDR_DONE;
             waveOutWrite(g_wave, &g_hdr[i], sizeof(WAVEHDR));
+            wrote++;
         }
+        if (log) {
+            if (gap > 0)
+                fprintf(log, "%.1f GAP %.1f ms: sound buffer now %d ms\n", t, gap, ap_target(&pace) * g_block_ms);
+            if (wrote)              /* ahead: written and not yet played, as the wake found it */
+                fprintf(log, "%.1f queued %d, wrote %d, worst render %.3f ms, ahead %.1f ms\n", t, in_flight, wrote,
+                        worst, played >= 0 ? (double)blocks_out * g_block_ms - played : -1.0);
+            blocks_out += (unsigned long long)wrote;
+        }
+        if (ap_save_now(&pace, in_flight + wrote, save)) {
+            double took = autosave();
+            InterlockedExchange(&g_save_due, 0);
+            if (log)
+                fprintf(log, "%.1f saved in %.2f ms with %d blocks queued\n", now_ms(), took, in_flight + wrote);
+        }
+    }
+    if (log) {
+        fprintf(log, "close: %d gaps, %.0f ms lost; sound buffer %d ms\n", pace.gaps, pace.gap_ms,
+                ap_target(&pace) * g_block_ms);
+        fclose(log);
     }
     return 0;
 }
@@ -515,16 +627,18 @@ static int open_audio(void)
     g_wave_event = CreateEventA(NULL, FALSE, FALSE, NULL);
     if (waveOutOpen(&g_wave, WAVE_MAPPER, &f, (DWORD_PTR)g_wave_event, 0, CALLBACK_EVENT) != MMSYSERR_NOERROR)
         return 0;
-    for (i = 0; i < NBLOCKS; i++) {
+    g_n_hdr = ap_capacity(g_block_ms);     /* the longest queue and a save's render-ahead (audio_pace.h) */
+    for (i = 0; i < g_n_hdr; i++) {
         memset(&g_hdr[i], 0, sizeof g_hdr[i]);
         g_hdr[i].lpData = (LPSTR)g_buf[i];
         g_hdr[i].dwBufferLength = (DWORD)(sizeof(short) * (g_rate * g_block_ms / 1000));
         waveOutPrepareHeader(g_wave, &g_hdr[i], sizeof(WAVEHDR));
-        g_hdr[i].dwFlags |= WHDR_DONE;     /* all free: the thread fills them */
+        g_hdr[i].dwFlags |= WHDR_DONE;     /* all free: the thread fills as many as the queue keeps */
     }
     g_thread = CreateThread(NULL, 0, audio_thread, NULL, 0, NULL);
     SetThreadPriority(g_thread, THREAD_PRIORITY_TIME_CRITICAL);
     SetEvent(g_wave_event);
+    g_audio_ok = g_thread != NULL;
     return 1;
 }
 
@@ -534,8 +648,9 @@ static void close_audio(void)
     InterlockedExchange(&g_quit, 1);
     SetEvent(g_wave_event);
     WaitForSingleObject(g_thread, 2000);
+    g_audio_ok = 0;
     waveOutReset(g_wave);
-    for (i = 0; i < NBLOCKS; i++)
+    for (i = 0; i < g_n_hdr; i++)
         waveOutUnprepareHeader(g_wave, &g_hdr[i], sizeof(WAVEHDR));
     waveOutClose(g_wave);
 }
@@ -682,7 +797,7 @@ static int fw_present(int kind)
 static HMENU make_menu(void)
 {
     HMENU bar = CreateMenu(), unit = CreatePopupMenu(), sound = CreatePopupMenu(), help = CreatePopupMenu();
-    HMENU rates = CreatePopupMenu();
+    HMENU rates = CreatePopupMenu(), buffer = CreatePopupMenu();
     int k;
     AppendMenuA(unit, MF_STRING, ID_EN, "Braille Lite 2000, &English");
     AppendMenuA(unit, MF_STRING, ID_ES, "Braille Lite 2000, &Spanish");
@@ -721,6 +836,12 @@ static HMENU make_menu(void)
     }
     AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
     AppendMenuA(sound, MF_POPUP, (UINT_PTR)rates, "Sample &rate");
+    /* the queue at the sound card (audio_pace.h): a key's answer is heard that much later; too short, it chops */
+    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_AUTO, "&Automatic (60 ms, longer when the sound breaks up)");
+    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_SHORT, "&Short (40 ms, the quickest answer)");
+    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_MEDIUM, "&Medium (100 ms)");
+    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_LONG, "&Long (250 ms, for Remote Desktop)");
+    AppendMenuA(sound, MF_POPUP, (UINT_PTR)buffer, "Sound &buffer");
     g_serial_menu = CreatePopupMenu();
     AppendMenuA(g_serial_menu, MF_STRING, ID_SERIAL_NONE, "&None (not connected)");   /* filled when it opens */
     AppendMenuA(sound, MF_POPUP, (UINT_PTR)g_serial_menu, "Serial &port");
@@ -863,6 +984,12 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             WritePrivateProfileStringA("unit", "quick_keys", g_quick ? "1" : "0", g_ini);
             return 0;
         default:
+            if (LOWORD(wp) >= ID_BUFFER && LOWORD(wp) < ID_BUFFER + AP_N_MODES) {
+                InterlockedExchange(&g_buffer_mode, LOWORD(wp) - ID_BUFFER);   /* the sound thread takes it */
+                CheckMenuRadioItem(GetMenu(w), ID_BUFFER, ID_BUFFER + AP_N_MODES - 1, LOWORD(wp), MF_BYCOMMAND);
+                WritePrivateProfileStringA("sound", "buffer", ap_mode_name(LOWORD(wp) - ID_BUFFER), g_ini);
+                return 0;
+            }
             if (LOWORD(wp) >= ID_RATE && LOWORD(wp) < ID_RATE + N_RATES) {
                 set_rate(RATES[LOWORD(wp) - ID_RATE]);
                 return 0;
@@ -903,7 +1030,15 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
             fill_serial_menu();
         break;
     case WM_TIMER:                          /* the unit's memory saved every minute: nothing is lost if the */
-        save_unit();                        /* program is ended without closing its window */
+        if (g_audio_ok) {                   /* program is ended without closing its window -- by the sound thread, */
+            InterlockedExchange(&g_save_due, 1);   /* which renders ahead first (audio_pace.h) */
+            SetEvent(g_wave_event);
+        } else
+            save_unit();
+        return 0;
+    case WM_SAVE_FAILED:
+        MessageBoxA(g_wnd, "Could not save the unit's memory; what you wrote this time is lost.", "Blazie emulator",
+                    MB_OK | MB_ICONWARNING);
         return 0;
     case WM_QUERYENDSESSION:
         save_unit();                        /* Windows logging off or shutting down */
@@ -932,6 +1067,20 @@ static void find_firmware(void)
         snprintf(g_fw_dir, sizeof g_fw_dir, "%s\\..\\..\\..\\firmware\\blazie", g_dir);
 }
 
+/* Windows 11 may slow a process down to save power (EcoQoS: on battery, its window not in front -- a handheld PC);
+   the unit must keep up with the sound card, so this one asks not to be.  (Windows 8 and later; a precaution, not
+   seen on this desktop.) */
+static void no_power_throttling(void)
+{
+    typedef struct { ULONG Version, ControlMask, StateMask; } throttling_state;   /* PROCESS_POWER_THROTTLING_STATE */
+    typedef BOOL (WINAPI *set_info_fn)(HANDLE, int, LPVOID, DWORD);
+    throttling_state s = {1, 1, 0};        /* ..._CURRENT_VERSION; EXECUTION_SPEED controlled, and off */
+    set_info_fn set_info = (set_info_fn)(void (*)(void))GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                                                     "SetProcessInformation");
+    if (set_info)
+        set_info(GetCurrentProcess(), 4 /* ProcessPowerThrottling */, &s, sizeof s);
+}
+
 int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 {
     WNDCLASSA wc;
@@ -952,6 +1101,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
     find_firmware();
     load_keymap();
+    no_power_throttling();
     InitializeCriticalSection(&g_lock);
     memset(&wc, 0, sizeof wc);
     wc.lpfnWndProc = wndproc;
@@ -969,6 +1119,14 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     g_block_ms = GetPrivateProfileIntA("sound", "block_ms", BLOCK_MS_DEFAULT, g_ini);
     if (g_block_ms < 5 || g_block_ms > 20)
         g_block_ms = BLOCK_MS_DEFAULT;
+    {
+        int b;
+        GetPrivateProfileStringA("sound", "buffer", "auto", v, sizeof v, g_ini);
+        if ((b = ap_mode_of(v)) >= 0)
+            g_buffer_mode = b;
+        CheckMenuRadioItem(GetMenu(g_wnd), ID_BUFFER, ID_BUFFER + AP_N_MODES - 1, ID_BUFFER + (int)g_buffer_mode,
+                           MF_BYCOMMAND);
+    }
     g_quick = GetPrivateProfileIntA("unit", "quick_keys", 0, g_ini) != 0;
     CheckMenuItem(GetMenu(g_wnd), ID_QUICK, MF_BYCOMMAND | (g_quick ? MF_CHECKED : MF_UNCHECKED));
     {

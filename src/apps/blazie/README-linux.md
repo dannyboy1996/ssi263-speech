@@ -242,8 +242,11 @@ On a Raspberry Pi 5 the running unit takes about a fifth of one core at 44100 Hz
 and silent). A BTSpeak's Compute Module 4 is two to three times slower: if the sound breaks up there, choose 22050
 Hz (menu 6), or `[sound] block_ms = 20`.
 
-Saving the unit's memory (every minute, and on exit) holds the unit while the file is written, as on Windows: the
-Type 'n Speak's is 5 MB, so on slow storage a short gap in the sound can be heard once a minute.
+Saving the unit's memory holds the unit while the file is written (the Type 'n Speak's is 5 MB).  The minute's save
+runs on the sound thread just after a write has filled the card's buffer, so the card plays that buffer meanwhile
+(Tomi: the emulator's speech stutters, the add-on's doesn't); a save slower than the buffer (four blocks, 40 ms, on
+slow storage) can still be heard as a short gap.  Saves on switching units and on exit are written from the window's
+thread, as before, under the same lock: the two never write the same file at once.
 
 ## The serial port
 

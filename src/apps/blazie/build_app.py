@@ -11,6 +11,7 @@
   test_serial_cut.exe  the same with the receive path cut: its "ACK answered" must FAIL (run_tests' control)
   test_serial_win.exe  the Windows COM side (serial_win.c) end to end through a named pipe; _cut: its control
   test_idle.exe    the idle channel against Tomi's unit (its board built with bl_idle.c's test hooks)
+  test_audio.exe   the sound queue (audio_pace.c) against a simulated sound card; --old: its must-fail control
   make_state.exe   a unit's factory state from its firmware (the Braille 'n Speak 2000's: bl_state.c's recipe)
   test_bns.exe     the Braille 'n Speak 2000 on the board: the units told apart, its words through the chip's writes
   LICENSE, licenses/  the project's MIT, MAME's BSD-3-Clause notice for the Z180 core, Casso's MIT
@@ -112,7 +113,11 @@ def main():
     unit = chip + board() + [emu, chords, setup]
     # a saved Type 'n Speak that was never set up (the previews' first start), told apart and set up anew
     rescue = compile_c(os.path.join(HERE, "tns_rescue.c"), APP)
-    shell = [compile_c(os.path.join(HERE, f), APP) for f in ("main_win.c", "tns_keymap_win.c", "serial_win.c")]
+    shell = [compile_c(os.path.join(HERE, f), APP) for f in ("main_win.c", "tns_keymap_win.c", "serial_win.c",
+                                                             "audio_pace.c")]
+    # the sound queue against a simulated sound card (Tomi: the emulator's speech stutters); --old: its control
+    link("test_audio.exe", [compile_c(os.path.join(HERE, "test_audio.c"), APP), os.path.join(obj, "audio_pace.o")],
+         libs=())
     link("blazie_emu.exe", unit + shell + files + [rescue], libs=("-lwinmm", "-lsetupapi", "-lcomdlg32", "-lm"),
          extra=("-mwindows",))
     link("test_rescue.exe", [compile_c(os.path.join(HERE, "test_rescue.c"), APP), rescue] + unit + files)
