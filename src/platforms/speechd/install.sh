@@ -45,6 +45,14 @@ if [ -f "$HERE/bin/blazie_emu" ]; then   # the Blazie emulator (README-blazie-em
     fi
     echo "  emulator: $PREFIX/bin/blazie_emu"
 fi
+if [ -f "$HERE/bin/blazie_emu_gtk" ]; then   # the emulator in a GTK window, for Orca, and its desktop menu entry
+    mkdir -p "$PREFIX/bin" "$PREFIX/share/applications"
+    cp "$HERE/bin/blazie_emu_gtk" "$PREFIX/bin/blazie_emu_gtk"
+    chmod 755 "$PREFIX/bin/blazie_emu_gtk"
+    sed "s|^Exec=.*|Exec=$PREFIX/bin/blazie_emu_gtk|" "$HERE/share/applications/ssi263-blazie-emu.desktop" \
+        > "$PREFIX/share/applications/ssi263-blazie-emu.desktop"
+    echo "  emulator (window): $PREFIX/bin/blazie_emu_gtk, in the desktop's menu as Blazie emulator"
+fi
 if [ -f "$HERE/bin/blazie_files" ]; then   # a saved unit's files from the command line (README-blazie-emu.md)
     mkdir -p "$PREFIX/bin"
     cp "$HERE/bin/blazie_files" "$PREFIX/bin/blazie_files"

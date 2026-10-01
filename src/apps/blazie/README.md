@@ -28,7 +28,7 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `blazie_files.c` | The command line for a saved unit's files (Windows, Linux, the BTSpeak): list, export to a disk image, import from one, extract to a folder, pack and unpack an image. The portable half is `../../csrc/blazie/bl_files*.c` and `fat_img.c`. |
 | `test_files.c` | Files in and out against the units' own commands, on all four units: the firmware's files exported exactly (the open one too), an image imported and then listed, typed into and moved by the unit, export-import-export the same image; the Type 'n Speak from its factory start (its cold reset's questions answered), its first file moved to flash whole; `--break=1..5` put one bug back each, `--break=cold` the old cold start, for run_tests' must-fail controls. `nvda/tools/files_7zip.py` checks the images in 7-Zip. |
 
-The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
+The Linux shells (`README-linux.md`: build, keys, sound, the BTSpeak, the desktop app with Orca):
 
 | File | What it does |
 | --- | --- |
@@ -43,6 +43,8 @@ The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
 | `serial_linux.h`, `.c` | The unit's serial port on a tty or a pseudo-terminal. |
 | `test_keys.c` | The keyboard without a unit; `BLAZIE_KEYS_BREAK=1` must fail. |
 | `test_emu_linux.py` | The whole program headless, and its serial port end to end in a pseudo-terminal. |
+| `main_gtk.c` | The desktop shell, for Orca: one GTK 3 window -- the Windows app's menu bar, a keyboard area that takes keys down and up (chords and keys held through `bl_keys.c`, the Type 'n Speak through `tns_keys.h`) with an accessible name, a status line announced to the screen reader, GTK dialogs and file chooser. Sound, settings and memory as `main_linux.c` (its unit table and settings text copied, as `main_win.c` keeps its own; `test_emu_gtk.py` checks the settings text matches). |
+| `test_emu_gtk.py` | The desktop app in Xvfb: keys through the X server, the window read through AT-SPI as Orca reads it; `BLAZIE_GTK_BREAK=noname` and `BLAZIE_KEYS_BREAK=1` must fail. |
 
 ## Keys
 
@@ -283,4 +285,5 @@ program offers to set it up, keeping its RAM files, when it starts it.
 
 ## Not yet
 
-- An Android shell (the portable files are ready for it). The Linux shell is `main_linux.c` (`README-linux.md`).
+- An Android shell (the portable files are ready for it). The Linux shells are `main_linux.c` (a terminal) and
+  `main_gtk.c` (a GTK window, for Orca): `README-linux.md`.

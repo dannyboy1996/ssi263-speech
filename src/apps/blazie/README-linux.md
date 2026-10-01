@@ -25,6 +25,12 @@ The Linux package (`tools/package_linux.sh`) carries it as `bin/blazie_emu` with
 licences (`LICENSE`, `licenses/MAME-Z180-core-BSD-3-Clause.txt`, `licenses/Casso-MIT.txt`). Run it from the unpacked
 package (`./bin/blazie_emu`), or `sudo ./install.sh`, which also puts it in `/usr/local/bin` with its firmware.
 
+The desktop app, `build/linux/blazie_emu_gtk` (below, "The desktop app: a window for Orca"), is built too when GTK
+3's headers are there (`sudo apt install libgtk-3-dev`); without them the build says it skipped it, and the terminal
+`blazie_emu` is built as before (a BTSpeak has no desktop). GTK is LGPL-2.1-or-later and is linked dynamically, as
+the system's own library: it is not in the package, and the program stays MIT (`tools/check_no_gpl.py` checks it
+too).
+
 **Which Linux.** A program built on one distribution runs on that one and newer: the package's 0.7 builds come from
 Debian 13 (glibc 2.38 or later). On an older system -- quite possibly a BTSpeak, whose system is Raspberry Pi OS of
 some version -- build it on the machine itself (the three commands above), which also covers a 32-bit (armhf) system.
@@ -59,6 +65,88 @@ Enter; Enter alone goes back to the unit:
 | 0 | Exit: the unit's memory is saved |
 
 After a choice the menu says one line; `?` lists it again.
+
+## The desktop app: a window for Orca
+
+`blazie_emu_gtk` is the same emulator in a GTK 3 window, for a Linux desktop and its screen reader, Orca -- what
+`blazie_emu.exe` is on Windows with NVDA. The package carries it as `bin/blazie_emu_gtk`; `sudo ./install.sh` puts it
+in `/usr/local/bin` with a menu entry, "Blazie emulator" (Utility, Accessibility).
+
+    blazie_emu_gtk                  the unit you used last
+    blazie_emu_gtk --unit tns-en    bl-en, bl-es, tns-en, tns-es
+    blazie_emu_gtk --no-sound       no sound card: the unit runs on silent
+    blazie_emu_gtk --firmware DIR   --config DIR, as blazie_emu
+
+It shares the terminal program's settings file and memory folder (below): a unit saved by one starts in the other.
+Run one at a time (each saves its unit when it closes).
+
+**The window**, top to bottom:
+
+- **The menu bar**, the Windows app's item for item, with its mnemonics: Firmware (Alt+F: the four units, Export
+  files to disk image (.img), Import files from disk image (.img), Back to the factory state, Exit), Settings (Alt+E:
+  the idle channel, keep the channel open, the pop and the click, the 10 Hz tick, quick key response, Sample rate,
+  Serial port: none, the serial devices present, or a pseudo-terminal), Help (Alt+H: Keys, About). Ctrl+Q exits
+  (with the Braille Lite; on the Type 'n Speak Ctrl+Q is the unit's).
+- **The keyboard area**, the one thing in the window that takes the focus. When it does Orca says its name, "Braille
+  Lite 2000 (English): keyboard. F11 or Alt+Shift+F opens the menu", and "panel".
+- **The status line**: short results -- "Switched to the Type 'n Speak (Spanish).", "Exported 12 files to ...",
+  "Sample rate 22050 Hz." -- which Orca speaks as they come (ATK's announcement: ATK 2.46 and later, as on Debian 12
+  and 13; with an older one the line is only there to read, with Orca's flat review).
+
+Questions and longer reports are GTK message dialogs, which Orca reads as they open (each named for what it is
+about: "About", "Type 'n Speak (English)", "Import files"): the Type 'n Speak's first start and its seven questions,
+the offer to set up a Type 'n Speak the previews saved (Set it up, keep its files / Factory state / As it is), Back to
+the factory state, the import's report and its question before deleting, Keys, About. Export and import choose the
+image in GTK's own file chooser; the export's result is said on the status line. The memory is saved as the other
+shells save it: every minute, when the window closes (Exit, or the window manager's close), on switching units, when
+the desktop session ends (GTK's query-end), and on SIGTERM or SIGHUP.
+
+**Keys.** GTK says when each key goes down and when it comes up, so the keys are as on Windows (and as the input
+devices in a terminal) -- no hold key:
+
+- **Braille Lite**: F D S = dots 1 2 3, J K L = dots 4 5 6, the space bar, A or ; = the advance bar (`[keys]`
+  `dot1` .. `advance` in the settings). A chord goes to the unit when its last key comes up, and the keys held down
+  are held on the unit while you hold them: p-chord, l, then hold i-chord at once -- the cold reset ("initialize file
+  system?"). Every other key is the program's: Alt and a letter for the menus, Tab, and so on.
+- **Type 'n Speak**: the whole keyboard is the unit's (`tns_keys.h`, the one table Windows and the terminal use),
+  Alt, Ctrl, Tab, Escape, F10 and the other function keys included; each key goes down and comes up as you move it.
+- **F11 or Alt+Shift+F** opens the menu whichever unit runs (the keys held are let go first; `[keys] menu` and
+  `tns_menu` set others); Escape closes it and gives the keys back to the unit. F10, GTK's usual key for a menu
+  bar, is not one here: it is a Type 'n Speak key.
+- The keys are taken by their place on the keyboard, not by what a layout prints on them (X's and Wayland's key
+  codes are Linux's input codes, which `evdev_linux.c` names): on an AZERTY keyboard the Braille Lite's dots stay
+  under the same fingers, and the Type 'n Speak's keys are where a US keyboard has them.
+- Nothing is grabbed. Only while the keyboard area has the focus do keys reach the unit; when the window loses the
+  focus (Alt+Tab, a dialog), a chord half pressed is dropped and the keys held come up.
+
+**With Orca.**
+
+- Orca's own keys stay Orca's: the Orca key (Insert in Orca's desktop layout, Caps Lock in its laptop layout) and
+  the keys pressed with it never reach the unit. So the Type 'n Speak's Insert (desktop layout) or Caps Lock (laptop
+  layout) is Orca's; Orca's "pass the next key through" (Orca+BackSpace, then the key) sends it to the unit.
+- Orca's key echo, if on, speaks each key over the unit's own voice; most people will want it off while using the
+  unit (Orca's Preferences, Echo).
+- The unit's voice and Orca's share the sound card (through PulseAudio or PipeWire on a desktop) and can speak at
+  once.
+
+## Not yet tried with a real Orca user
+
+The desktop app was tested under a virtual display (Xvfb) with the accessibility bus that Orca reads (AT-SPI): the
+names, roles, focus and announcement events Orca gets were checked, but no one has yet used it with Orca speaking.
+To find out with a real user:
+
+- what Orca says when the window opens, when the keyboard area takes the focus, and when a dialog closes and the
+  focus comes back (the tests see the focus return and the area named; Orca's words are untried);
+- whether Orca speaks the status line's announcements (the event was seen on the bus, sent with ATK 2.56's
+  "notification" signal; the older "announcement" signal of ATK 2.46-2.49 was not exercised, and an Orca older than
+  the announcement event may say nothing);
+- Orca's laptop layout with the Type 'n Speak (Caps Lock), Orca+BackSpace to pass a key through, and Orca's key echo
+  over the unit;
+- a real window manager (the tests had none): Alt+F4, Alt+Tab away and back with a chord or a Type 'n Speak key
+  held, the dialogs over the window;
+- a Wayland desktop (GNOME's default; the key codes are the same, but not tried), and an x86-64 machine (tested on
+  arm64 only, a Raspberry Pi 5 with Debian 13);
+- sound actually heard on a desktop (the tests run with --no-sound), alongside Orca's voice.
 
 ## The settings and the units' memory
 
@@ -190,6 +278,19 @@ is given):
   keys; and the program run as a person runs it, in a pseudo-terminal, its serial port on another: s-chord's XON ENQ
   at 19200 bit/s, ACK answered with 'C', NAK (the control) not. Its control (`BLAZIE_KEYS_BREAK=1`) must fail the
   two clock checks.
+- `test_emu_gtk.py` -- the desktop app in a virtual X display (`xvfb-run`) with its own session and accessibility
+  buses (`dbus-run-session`, at-spi2-core), its keys typed through the X server (xdotool: GDK's own key events, down
+  and up), its window read through AT-SPI as Orca reads it (python3-gi, gir1.2-atspi-2.0); `--no-sound`, and
+  `--trace` tells the test the unit's level, its keys and its status lines. It checks: the settings file it writes is
+  the terminal shell's, word for word; the menu bar's items by name; the keyboard area focused, with its name and
+  role; the boot and F (dot 1) answered; Export through GTK's file chooser, the image written and the result
+  announced; F11 and Alt+Shift+F opening the Firmware menu, Escape giving the focus back; Help > About's text read
+  from its dialog; switching units announced and the area renamed; the Type 'n Speak's first-start dialog, y and F10
+  as its keys, Alt+Shift+F letting its held keys go; Exit saving every unit used; and, in a run of its own, p-chord, l,
+  then i-chord held through the restart (the cold reset's question). Its controls: `BLAZIE_GTK_BREAK=noname` (the
+  keyboard area unnamed) must fail the area's check and only that one; `BLAZIE_KEYS_BREAK=1` (dots 1 and 4 swapped)
+  must fail the held check. Skipped, saying why, where GTK, Xvfb, xdotool or the accessibility bus is missing; the
+  libraries `blazie_emu_gtk` needs are checked (the C library, the sound library and GTK's own).
 
 Also run by hand on a Raspberry Pi 5 (Debian 13, arm64): the input devices with a virtual keyboard (uinput) --
 found, grabbed, a chord down and up, F11 opening the menu; and the same keyboard held by another program: named,
