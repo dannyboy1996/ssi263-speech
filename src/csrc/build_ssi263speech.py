@@ -55,7 +55,7 @@ def units():
                                                 "bl_voice", "bl_firmware", "bl_state")]
     u += [(FRONT + inc("blazie"), "blazie/bl_numbers.c"), (FRONT, "numwords.c"), (FRONT, "numwords_es.c")]
     u += [(MAME, "cpu/i8085_mame.cpp")] + [(ACCENT, "accentsa/%s.c" % n) for n in ("as_board", "as_usart", "as_host")]
-    u += [(FRONT + inc("accentsa"), "accentsa/as_voice.c")]
+    u += [(FRONT + inc("accentsa"), "accentsa/as_voice.c"), (FRONT, "accent_text.c")]   # both Accents' text rules
     have = []
     if os.path.isfile(os.path.join(SRC, "speakout", "so_voice.c")):          # so-voice's sources (so_voice.h)
         so = FRONT + inc("cpu", "speakout")
@@ -64,7 +64,7 @@ def units():
         have.append("-DSSV_HAVE_SPEAKOUT")
     if os.path.isfile(os.path.join(SRC, "accentmini", "am_voice.c")):        # am-voice's sources (am_voice.h)
         am = FRONT + inc("cpu", "pc86", "accentmini")
-        u += [(MAME, "cpu/i86_mame.cpp"), (am, "pc86/pc86.c"), (am, "accent_front.c")]
+        u += [(MAME, "cpu/i86_mame.cpp"), (am, "pc86/pc86.c")]
         u += [(am, "accentmini/%s.c" % n) for n in ("am_host", "am_voice")]
         have.append("-DSSV_HAVE_ACCENTMINI")
     u.append((FRONT + have, "voices.c"))
