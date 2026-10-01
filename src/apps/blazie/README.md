@@ -147,7 +147,7 @@ sound card, in blocks of 10 ms (`[sound] block_ms`, 5-20).  A key's speech plays
 | Choice | Queue | |
 | --- | --- | --- |
 | `auto` (the default) | 60 ms, growing (100, 150, 220, 250 ms) each time the card runs dry, for the session | a key's speech ~20 ms later than 0.7.0's on a PC that never breaks up |
-| `short` | 40 ms | the 0.7.0 draft's four blocks: the quickest answer, and it chops the moment the program is held up |
+| (`short`) | 40 ms | no longer offered: the 0.7.0 draft's four blocks broke up on a ROG Ally played directly, and 50 ms did too; a settings file's `short` now reads as `auto` |
 | `medium` | 100 ms | |
 | `long` | 250 ms | Remote Desktop, a Bluetooth headset, a handheld PC on battery |
 

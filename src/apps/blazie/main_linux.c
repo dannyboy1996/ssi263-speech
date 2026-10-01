@@ -13,8 +13,8 @@
  * Sound: ALSA (audio_linux.c), blocks of 10 ms ([sound] block_ms), written by a thread that renders each block from
  * the unit as the card drains one -- the card's clock paces the unit.  How much is kept queued is menu 17, the sound
  * buffer (audio_pace.h, [sound] buffer=, as the Windows app's): automatic (60 ms, growing to at most 250 ms each time
- * the card is found to have run dry), short (40 ms), medium (100 ms) or long (250 ms: a remote session, a sound
- * device shared with a screen reader).  Without a sound card the unit runs on, silent, paced by the system clock.
+ * the card is found to have run dry), medium (100 ms) or long (250 ms: a remote session, a sound device shared with
+ * a screen reader); the draft's short (40 ms) is no longer offered (audio_pace.h).  Without a sound card the unit runs on, silent, paced by the system clock.
  * The serial port (serial_linux.c): a /dev/tty* or a pseudo-terminal.
  * Settings and the units' memory: ~/.config/ssi263-speech/blazie-emu/ (blazie_emu.ini, <unit>.state), saved on exit
  * and every minute.
@@ -845,19 +845,30 @@ static void menu_serial(void)
     }
 }
 
-/* the sound buffer's choices (audio_pace.h), as the Windows app's Settings > Sound buffer */
-static const char *const BUFFER_TEXT[AP_N_MODES] = {
-    "automatic (60 ms, longer when the sound breaks up)", "short (40 ms, the quickest answer)", "medium (100 ms)",
-    "long (250 ms: a remote session, or a sound device shared with a screen reader)"};
+/* the sound buffer's choices (audio_pace.h), as the Windows app's Settings > Sound buffer: the offered ones only (no
+   short: AP_OFFERED), their text from audio_pace.h's own numbers */
+static const int BUFFER_MODES[] = {AP_AUTO, AP_MEDIUM, AP_LONG};
+#define N_BUFFER_MODES ((int)(sizeof BUFFER_MODES / sizeof BUFFER_MODES[0]))
+
+static void buffer_text(int mode, int brief, char *out, int cap)
+{
+    if (mode == AP_AUTO)
+        snprintf(out, (size_t)cap, brief ? "automatic" : "automatic (%d ms, longer when the sound breaks up)",
+                 AP_AUTO_START_MS);
+    else if (mode == AP_LONG)
+        snprintf(out, (size_t)cap, brief ? "long (%d ms)" : "long (%d ms: a remote session, or a sound device shared "
+                 "with a screen reader)", AP_LONG_MS);
+    else
+        snprintf(out, (size_t)cap, "medium (%d ms)", AP_MEDIUM_MS);
+}
 
 static void buffer_line(char *out, int cap)
 {
-    static const char *const SHORT[AP_N_MODES] = {"automatic", "short (40 ms)", "medium (100 ms)", "long (250 ms)"};
     int ms = __atomic_load_n(&g_buffer_ms, __ATOMIC_ACQUIRE);
     if (g_buffer_mode == AP_AUTO && g_audio_running && ms > 0)
         snprintf(out, (size_t)cap, "automatic, %d ms now", ms);
     else
-        snprintf(out, (size_t)cap, "%s", SHORT[g_buffer_mode]);
+        buffer_text(g_buffer_mode, 1, out, cap);
 }
 
 static int choose(const char *title, const char *const *items, int n, int current)
@@ -988,10 +999,20 @@ chosen:
         case 14: keys_help(); continue;
         case MENU_BUFFER: {
             /* the sound thread takes it at its next block: no reopening, no gap (audio_linux.h) */
-            int m = choose("Sound buffer (a key's answer is heard that much later; too short, the sound breaks up)",
-                           BUFFER_TEXT, AP_N_MODES, g_buffer_mode);
+            char text[N_BUFFER_MODES][128];
+            const char *items[N_BUFFER_MODES];
+            int i, cur = 0, m;
+            for (i = 0; i < N_BUFFER_MODES; i++) {
+                buffer_text(BUFFER_MODES[i], 0, text[i], (int)sizeof text[i]);
+                items[i] = text[i];
+                if (BUFFER_MODES[i] == g_buffer_mode)
+                    cur = i;
+            }
+            i = choose("Sound buffer (a key's answer is heard that much later; too short, the sound breaks up)",
+                       items, N_BUFFER_MODES, cur);
+            m = BUFFER_MODES[i];
             __atomic_store_n(&g_buffer_mode, m, __ATOMIC_RELEASE);
-            say("Sound buffer: %s.", BUFFER_TEXT[m]);
+            say("Sound buffer: %s.", items[i]);
             save_settings();
             continue;
         }

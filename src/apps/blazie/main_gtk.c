@@ -114,11 +114,18 @@ static const char *const OPEN_MENU[] = {"Keep the channel open: _off (silent as 
                                         "Keep the channel open: _always"};
 static const char *const OPEN_TEXT[] = {"off", "until the unit clicks off", "always"};
 /* Settings > Sound buffer (audio_pace.h AP_AUTO .. AP_LONG), as the Windows app's */
-static const char *const BUFFER_MENU[AP_N_MODES] = {"_Automatic (60 ms, longer when the sound breaks up)",
-                                                    "_Short (40 ms, the quickest answer)", "_Medium (100 ms)",
-                                                    "_Long (250 ms: a remote session, or a sound device shared with "
-                                                    "a screen reader)"};
-static const char *const BUFFER_TEXT[AP_N_MODES] = {"automatic", "short (40 ms)", "medium (100 ms)", "long (250 ms)"};
+/* the offered ones only (no short: AP_OFFERED), their text from audio_pace.h's own numbers; menu: with a mnemonic */
+static void buffer_text(int mode, int menu, char *out, size_t cap)
+{
+    if (mode == AP_AUTO)
+        snprintf(out, cap, menu ? "_Automatic (%d ms, longer when the sound breaks up)" : "automatic (%d ms)",
+                 AP_AUTO_START_MS);
+    else if (mode == AP_LONG)
+        snprintf(out, cap, menu ? "_Long (%d ms: a remote session, or a sound device shared with a screen reader)"
+                 : "long (%d ms)", AP_LONG_MS);
+    else
+        snprintf(out, cap, menu ? "_Medium (%d ms)" : "medium (%d ms)", AP_MEDIUM_MS);
+}
 static const char *const SERIAL_PATTERNS[] = {"/dev/ttyUSB%d", "/dev/ttyACM%d", "/dev/ttyS%d", "/dev/ttyAMA%d"};
 #define MAX_PORTS 32
 
@@ -1223,7 +1230,8 @@ static void sync_menu(void)
     for (k = 0; k < N_RATES; k++)
         if (RATES[k] == g_rate)
             gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_rate_items[k]), TRUE);
-    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_buffer_items[g_buffer_mode]), TRUE);
+    if (g_buffer_items[g_buffer_mode])
+        gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(g_buffer_items[g_buffer_mode]), TRUE);
     g_updating = 0;
 }
 
@@ -1414,7 +1422,11 @@ static void on_buffer_item(GtkWidget *item, gpointer k)
         return;
     __atomic_store_n(&g_buffer_mode, GPOINTER_TO_INT(k), __ATOMIC_RELEASE);
     save_settings();
-    set_status(1, "Sound buffer: %s.", BUFFER_TEXT[GPOINTER_TO_INT(k)]);
+    {
+        char text[64];
+        buffer_text(GPOINTER_TO_INT(k), 0, text, sizeof text);
+        set_status(1, "Sound buffer: %s.", text);
+    }
 }
 
 static void on_serial_item(GtkWidget *item, gpointer k)
@@ -1580,7 +1592,11 @@ static GtkWidget *make_menu(GtkAccelGroup *accel)
     buffer = add_submenu(settings, "Sound _buffer", NULL);
     group = NULL;
     for (k = 0; k < AP_N_MODES; k++) {
-        g_buffer_items[k] = gtk_radio_menu_item_new_with_mnemonic(group, BUFFER_MENU[k]);
+        char label[96];
+        if (!AP_OFFERED(k))                     /* no short: 40 and 50 ms broke up on a ROG Ally (audio_pace.h) */
+            continue;
+        buffer_text(k, 1, label, sizeof label);
+        g_buffer_items[k] = gtk_radio_menu_item_new_with_mnemonic(group, label);
         group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(g_buffer_items[k]));
         g_signal_connect(g_buffer_items[k], "activate", G_CALLBACK(on_buffer_item), GINT_TO_POINTER(k));
         gtk_menu_shell_append(GTK_MENU_SHELL(buffer), g_buffer_items[k]);

@@ -13,7 +13,11 @@
  * Sound buffer (the Settings menu, [sound] buffer=):
  *   automatic  60 ms; each time the card is found to have run dry the queue grows (60, 100, 150, 220, 250 ms) and
  *              stays grown for the session -- a key's answer is heard that much later, the speech no longer chops
- *   short      40 ms (the 0.7.0 draft's), medium 100 ms, long 250 ms (Remote Desktop): fixed
+ *   medium 100 ms, long 250 ms (Remote Desktop): fixed
+ *   short      40 ms (the 0.7.0 draft's four blocks): NOT offered (AP_OFFERED).  It broke up on Tomi's ROG Ally, played
+ *              there directly on AC power, and 50 ms did too (2026-10-01), so no fixed queue under automatic's start
+ *              is safe to offer.  It stays as test_audio's "old queue" control; a settings file's "short" reads as
+ *              automatic (ap_mode_of)
  *
  * Running dry is told from the card's played position against the wall clock (ap_observe): while the card plays,
  * the two advance together; every gap puts the clock ahead by its length, for good.  (Counting the blocks handed
@@ -33,6 +37,7 @@ enum { AP_AUTO, AP_SHORT, AP_MEDIUM, AP_LONG, AP_N_MODES };
 
 #define AP_AUTO_START_MS 60
 #define AP_SHORT_MS 40
+#define AP_OFFERED(mode) ((mode) != AP_SHORT)   /* the choices a menu offers (short is the tests' old queue only) */
 #define AP_MEDIUM_MS 100
 #define AP_LONG_MS 250
 #define AP_MAX_MS 250                /* the automatic queue grows no further */
@@ -68,7 +73,7 @@ double ap_observe(audio_pace *p, double now_ms, double played_ms);
 int ap_want(const audio_pace *p, int in_flight, int save_pending);
 /* 1: the waiting save may run now (the queue holds its render-ahead) */
 int ap_save_now(const audio_pace *p, int in_flight, int save_pending);
-/* "auto", "short", "medium", "long"; and back (-1: none of them) */
+/* "auto", "short", "medium", "long"; and back (-1: none of them; "short", no longer offered, reads as AP_AUTO) */
 const char *ap_mode_name(int mode);
 int ap_mode_of(const char *name);
 

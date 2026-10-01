@@ -9,8 +9,8 @@
  * Sound: waveOut, blocks of 10 ms ([sound] block_ms, 5-20), each rendered by the unit when the card gives one back --
  * the card's clock paces the unit.  A key reaches the unit at the next block rendered, which plays behind the blocks
  * already queued.  How many are kept queued is Settings > Sound buffer (audio_pace.h): automatic (60 ms, growing to at
- * most 250 ms each time the card is found to have run dry), short (40 ms, the 0.7.0 draft's four blocks), medium
- * (100 ms) or long (250 ms, for Remote Desktop).  The minute's save runs on the sound thread with the queue rendered
+ * most 250 ms each time the card is found to have run dry), medium (100 ms) or long (250 ms, for Remote Desktop); the
+ * 0.7.0 draft's 40 ms is no longer offered (audio_pace.h).  The minute's save runs on the sound thread with the queue rendered
  * ahead, so the card plays on while the memory is written (Tomi: the emulator's speech stutters, the add-on's
  * doesn't).  BLAZIE_EMU_AUDIO_LOG=file logs each wake of the sound thread (its renders, the queue, the gaps found);
  * BLAZIE_EMU_AUDIO_STALL=ms holds the thread up to that long before 5% of its blocks (a test of the queue).
@@ -837,10 +837,15 @@ static HMENU make_menu(void)
     AppendMenuA(sound, MF_SEPARATOR, 0, NULL);
     AppendMenuA(sound, MF_POPUP, (UINT_PTR)rates, "Sample &rate");
     /* the queue at the sound card (audio_pace.h): a key's answer is heard that much later; too short, it chops */
-    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_AUTO, "&Automatic (60 ms, longer when the sound breaks up)");
-    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_SHORT, "&Short (40 ms, the quickest answer)");
-    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_MEDIUM, "&Medium (100 ms)");
-    AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_LONG, "&Long (250 ms, for Remote Desktop)");
+    {   /* the labels from audio_pace.h's own numbers; no short (AP_OFFERED: it broke up on a ROG Ally at 40 and 50) */
+        char lab[96];
+        snprintf(lab, sizeof lab, "&Automatic (%d ms, longer when the sound breaks up)", AP_AUTO_START_MS);
+        AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_AUTO, lab);
+        snprintf(lab, sizeof lab, "&Medium (%d ms)", AP_MEDIUM_MS);
+        AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_MEDIUM, lab);
+        snprintf(lab, sizeof lab, "&Long (%d ms, for Remote Desktop)", AP_LONG_MS);
+        AppendMenuA(buffer, MF_STRING, ID_BUFFER + AP_LONG, lab);
+    }
     AppendMenuA(sound, MF_POPUP, (UINT_PTR)buffer, "Sound &buffer");
     g_serial_menu = CreatePopupMenu();
     AppendMenuA(g_serial_menu, MF_STRING, ID_SERIAL_NONE, "&None (not connected)");   /* filled when it opens */

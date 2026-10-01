@@ -148,6 +148,6 @@ int ap_mode_of(const char *name)
     int k;
     for (k = 0; k < AP_N_MODES; k++)
         if (!strcmp(name, NAMES[k]))
-            return k;
+            return AP_OFFERED(k) ? k : AP_AUTO;    /* a draft's "short": automatic now (audio_pace.h) */
     return -1;
 }

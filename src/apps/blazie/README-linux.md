@@ -64,7 +64,7 @@ Enter; Enter alone goes back to the unit:
 | 13 | The Braille Lite's keyboard: keys or letters (below) |
 | 14 | The keys, in short |
 | 15, 16 | The Braille 'n Speak 2000, English and Slovak (listed when its firmware is there: README.md, "Firmware"); the Braille Lite's keys |
-| 17 | The sound buffer: automatic, short, medium or long (below, "Sound") |
+| 17 | The sound buffer: automatic, medium or long (below, "Sound") |
 | 0 | Exit: the unit's memory is saved |
 
 After a choice the menu says one line; `?` lists it again.
@@ -246,7 +246,7 @@ speech stutters, the add-on's doesn't).
 | Choice | Queue | |
 | --- | --- | --- |
 | `auto` (the default) | 60 ms, growing (100, 150, 220, 250 ms) each time the card runs dry, for the session | |
-| `short` | 40 ms | the 0.7.0 draft's four blocks: the quickest answer, and it breaks up the moment the program is held up |
+| (`short`) | 40 ms | no longer offered: it broke up on a ROG Ally played directly, and 50 ms did too; a settings file's `short` now reads as `auto` (kept in the table below as the old queue it was measured as) |
 | `medium` | 100 ms | |
 | `long` | 250 ms | **recommended when the unit shares the sound device with a screen reader** (the BTSpeak's own voice, Speakup, Orca, through PulseAudio or PipeWire), and over a remote session |
 

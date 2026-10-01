@@ -265,7 +265,7 @@ def main():
 
         if want("buffer"):
             cfg = os.path.join(tmp, "buffer")
-            first = menu_session(exe, fw, cfg, ["17", "4", "0"])     # the sound buffer: long; then exit
+            first = menu_session(exe, fw, cfg, ["17", "3", "0"])     # the sound buffer: long (3: no short); exit
             ini = open(os.path.join(cfg, "blazie_emu.ini")).read() if os.path.isfile(
                 os.path.join(cfg, "blazie_emu.ini")) else ""
             again = menu_session(exe, fw, cfg, ["0"])
@@ -278,6 +278,10 @@ def main():
                       listed.group(1) if listed else None, "said" if "Sound buffer: long (250 ms" in first
                       else "NOT said", "yes" if re.search(r"^buffer = long$", ini, re.M) else "no",
                       relisted.group(1) if relisted else None))
+            # no short among the choices: 40 and 50 ms both broke up on a ROG Ally (audio_pace.h AP_OFFERED)
+            check("menu 17: no short sound buffer offered", re.search(r"^ +\d+ short", first, re.M | re.I) is None,
+                  "the choices: %s" % ", ".join(re.findall(r"^ +\d+ ((?:automatic|short|medium|long)\b[^(]*)",
+                                                           first, re.M | re.I)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if failures:
