@@ -158,6 +158,12 @@ class NativeBlazie:
                                       boot_instr, 1 if on_write else 0, err, 256)
         if not self._h:
             raise RuntimeError("bl.dll: %s" % err.value.decode("latin-1", "replace"))
+        # EXPERIMENTAL, off unless set (Reply 112 item 3's prototype; bl_host.h "cancel_settle"): the lockstep's cancel
+        # settles the unit first -- for measuring it on the goldens, voice_equiv and the driver, never a default
+        settle = os.environ.get("SSI263_BLAZIE_CANCEL_SETTLE")
+        if settle:
+            self._record("set", "cancel_settle", int(settle))
+            self._lib.bh_set_int(self._h, b"cancel_settle", int(settle))
         self._drain()
 
     def _record(self, *call, **kw):

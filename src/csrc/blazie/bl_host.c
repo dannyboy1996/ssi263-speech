@@ -82,6 +82,12 @@ struct bl_host {
                                       counted, read by the caller (native_blazie.py raises) -- records, not state */
     size_t fail_size;              /* tests: run_ahead.c's next allocation of exactly this many bytes fails */
     int fail_tx, fail_log;         /* tests: the n-th transmitted byte / logged write from now cannot be kept */
+    /* EXPERIMENTAL, off (Reply 112 item 3's prototype, not the default): the lockstep's own cancel race -- ^X met the
+       firmware mid-copy of its next line, and a character of the cancelled text led the next utterance.  bit 0: the
+       unit runs on, A/R not requesting, its chip writes dropped, until its CPU waits for an interrupt (at most
+       RA_SETTLE_S of CPU time; ra_settle's rule for run ahead); bit 1: A/R not requesting over the first ^X slice */
+    int cancel_settle;
+    int settling, cancel_settled, cancel_dropped;
 };
 
 enum { BH_FAULT_RUN_AHEAD = 1, BH_FAULT_EVENT = 2 };
@@ -180,7 +186,10 @@ static void events(bl_host *h)
     const bl_event *ev;
     int n = bl_events(h->unit, &ev), i;
     for (i = 0; i < n; i++) {
-        if (ev[i].type == 'W') {
+        if (ev[i].type == 'W' && h->settling) {
+            HTR("SETTLE-DROP r%d=%02X\n", ev[i].a, ev[i].b);
+            h->cancel_dropped++;                           /* the cancelled utterance's future (cancel_settle) */
+        } else if (ev[i].type == 'W') {
             /* run ahead: into the script, played later -- and after a failed allocation, lost with the capture (its
                error, RA_ERROR), never applied out of order */
             if (h->ra.active && (h->ra.capturing || h->ra.end == RA_END_ALLOC)) {
@@ -595,6 +604,25 @@ BL_API double bh_cancel(bl_host *h, double limit, double quiet, double cut)
         ra_abort(&h->ra);
         h->ar = -1;
         h->ar_hold = h->ra.brk != RA_BRK_SETTLE;           /* the control puts both back */
+    } else if (h->cancel_settle) {                         /* the lockstep, EXPERIMENTAL and off (struct bl_host) */
+        h->cancel_settled = -1;
+        h->cancel_dropped = 0;
+        if (h->cancel_settle & 1) {
+            unsigned long long start = bl_cycles(h->unit), cap = (unsigned long long)(RA_SETTLE_S * CLOCK_HZ);
+            h->settling = 1;
+            bl_set_ar(h->unit, 0);
+            events(h);
+            while (!ra_cb_idle(h) && bl_cycles(h->unit) - start < cap) {
+                bl_run(h->unit, RA_SLICE);
+                events(h);
+            }
+            h->cancel_settled = ra_cb_idle(h) ? 1 : 0;
+            h->settling = 0;
+            h->ar = -1;                                    /* the unit's line was dropped: the next slice gives it */
+            HTR("LOCK-SETTLE cyc=%llu settled=%d dropped=%d\n", (unsigned long long)bl_cycles(h->unit),
+                h->cancel_settled, h->cancel_dropped);
+        }
+        h->ar_hold = (h->cancel_settle & 2) != 0;
     }
     /* the explicit recovery from a fault (Reply 112 item 2): the utterance, its held input and a failed script are
        abandoned here (ra_reset), the unit gets its ^X below */
@@ -837,6 +865,9 @@ BL_API int bh_get_int(const bl_host *h, const char *name)
     if (!strcmp(name, "run_ahead_dropped")) return h->ra.dropped;
     if (!strcmp(name, "run_ahead_held")) return h->ra.held;
     if (!strcmp(name, "fault")) return faults(h);
+    if (!strcmp(name, "cancel_settle")) return h->cancel_settle;
+    if (!strcmp(name, "cancel_settled")) return h->cancel_settled;
+    if (!strcmp(name, "cancel_dropped")) return h->cancel_dropped;
     if (!strcmp(name, "tx_lost")) return h->tx_lost;
     if (!strcmp(name, "writes_lost")) return h->wl_lost;
     if (!strcmp(name, "held")) return h->n_held;
@@ -859,6 +890,7 @@ BL_API void bh_set_int(bl_host *h, const char *name, int v)
     else if (!strcmp(name, "log_ar")) h->log_ar = v != 0;
     else if (!strcmp(name, "tx_lost")) h->tx_lost = v;         /* the caller has reported them */
     else if (!strcmp(name, "writes_lost")) h->wl_lost = v;
+    else if (!strcmp(name, "cancel_settle")) h->cancel_settle = v & 3;   /* EXPERIMENTAL, off (struct bl_host) */
     /* tests only (run_ahead_fault.py): one allocation or store made to fail, as memory running out would */
     else if (!strcmp(name, "fail_alloc_size")) h->fail_size = v > 0 ? (size_t)v : 0;
     else if (!strcmp(name, "fail_event")) bl_fail_event(h->unit, v);

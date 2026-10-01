@@ -85,6 +85,10 @@ BL_API int bh_set_idle(bl_host *h, const bl_idle_options *o);
    ra_settle), "run_ahead_held" (the last utterance ended at its bound, a spoken final load held), "held" (inputs
    waiting), "port_a0", "fault" (BH_FAULT_*: 1 the run-ahead script, 2 a board event).  Read and reset by the caller:
    "tx_lost", "writes_lost" (bytes of bh_tx, writes of bh_writes the host could not keep: records, not a fault).
+   "cancel_settle" (EXPERIMENTAL, 0 = off, the default; Reply 112 item 3's prototype, nvda/tools/lockstep_cancel.py):
+   the lockstep's bh_cancel lets the unit run on, A/R not requesting and its chip writes dropped, to a wait for an
+   interrupt before its ^X (bit 0), and holds A/R not requesting over the first ^X slice (bit 1); read-only
+   "cancel_settled" (1 idle, 0 the cap, -1 not run) and "cancel_dropped" (its writes) for the last cancel.
    Tests only: "run_ahead_break" (RA_BRK_*), "log_ar" (the A/R edges given to the unit, reg 8, and the run-ahead
    segments' openings, reg 9 + how, in the write log), and one failure each, as memory running out would cause it:
    "fail_alloc_size" (run_ahead.c's next allocation of that many bytes), "fail_event" / "fail_tx" / "fail_log" (the

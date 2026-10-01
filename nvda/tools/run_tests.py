@@ -352,6 +352,15 @@ if os.path.isfile(os.path.join(LIB, "x64", "bl.dll")):
                         env={"RUN_AHEAD_CANCEL_BREAK": "settle"}, expect_fail=True,
                         fail_marks=[r"^FAIL state history, rate 14: run ahead 4 of 25 led by other phonemes",
                                     r"^run ahead cancel \(English\): 1 FAILED$"]))
+    # the DEFAULT lockstep's own, rarer cancel race (lockstep_cancel.py; Astra, Reply 112 item 3, Reply 114): its two
+    # retained leaks reproduced exactly by the default (unchanged), and cleared by the opt-in prototype (cancel_settle
+    # 3: settle and A/R hold); its control tests the settle alone, which leaves the 1.040 s leak
+    CHECKS.append(check("lockstep cancel race: retained by the default, cleared by the opt-in prototype",
+                        [PY, "lockstep_cancel.py"]))
+    CHECKS.append(check("lockstep cancel race CONTROL (the settle alone, must fail)", [PY, "lockstep_cancel.py"],
+                        env={"LOCKSTEP_CANCEL_PROTO": "1"}, expect_fail=True,
+                        fail_marks=[r"^FAIL 1\.040 s, cancel_settle 1 \(the prototype clears it\): the respoken text "
+                                    r"led by \[10\]", r"^lockstep cancel race \(English, .*\): 1 FAILED$"]))
     # faults are never silent (run_ahead_fault.py; Astra, Reply 112 item 2): a run-ahead capture failing mid-utterance
     # with a say or a setting waiting, or at its start with a second say at once (her error_priority_probe.c: busy 1
     # with input held), a board event, a transmitted byte and a logged write lost -- each seen first
