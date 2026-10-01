@@ -8,8 +8,8 @@
  *   Keyboard: one byte per key event on port D0h, with /INT2: bit 7 = 1 key down, 0 key up; the low 7 bits are the
  *   key's position (tns_keys.h).  E0h (read): status -- bit 0 = 0 a key is waiting, bit 1 = 0 battery low,
  *   bit 2 = 0 power switch off; FFh when idle.  80h (read): watchdog.  B0h (write): power/control latch.
- *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the 4 MB 29F016, the low 5 bits pick
- *   the page.
+ *   F0h (write): the flash bank -- bit 5 opens a 128 KB window at E0000h onto the file flash, the low 5 bits pick
+ *   the page (a 29F016: the firmware uses 2 MB; the board keeps the 4 MB the five bits reach).
  *   Memory: the firmware image from physical 00000h; RAM everywhere else, including 0-3FFFFh past the image's end
  *   (a new file's text starts right after the program).
  *
