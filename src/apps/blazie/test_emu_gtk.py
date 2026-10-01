@@ -15,9 +15,16 @@ FIRMWARE_DIR as test_emu_linux.py's (BL2ENG.BNS + bl2_2003_warm.state; BL2SPA.BN
   menu       F11 and Alt+Shift+F open the Firmware menu; Escape gives the keyboard back
   dialog     Help > About through the screen reader's own action: its text read from the alert, closed with OK
   announce   Firmware > the Spanish Braille Lite: "Switched to ..." announced (object:announcement), the area renamed
+  bns        (FIRMWARE_DIR with bns2000/: BS03ENG.BNS, BS2SLL.BNS and their factory states) Firmware > the Slovak
+             Braille 'n Speak 2000: announced, the area renamed; its files exported: the folder names in UTF-8 from
+             code page 852 ("fles subory" with its s-caron and u-acute), as blazie_files --codepage=852 exports them
   tns        Firmware > Type 'n Speak: its first-start dialog read and closed; y, F10 and Alt+Shift+F as its keys
   exit       Firmware > Exit: the program ends, every unit used saved
+  kind       (runs of their own) the unit saved last in the settings (kind = bns_slovak) starts -- or, without the
+             Braille 'n Speak 2000's firmware, the English Braille Lite; --unit bns-en starts it; --unit's message
   held       (a run of its own) p-chord, l, then i-chord held through the restart: the cold reset's question
+The tree check also wants the two Braille 'n Speak 2000 items in the Firmware menu when bns2000/ is there, and none
+when it is not.
 Controls (tools/linux_tests.sh judges them by their marks): BLAZIE_GTK_BREAK=noname leaves the keyboard area
 unnamed -- tree must FAIL for that alone; BLAZIE_KEYS_BREAK=1 swaps dots 1 and 4 -- held must FAIL.
 """
@@ -241,6 +248,33 @@ class Emu:
         self.log.close()
 
 
+BNS_ITEMS = ["Braille 'n Speak 2000, English", "Braille 'n Speak 2000, Slovak"]
+SLOVAK_FLASH = "fleš súbory"     # the Slovak unit's flash folder: s-caron, u-acute (cp852 0xE7, 0xA3)
+
+
+def fw_found(fw, *names):
+    """main_gtk.c's fw_file: the first of the names in the firmware folder, else None."""
+    for n in names:
+        if os.path.isfile(os.path.join(fw, n)):
+            return os.path.join(fw, n)
+    return None
+
+
+def bns_present(fw):
+    """The Braille 'n Speak 2000 offered (main_gtk.c kind_offered): both units' firmware and factory states."""
+    return all(fw_found(fw, "bns2000/" + n, n) for n in ("BS03ENG.BNS", "bs03eng_fresh.state", "BS2SLL.BNS",
+                                                         "bs2sll_fresh.state"))
+
+
+def image_folders(blazie_files, img, out):
+    """The folder names in a disk image, as blazie_files unpacks them (UTF-8 on the disk)."""
+    r = subprocess.run([blazie_files, "unpack", img, out], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True, timeout=60)
+    if r.returncode != 0 or not os.path.isdir(out):
+        return None
+    return sorted(d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d)))
+
+
 def default_ini_text(path):
     """The DEFAULT_INI string literal of a C file, joined."""
     src = open(path).read()
@@ -287,10 +321,17 @@ def run_main(exe, fw, tmp, want):
                     "Import files from disk image (.img)...",
                     "Back to the factory state (erases this unit's files)...", "Exit", "Sample rate", "Serial port",
                     "Quick key response (faster than the real unit)", "Keys", "About"]
+            # the Braille 'n Speak 2000: listed when its firmware and factory states are there, absent when not
+            bns = bns_present(fw)
+            if bns:
+                need += BNS_ITEMS
             missing = [n for n in need if n not in items]
-            check("menu bar: items by name", tops == ["Firmware", "Settings", "Help"] and not missing,
-                  "menu bar %s; %d items named%s" % (tops, len(items),
-                                                     "; MISSING %s" % missing if missing else ""))
+            unexpected = [n for n in items if n in BNS_ITEMS and not bns]
+            check("menu bar: items by name", tops == ["Firmware", "Settings", "Help"] and not missing
+                  and not unexpected, "menu bar %s; %d items named; Braille 'n Speak 2000 %s%s%s" % (
+                      tops, len(items), "listed" if bns and not missing else "absent" if not bns and not unexpected
+                      else "?", "; MISSING %s" % missing if missing else "",
+                      "; listed WITHOUT its firmware %s" % unexpected if unexpected else ""))
             area = emu.area()
             nm = name(area) if area is not None else ""
             check("keyboard area: named, focused", area is not None and focused
@@ -375,6 +416,48 @@ def run_main(exe, fw, tmp, want):
                                                       "renamed" if renamed else "NOT renamed: %r" % name(emu.area())))
             emu.focus()
 
+        if want("bns") and not bns_present(fw):
+            print("skip the Braille 'n Speak 2000 (no bns2000/BS03ENG.BNS, BS2SLL.BNS and their factory states)")
+        elif want("bns"):
+            item = find(app, "radio menu item", BNS_ITEMS[1])
+            n0 = len(events)
+            if item is not None:
+                click(item)
+            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Switched to")], 20)
+            renamed = wait(lambda: name(emu.area()).startswith("Braille 'n Speak 2000 (Slovak): keyboard"), 5)
+            check("Braille 'n Speak 2000 Slovak: switched", item is not None and bool(ann)
+                  and "Braille 'n Speak 2000 (Slovak)" in ann[0] and renamed,
+                  "item %s; object:announcement %r; area %s" % (
+                      "found" if item is not None else "NOT found", ann[0] if ann else None,
+                      "renamed" if renamed else "NOT renamed: %r" % name(emu.area())))
+            emu.focus()
+            # its files out: the folder names in UTF-8 from code page 852, as blazie_files --codepage=852 makes them
+            # from the same saved memory (the export saves it first)
+            out = os.path.join(tmp, "bns_sk.img")
+            item = find(app, "menu item", "Export files to disk image (.img)...")
+            n0 = len(events)
+            if item is not None:
+                click(item)
+            chooser = wait(lambda: find(app, "file chooser"), 10)
+            if chooser is not None:
+                time.sleep(0.5)
+                xdo("key", "ctrl+a")
+                xdo("type", "--delay", "5", out)
+                xdo("key", "Return")
+            ann = wait(lambda: [t for k, t in events[n0:] if t.startswith("Exported ")], 15)
+            bf = os.path.join(os.path.dirname(os.path.abspath(exe)), "blazie_files")
+            got = image_folders(bf, out, os.path.join(tmp, "bns_sk.unpacked")) if os.path.isfile(out) else None
+            ref_img = os.path.join(tmp, "bns_sk_ref.img")
+            subprocess.run([bf, "--codepage=852", "export", os.path.join(emu.cfg, "bns_slovak.state"), ref_img],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+            ref = image_folders(bf, ref_img, os.path.join(tmp, "bns_sk_ref.unpacked")) \
+                if os.path.isfile(ref_img) else None
+            check("Braille 'n Speak 2000 Slovak: export, names in cp852", bool(ann) and got is not None
+                  and SLOVAK_FLASH in got and got == ref, "announced %s; folders %s; blazie_files --codepage=852: %s" % (
+                      "yes" if ann else "NO", [ascii(f) for f in got] if got is not None else "NO IMAGE",
+                      "the same" if got is not None and got == ref else [ascii(f) for f in ref or []]))
+            emu.focus()
+
         if want("tns"):
             item = find(app, "radio menu item", "Type 'n Speak, English")
             if item is not None:
@@ -420,9 +503,41 @@ def run_main(exe, fw, tmp, want):
             except subprocess.TimeoutExpired:
                 code = None
             saved = sorted(f for f in os.listdir(emu.cfg) if f.endswith(".state"))
-            check("Exit: the units saved", code == 0 and "english.state" in saved, "exit %s; saved %s" % (code, saved))
+            bns_used = want("bns") and bns_present(fw)
+            check("Exit: the units saved", code == 0 and "english.state" in saved
+                  and ("bns_slovak.state" in saved or not bns_used), "exit %s; saved %s" % (code, saved))
     finally:
         emu.stop()
+
+
+def run_kind(exe, fw, tmp):
+    """The unit saved last in the settings starts, when it can; --unit takes the Braille 'n Speak 2000's names."""
+    bns = bns_present(fw)
+    r = subprocess.run([exe, "--unit", "nonesuch"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True, timeout=30)
+    check("--unit: the units named", r.returncode == 2 and "bns-en or bns-sk" in r.stdout,
+          "exit %d: %r" % (r.returncode, r.stdout.strip()[-80:]))
+    runs = [("kind-ini", [], "Braille 'n Speak 2000 (Slovak)" if bns else "Braille Lite 2000 (English)")]
+    if bns:
+        runs.append(("kind-unit", ["--unit", "bns-en"], "Braille 'n Speak 2000 (English)"))
+    for tag, extra, unit in runs:
+        cfg = os.path.join(tmp, tag + "-config")
+        os.makedirs(cfg, exist_ok=True)
+        with open(os.path.join(cfg, "blazie_emu.ini"), "w") as f:
+            f.write("[unit]\nkind = bns_slovak\n")
+        emu = Emu(exe, fw, tmp, tag, extra)
+        try:
+            label = ("--unit bns-en" if extra else "kind = bns_slovak in the settings%s" %
+                     ("" if bns else ", no Braille 'n Speak 2000 firmware"))
+            if emu.connect() is None:
+                check(label, False, "the program not on the accessibility bus")
+                continue
+            on = wait(lambda: name(emu.area()).startswith(unit + ": keyboard"), 20)
+            started = [ln for ln in emu.lines() if ln.startswith("starting ")]
+            check(label, bool(on), "%s; area %r; trace %r" % (unit if on else "NOT " + unit, name(emu.area()),
+                                                              started[:1]))
+        finally:
+            emu.stop()
 
 
 def run_held(exe, fw, tmp):
@@ -474,9 +589,11 @@ def main():
         return only is None or n in only
     tmp = tempfile.mkdtemp(prefix="blazie_emu_gtk_test.")
     try:
-        if any(want(n) for n in ("settings", "tree", "chord", "export", "menu", "dialog", "announce", "tns",
+        if any(want(n) for n in ("settings", "tree", "chord", "export", "menu", "dialog", "announce", "bns", "tns",
                                  "exit")):
             run_main(exe, fw, tmp, want)
+        if want("kind"):
+            run_kind(exe, fw, tmp)
         if want("held"):
             run_held(exe, fw, tmp)
     finally:

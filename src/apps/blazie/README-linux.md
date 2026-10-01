@@ -75,7 +75,7 @@ After a choice the menu says one line; `?` lists it again.
 in `/usr/local/bin` with a menu entry, "Blazie emulator" (Utility, Accessibility).
 
     blazie_emu_gtk                  the unit you used last
-    blazie_emu_gtk --unit tns-en    bl-en, bl-es, tns-en, tns-es
+    blazie_emu_gtk --unit tns-en    bl-en, bl-es, tns-en, tns-es, bns-en, bns-sk
     blazie_emu_gtk --no-sound       no sound card: the unit runs on silent
     blazie_emu_gtk --firmware DIR   --config DIR, as blazie_emu
 
@@ -84,7 +84,9 @@ Run one at a time (each saves its unit when it closes).
 
 **The window**, top to bottom:
 
-- **The menu bar**, the Windows app's item for item, with its mnemonics: Firmware (Alt+F: the four units, Export
+- **The menu bar**, the Windows app's item for item, with its mnemonics: Firmware (Alt+F: the four units -- six
+  when the Braille 'n Speak 2000's firmware and factory states are there; the Slovak one's file names go in and out
+  in code page 852 -- Export
   files to disk image (.img), Import files from disk image (.img), Back to the factory state, Exit), Settings (Alt+E:
   the idle channel, keep the channel open, the pop and the click, the 10 Hz tick, quick key response, Sample rate,
   Serial port: none, the serial devices present, or a pseudo-terminal), Help (Alt+H: Keys, About). Ctrl+Q exits

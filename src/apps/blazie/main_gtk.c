@@ -1,6 +1,8 @@
 /* main_gtk.c -- the GTK shell of the Blazie emulator, for a Linux desktop and its screen reader (Orca): the same unit
- * as the Windows app (emu_unit.c: the Braille Lite 2000 or the Type 'n Speak running its own firmware) in one window
- * with a menu bar, as main_win.c is on Windows (Tomi: the emulator in GTK, for Orca).
+ * as the Windows app (emu_unit.c: the Braille Lite 2000, the Braille 'n Speak 2000 or the Type 'n Speak running its
+ * own firmware) in one window with a menu bar, as main_win.c is on Windows (Tomi: the emulator in GTK, for Orca).
+ * The Braille 'n Speak 2000 (English, Slovak) is in the menu when its firmware and factory state are there, and takes
+ * the Braille Lite's keys; the Slovak unit's file names go in and out in code page 852.
  *
  * The window (README-linux.md, "The desktop app"):
  *   the menu bar -- Firmware (the units, files in and out as a disk image, the factory state, Exit), Settings (the
@@ -64,27 +66,40 @@
 #define AUTOSAVE_S 60
 #define MAX_RAM_HAS 8
 
-/* the units, as main_linux.c's: the firmware folder's layout as the repository's firmware/blazie (spanish/, tns/), or
-   all in one folder (the package's share/ssi263-speech).  state NULL: a cold start (tns_setup.h). */
+/* the units, as main_linux.c's: the firmware folder's layout as the repository's firmware/blazie (spanish/, tns/,
+   bns2000/), or all in one folder (the package's share/ssi263-speech).  state NULL: a cold start (tns_setup.h).
+   codepage: the code page of the unit's file and folder names, for files in and out (bl_files_xfer.h), as
+   main_win.c's: 850, the Slovak Braille 'n Speak 2000's 852 (its "fles subory" folder). */
 typedef struct {
     const char *name, *id;
     int kind;
     const char *firmware[2], *state[2];
     const char *saved, *ini;
+    int codepage;
 } unit_kind;
 static const unit_kind KINDS[] = {
     {"Braille Lite 2000 (English)", "bl-en", EMU_BRAILLE_LITE, {"BL2ENG.BNS", NULL}, {"bl2_2003_warm.state", NULL},
-     "english.state", "english"},
+     "english.state", "english", BLX_CP850},
     {"Braille Lite 2000 (Spanish)", "bl-es", EMU_BRAILLE_LITE, {"spanish/BL2SPA.BNS", "BL2SPA.BNS"},
-     {"spanish/bl2spa_fresh.state", "bl2spa_fresh.state"}, "spanish.state", "spanish"},
+     {"spanish/bl2spa_fresh.state", "bl2spa_fresh.state"}, "spanish.state", "spanish", BLX_CP850},
     {"Type 'n Speak (English)", "tns-en", EMU_TYPE_N_SPEAK, {"tns/TNSENG.TNS", "TNSENG.TNS"}, {NULL, NULL},
-     "tns_english.state", "tns_english"},
+     "tns_english.state", "tns_english", BLX_CP850},
     {"Type 'n Speak (Spanish)", "tns-es", EMU_TYPE_N_SPEAK, {"tns/TNSSPA.TNS", "TNSSPA.TNS"}, {NULL, NULL},
-     "tns_spanish.state", "tns_spanish"},
+     "tns_spanish.state", "tns_spanish", BLX_CP850},
+    /* the Braille 'n Speak 2000 on the Braille Lite's board (emu_unit.h emu_model), in the menu when its firmware and
+       its factory state (make_state.c) are there */
+    {"Braille 'n Speak 2000 (English)", "bns-en", EMU_BRAILLE_LITE, {"bns2000/BS03ENG.BNS", "BS03ENG.BNS"},
+     {"bns2000/bs03eng_fresh.state", "bs03eng_fresh.state"}, "bns_english.state", "bns_english", BLX_CP850},
+    {"Braille 'n Speak 2000 (Slovak)", "bns-sk", EMU_BRAILLE_LITE, {"bns2000/BS2SLL.BNS", "BS2SLL.BNS"},
+     {"bns2000/bs2sll_fresh.state", "bs2sll_fresh.state"}, "bns_slovak.state", "bns_slovak", BLX_CP852},
 };
 #define N_KINDS ((int)(sizeof KINDS / sizeof KINDS[0]))
+#define N_FIRST_KINDS 4                 /* always in the menu; the kinds after them only when they can run */
+/* the mnemonics: each letter once in the Firmware menu (GTK only moves between items sharing one): Windows' Sl&ovak
+   would share Export's o */
 static const char *const KIND_MENU[N_KINDS] = {"Braille Lite 2000, _English", "Braille Lite 2000, _Spanish",
-                                               "_Type 'n Speak, English", "Type 'n Speak, S_panish"};
+                                               "_Type 'n Speak, English", "Type 'n Speak, S_panish",
+                                               "Braille 'n Speak 2000, E_nglish", "Braille 'n Speak 2000, S_lovak"};
 static const int RATES[] = {11025, 16000, 22050, 32000, 44100, 48000};
 #define N_RATES ((int)(sizeof RATES / sizeof RATES[0]))
 static const char *const IDLE_NAMES[] = {"off", "hiss", "whine", "unit"};
@@ -299,6 +314,18 @@ static void fw_file(const char *const names[2], char *out, int cap)
         }
     if (names[0])
         snprintf(out, (size_t)cap, "%s/%s", g_fw_dir, names[0]);
+}
+
+/* a kind the menu offers: the first four always (a missing firmware is said when it is chosen); the Braille 'n Speak
+   2000 only when its firmware and its factory state are both in the firmware folder */
+static int kind_offered(int kind)
+{
+    char fw[PATH_MAX], st[PATH_MAX];
+    if (kind < N_FIRST_KINDS)
+        return 1;
+    fw_file(KINDS[kind].firmware, fw, sizeof fw);
+    fw_file(KINDS[kind].state, st, sizeof st);
+    return exists(fw) && exists(st);
 }
 
 /* --firmware, else firmware_dir in the settings, else beside the program (main_linux.c's places) */
@@ -884,7 +911,7 @@ static void export_files(void)
     saved_path(g_kind, st, sizeof st);
     if (!open_saved(st, &u, &fs)) return;
     blx_report_init(&r);
-    img = blx_export(fs, u.model, &size, &r, err, sizeof err);
+    img = blx_export_cp(fs, u.model, KINDS[g_kind].codepage, &size, &r, err, sizeof err);
     if (!img || !write_bytes(path, img, size)) {
         snprintf(msg, sizeof msg, "Could not export the files to %s: %s", path,
                  img ? "the image could not be written" : err);
@@ -940,7 +967,8 @@ static void import_files(void)
     blx_report_init(&r);
     ok = open_saved(st, &u, &fs);
     if (ok) {
-        ok = blx_import(fs, img, size, &r, err, sizeof err) && blf_check(fs, err, sizeof err);
+        ok = blx_import_cp(fs, KINDS[g_kind].codepage, img, size, &r, err, sizeof err)
+             && blf_check(fs, err, sizeof err);
         if (ok && r.deleted) {                  /* an image holding only new files would empty the unit: ask */
             char ask[3000];
             const char *line = r.log ? r.log : "";
@@ -1418,7 +1446,10 @@ static GtkWidget *make_menu(GtkAccelGroup *accel)
         g_kind_items[k] = gtk_radio_menu_item_new_with_mnemonic(group, KIND_MENU[k]);
         group = gtk_radio_menu_item_get_group(GTK_RADIO_MENU_ITEM(g_kind_items[k]));
         g_signal_connect(g_kind_items[k], "activate", G_CALLBACK(on_kind_item), GINT_TO_POINTER(k));
-        gtk_menu_shell_append(GTK_MENU_SHELL(fw), g_kind_items[k]);
+        if (kind_offered(k))
+            gtk_menu_shell_append(GTK_MENU_SHELL(fw), g_kind_items[k]);
+        else                                    /* not in the menu (a hidden item is still in the accessible tree), */
+            g_object_ref_sink(g_kind_items[k]); /* kept: g_kind names it after a --unit whose firmware is missing */
     }
     add_separator(fw);
     add_item(fw, "Exp_ort files to disk image (.img)...", G_CALLBACK(on_plain_item), (gpointer)do_export);
@@ -1582,8 +1613,10 @@ static void on_activate(GtkApplication *app, gpointer data)
 
 static void usage(void)
 {
-    printf("blazie_emu_gtk -- a Blazie Braille Lite 2000 or Type 'n Speak, running its own firmware, in a window.\n\n"
-           "  blazie_emu_gtk [--unit bl-en|bl-es|tns-en|tns-es] [--firmware DIR] [--config DIR] [--no-sound]\n"
+    printf("blazie_emu_gtk -- a Blazie Braille Lite 2000, Braille 'n Speak 2000 or Type 'n Speak, running its own\n"
+           "firmware, in a window.\n\n"
+           "  blazie_emu_gtk [--unit bl-en|bl-es|tns-en|tns-es|bns-en|bns-sk] [--firmware DIR] [--config DIR]\n"
+           "                 [--no-sound]\n"
            "  blazie_emu_gtk --help\n\n"
            "For the tests: --rate HZ, --trace FILE (the unit's level, its keys and the status lines), --ram-has TEXT\n"
            "(traced when the unit's memory first holds it).\n\n"
@@ -1656,9 +1689,11 @@ int main(int argc, char **argv)
     for (i = 0; i < N_KINDS; i++)
         if (unit_id ? !strcmp(unit_id, KINDS[i].id) : !strcmp(v, KINDS[i].ini))
             kind = i;
+    if (kind >= 0 && !unit_id && !kind_offered(kind))
+        kind = -1;                              /* the unit used last is not here now (its firmware moved): bl-en */
     if (kind < 0) {
         if (unit_id) {
-            fprintf(stderr, "blazie_emu_gtk: --unit bl-en, bl-es, tns-en or tns-es\n");
+            fprintf(stderr, "blazie_emu_gtk: --unit bl-en, bl-es, tns-en, tns-es, bns-en or bns-sk\n");
             return 2;
         }
         kind = 0;
