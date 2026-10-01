@@ -26,8 +26,9 @@ and the utterance after it, rate/pitch/voice/inflection at both ends, volume 0, 
 rates (11025, 22050, 44100), each on a new card as the driver reboots it. They also include a cancel
 mid-utterance, plain and during a capital (which sends the pitch again), followed by the next utterance. The test
 also checks the text sent for 4,000 random texts, with numbers on and off. Its controls must fail as named:
-`AM_EQUIV_BREAK=cancel` cancels one block late in C (16 of 24 identical), and `AM_EQUIV_BREAK=numbers` flips number
-processing in C (7 of 24 identical, and the random texts differ).
+`AM_EQUIV_BREAK=cancel` cancels one block late in C, and `AM_EQUIV_BREAK=numbers` flips number processing in C.
+Each control runs only the 15 cases at 22050 Hz: 11 of 15 stay identical for the cancel, 2 of 15 for numbers, and
+the random texts differ too.
 
 First results (2026-10-01): 24 of 24 utterances and 4,000 of 4,000 texts are identical. `am_render` matches
 `accent.py` run on the C chip byte for byte at 44100 and 11025, and its WAVs are bit-identical between Windows x64

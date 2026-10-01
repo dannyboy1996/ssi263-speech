@@ -8,6 +8,7 @@ during a capital, which says the pitch again) followed by a new utterance.
     python am_voice_equiv.py         # exit 1 on any difference
     AM_EQUIV_BREAK=cancel            # control: the C side cancels one block late -- the cancel cases must FAIL
     AM_EQUIV_BREAK=numbers           # control: the C side with number processing flipped -- the number cases must FAIL
+                                     # (a control runs the 15 cases at 22050 Hz only)
 
 The cancel is made deterministic on both sides: the driver's is called from its player's feed after the Nth block
 of audio (so its worker sees it before its next block, as NVDA's would land between two), and the C side calls
@@ -235,13 +236,15 @@ def main():
         time.sleep(0.05)
     if d._model != "mini":
         sys.exit("the driver's first voice is %r, not the Accent-mini" % d._model)
-    a = driver_side(CASES)
+    # a control runs the 22050 Hz cases only (both breaks show there; the suite's time is short)
+    cases = [c for c in CASES if c[9] == 22050] if BREAK else CASES
+    a = driver_side(cases)
     t1 = time.monotonic()
-    b, lib = c_side(CASES, drv_mod.DRIVER)
+    b, lib = c_side(cases, drv_mod.DRIVER)
     t2 = time.monotonic()
     d.terminate()
-    bad = compare(labels(CASES), a, b)
-    total = len(CASES)
+    bad = compare(labels(cases), a, b)
+    total = len(cases)
     print("driver %.1f s, C %.1f s" % (t1 - t0, t2 - t1))
     text_bad = text_check(lib, 4000, 1)
     print("%d of %d utterances byte-identical to the NVDA driver" % (total - bad, total))

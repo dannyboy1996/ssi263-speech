@@ -55,13 +55,14 @@ if os.path.isfile(AM_LIB):
     CHECKS.append(check("am_voice = the NVDA driver's Accent-mini, byte for byte", [PY, "am_voice_equiv.py"]))
     CHECKS.append(check("am_voice CONTROL (cancel one block late, must fail)", [PY, "am_voice_equiv.py"],
                         env={"AM_EQUIV_BREAK": "cancel"}, expect_fail=True,
-                        fail_marks=[r"^DIFF  cancel ", r"^DIFF  after-cancel ", r"^DIFF  cancel-44k ", r"^same  hello ",
-                                    r"^same  rate-44k ", r"^16 of 24 utterances byte-identical to the NVDA driver$"]))
+                        fail_marks=[r"^DIFF  cancel ", r"^DIFF  after-cancel ", r"^DIFF  cancel-capital ",
+                                    r"^same  hello ", r"^same  numbers ", r"^same  4000 of 4000 random texts",
+                                    r"^11 of 15 utterances byte-identical to the NVDA driver$"]))
     CHECKS.append(check("am_voice CONTROL (numbers flipped, must fail)", [PY, "am_voice_equiv.py"],
                         env={"AM_EQUIV_BREAK": "numbers"}, expect_fail=True,
-                        fail_marks=[r"^DIFF  numbers ", r"^DIFF  numbers-off ", r"^same  hello ", r"^same  rate-44k ",
+                        fail_marks=[r"^DIFF  numbers ", r"^DIFF  numbers-off ", r"^same  hello ",
                                     r"^DIFF  (?!4000 )\d+ of 4000 random texts give the driver's text$",
-                                    r"^7 of 24 utterances byte-identical to the NVDA driver$"]))
+                                    r"^2 of 15 utterances byte-identical to the NVDA driver$"]))
 for seed in (1, 2, 3, 4):
     CHECKS.append(check("complete_fuzz seed %d" % seed, [PY, "complete_fuzz.py", "150", str(seed)], env={"SIM_SPEED": "10"}))
 for synth in ("speakout", "accent"):
