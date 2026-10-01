@@ -62,7 +62,8 @@ static const DWORD LOG_CAP = 4u * 1024u * 1024u;
 /* Settings, per user then per machine, in "Software\\SSI-263 SAPI" (the settings dialog, settings.ps1, writes
  * this user's): Inflection (the Braille Lite's own on/off: 1 = on, the default), AccentInflection (the Accent's
  * intonation, 0 25 50 75 100 as its NVDA slider; 100 = full, the default), Whine (0 off, 1 hiss, 2 whine),
- * SampleRate (11025 / 22050 / 44100, every voice), Diagnostics (0 = off) and ReadTimeoutMs.  Each reaches the
+ * SampleRate (11025 / 22050 / 44100, every voice), RunAhead (the Braille Lite's "Run the unit ahead", EXPERIMENTAL:
+ * 0 = off, the default; 1 = on, both its voices), Diagnostics (0 = off) and ReadTimeoutMs.  Each reaches the
  * next thing spoken: a change respawns the server (host_ensure), since SAPI gives no way to reload a voice. */
 static DWORD setting_dword(const wchar_t *name, DWORD def) {
     const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
@@ -257,7 +258,7 @@ struct CsLock {
     CsLock(CRITICAL_SECTION *c):cs(c){EnterCriticalSection(cs);}
     ~CsLock(){LeaveCriticalSection(cs);}
 };
-static bool host_ensure(DWORD inflection, DWORD whine, DWORD accentInfl, DWORD rate) {
+static bool host_ensure(DWORD inflection, DWORD whine, DWORD accentInfl, DWORD rate, DWORD runAhead) {
     sweep_logs();
     std::wstring base=module_dir();
     /* The embeddable Python the installer puts beside the DLLs; either DLL bitness uses it -- the server is its
@@ -269,7 +270,8 @@ static bool host_ensure(DWORD inflection, DWORD whine, DWORD accentInfl, DWORD r
     std::wstring cmd=L"\""+py+L"\" -I \""+base+L"\\ssi_serve.py\" --serve --inflection "+
                      (inflection?L"1":L"0")+L" --whine "+whines[whine<3?whine:0]+
                      L" --accent-inflection "+std::to_wstring(accentInfl>100?100:accentInfl)+
-                     L" --rate "+std::to_wstring(valid_rate(rate));
+                     L" --rate "+std::to_wstring(valid_rate(rate))+
+                     L" --run-ahead "+(runAhead?L"1":L"0");
     if(host_alive()&&cmd==g_hostCmd)return true;
     host_drop();
     /* A megabyte of buffer each way against the four-kilobyte default: a
@@ -404,7 +406,7 @@ public:
             /* The settings SAPI's own request cannot carry, read fresh so a change in the settings dialog reaches
              * the next thing spoken (the server is replaced when they differ). */
             ok=host_ensure(setting_dword(L"Inflection",1),setting_dword(L"Whine",0),
-                           setting_dword(L"AccentInflection",100),outRate);
+                           setting_dword(L"AccentInflection",100),outRate,setting_dword(L"RunAhead",0));
             ok=ok&&exact(g_in,&req,4,true)&&exact(g_in,&seq,4,true)&&exact(g_in,&rate,4,true)&&exact(g_in,&pitch,4,true)&&exact(g_in,&volume,4,true)&&exact(g_in,&nv,4,true)&&exact(g_in,&nt,4,true)&&exact(g_in,(void*)v.data(),nv,true)&&exact(g_in,(void*)u.data(),nt,true);
             unsigned magic=0;status=-1;
             /* Response reads wait rather than block -- exact_wait watches

@@ -23,6 +23,14 @@ frames*2 bytes of 16-bit mono at the --rate (default 22050 Hz) -- and a zero fra
 `--inflection 1|0` and `--whine off|hiss|whine`: the Braille Lite's voice inflection and hiss/whine (the dialog's).
 `--rate 11025|22050|44100`: the output sample rate of every voice (the dialog's; the DLL declares the same rate).
 `--accent-inflection 0..100`: the Accent's intonation, as its NVDA slider (five steps; 100, full, by default).
+`--run-ahead 1|0`: the Braille Lite's "Run the unit ahead" (EXPERIMENTAL, off by default), as its NVDA setting: the
+unit writes the whole utterance flat out and the chip plays the script (src/csrc/blazie/run_ahead.c).  Both Braille
+Lite voices; the driver decides where it applies (short pauses on, the in-process unit, the voices it was tested on).
+
+Test hooks, never set by the engine DLL: SSI263_SAPI_WRITE_LOG=<file> appends every Braille Lite unit's say, cancel
+and SSI-263 write there (sapi/test_serve.py reads the phonemes from it), and with it SSI263_SAPI_NO_UNIT_CANCEL=1
+never cancels the unit; SSI263_SAPI_IGNORE_RUN_AHEAD=1 drops the run-ahead setting on its way to the driver.  The two
+1s are test_serve.py's must-fail controls (nvda/tools/run_tests.py).
 """
 import os
 import struct
@@ -177,19 +185,53 @@ def _install_fakes():
 _drivers = {}
 # The settings no SAPI request carries (the settings dialog, sapi/settings.ps1): the engine DLL passes them on the
 # command line and replaces this server when they change.
-OPTIONS = {"inflection": True, "whine": "off", "rate": RATE, "accent_inflection": 100}
+OPTIONS = {"inflection": True, "whine": "off", "rate": RATE, "accent_inflection": 100, "run_ahead": False}
+
+
+def _log_writes(cls, path):
+    """The test hook (SSI263_SAPI_WRITE_LOG): every unit the Braille Lite driver boots logs its says (with the unit's
+    run_ahead as it speaks), cancels and SSI-263 writes, one per line, as nvda/tools/run_ahead_driver.py observes
+    them in-process.  Only the worker thread talks to a unit, so the lines come in its order."""
+    out = open(path, "a", encoding="utf-8")
+    boot = cls._boot
+
+    def logged_boot(self, *a, **k):
+        unit = boot(self, *a, **k)
+        say, cancel = unit.say, unit.cancel
+
+        def logged_say(text, *sa, **sk):
+            out.write("say %s %s %r\n" % (getattr(unit, "voice", "?"), getattr(unit, "run_ahead", "-"), text))
+            out.flush()
+            return say(text, *sa, **sk)
+
+        def logged_cancel(*ca, **ck):
+            out.write("cancel\n")
+            out.flush()
+            if os.environ.get("SSI263_SAPI_NO_UNIT_CANCEL") == "1":      # a control: the unit runs on
+                return 0.0
+            return cancel(*ca, **ck)
+        unit.say, unit.cancel = logged_say, logged_cancel
+        if hasattr(type(unit), "on_write"):
+            unit.on_write = lambda t, reg, val: (out.write("w %d %d\n" % (reg, val)), out.flush())
+        return unit
+    cls._boot = logged_boot
 
 
 def driver(module):
     """One resident driver per add-on, made on first use, with the dialog's settings."""
     if module not in _drivers:
-        d = importlib.import_module("synthDrivers." + module).SynthDriver()
+        mod = importlib.import_module("synthDrivers." + module)
+        if module == "blazie" and os.environ.get("SSI263_SAPI_WRITE_LOG"):
+            _log_writes(mod.SynthDriver, os.environ["SSI263_SAPI_WRITE_LOG"])
+        d = mod.SynthDriver()
         d._set_sampleRate(str(OPTIONS["rate"]))       # every driver: the rate the DLL declared to SAPI
         if module == "accentmini":
             d._set_inflection(OPTIONS["accent_inflection"])     # its NVDA slider's 0-100 (five steps)
         if module == "blazie":
             d._set_voiceInflection(OPTIONS["inflection"])
             d._set_whine(OPTIONS["whine"])
+            if hasattr(d, "_set_runAhead") and os.environ.get("SSI263_SAPI_IGNORE_RUN_AHEAD") != "1":   # 1: a control
+                d._set_runAhead(OPTIONS["run_ahead"])     # applied by the driver at each utterance, for both voices
             # never the open channel after speech: SAPI gives the engine its next text only after this utterance's
             # stream ends, so the idle hiss would hold every queued utterance back by up to ~10 s (the driver's
             # tail would feed on and this server would wait for it: a response ends 0.12 s after the last feed)
@@ -248,6 +290,8 @@ def main():
             OPTIONS["rate"] = int(args[k + 1])
         elif args[k] == "--accent-inflection" and args[k + 1].isdigit():
             OPTIONS["accent_inflection"] = max(0, min(100, int(args[k + 1])))
+        elif args[k] == "--run-ahead":
+            OPTIONS["run_ahead"] = args[k + 1] in ("1", "on", "true")
     done_evt = _install_fakes()
     if "--list" in args:
         try:

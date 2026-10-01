@@ -1,5 +1,7 @@
 # The settings dialog's values reach the voices through SAPI: the Braille Lite speaks the same line with the
-# defaults, the defaults again (the control: identical), inflection off and the whine on (each must differ); the
+# defaults, the defaults again (the control: identical), inflection off, the whine on and "run the unit ahead" (each
+# must differ: run ahead keeps the phonemes and changes the timing, sapi/test_serve.py; the English and the Spanish
+# voice both); the
 # Accent with its inflection at 0 (must differ from its default); and every sample rate (the WAV SAPI writes carries
 # that rate and lasts as long as the default's), with the diagnostic log on for the timing.  This user's settings
 # are put back as they were afterwards.
@@ -8,18 +10,18 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $key = 'HKCU:\Software\SSI-263 SAPI'
-$names = @('Inflection', 'Whine', 'Diagnostics', 'AccentInflection', 'SampleRate')
+$names = @('Inflection', 'Whine', 'Diagnostics', 'AccentInflection', 'SampleRate', 'RunAhead')
 $saved = @{}
 if (Test-Path $key) { foreach ($n in $names) { try { $saved[$n] = (Get-ItemProperty $key -Name $n -ErrorAction Stop).$n } catch {} } }
 New-Item -Path $key -Force | Out-Null
 function Set-S([string]$n, [int]$v) { New-ItemProperty -Path $key -Name $n -Value $v -PropertyType DWord -Force | Out-Null }
 $log = Join-Path $env:TEMP 'ssi263_sapi.log'
 if (Test-Path $log) { Remove-Item $log }
-function Say([string]$tag, [string]$voice = 'Braille Lite 2000 (June 2003)') {
+function Say([string]$tag, [string]$voice = 'Braille Lite 2000 (June 2003)', [string]$text = 'Is it ready?') {
     $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
     $s.SelectVoice($voice)
     $wav = Join-Path $env:TEMP "sapi_setting_$tag.wav"
-    $s.SetOutputToWaveFile($wav); $s.Speak('Is it ready?'); $s.SetOutputToNull(); $s.Dispose()
+    $s.SetOutputToWaveFile($wav); $s.Speak($text); $s.SetOutputToNull(); $s.Dispose()
     [System.IO.File]::ReadAllBytes($wav)
 }
 function Same($a, $b) { if ($a.Length -ne $b.Length) { return $false }; for ($i = 0; $i -lt $a.Length; $i++) { if ($a[$i] -ne $b[$i]) { return $false } }; $true }
@@ -45,6 +47,16 @@ try {
     Set-S 'Inflection' 1; Set-S 'Whine' 2
     $whine = Say 'whine'
     Set-S 'Whine' 0
+    $spanish = 'Braille Lite 2000 (espa' + [char]0x00F1 + 'ol)'     # this file stays ASCII (PowerShell 5.1 reads it as ANSI)
+    $esText = 'Hola, como estas?'
+    # run ahead: each voice's first utterance on a fresh server (the Whine change above respawns it), against its
+    # default, also its first on a fresh server -- so a setting the DLL dropped compares like with like and fails
+    Set-S 'RunAhead' 1
+    $ahead = Say 'run_ahead'
+    $esAhead = Say 'es_run_ahead' $spanish $esText
+    Set-S 'RunAhead' 0
+    Set-S 'Whine' 1; $null = Say 'toggle_es'; Set-S 'Whine' 0
+    $esDefault = Say 'es_default' $spanish $esText
     $accent = Say 'accent_default' 'Accent-mini'
     Set-S 'AccentInflection' 0
     $accentFlat = Say 'accent_inflection0' 'Accent-mini'
@@ -55,6 +67,8 @@ try {
     $checks = @(@('the same settings twice give identical audio', (Same $default $again)),
                 @('inflection off changes the sound', -not (Same $default $flat)),
                 @('the whine changes the sound', -not (Same $default $whine)),
+                @('run ahead changes the Braille Lite''s sound (English)', -not (Same $default $ahead)),
+                @('run ahead changes the Braille Lite''s sound (Spanish)', -not (Same $esDefault $esAhead)),
                 @('the Accent''s inflection 0 changes its sound', -not (Same $accent $accentFlat)))
     # System.Speech writes its WAV in its own default format and converts what the engine gives it, so the file's
     # header cannot show the engine's rate.  Two checks instead: the engine's own log (the last three utterances)

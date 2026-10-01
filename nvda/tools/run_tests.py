@@ -126,7 +126,27 @@ CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
-CHECKS.append(check("SAPI pipe server", [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_serve.py")]))
+SAPI_SERVE_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_serve.py")
+CHECKS.append(check("SAPI pipe server", [PY, SAPI_SERVE_TEST]))
+# its run-ahead checks (the dialog's "Run the unit ahead"): the setting dropped on its way to the driver must fail the
+# "reaches the unit" and "changes the audio" checks; the unit never cancelled must fail the cancel checks (the
+# cancelled text runs on into the next line)
+if os.path.isdir(os.path.join(os.path.dirname(HERE), "dist", "blazie-build")):
+    CHECKS.append(check("SAPI pipe server run ahead CONTROL (the setting dropped, must fail)",
+                        [PY, SAPI_SERVE_TEST, "--run-ahead-only"], env={"SSI263_SAPI_IGNORE_RUN_AHEAD": "1"},
+                        expect_fail=True,
+                        fail_marks=[r"^FAIL run ahead reaches the Braille Lite unit: run_ahead 0 at its says",
+                                    r"^FAIL blazie:blazie +run ahead changes the audio",
+                                    r"^FAIL blazie:blazie_es +run ahead changes the audio",
+                                    r"^serve \(run ahead only\): 3 FAILED$"]))
+    CHECKS.append(check("SAPI pipe server run ahead CONTROL (the unit never cancelled, must fail)",
+                        [PY, SAPI_SERVE_TEST, "--run-ahead-only"], env={"SSI263_SAPI_NO_UNIT_CANCEL": "1"},
+                        expect_fail=True,
+                        fail_marks=[r"^FAIL blazie:blazie +run ahead, cancel .* its phonemes NOT its own",
+                                    r"^FAIL blazie:blazie_es +run ahead, cancel .* its phonemes NOT its own",
+                                    # 2 or more: how much of the cancelled line runs on depends on the load, so its
+                                    # phonemes with and without run ahead can differ too
+                                    r"^serve \(run ahead only\): \d+ FAILED$"]))
 # the golden vectors: every SSI-263 write with its time, the serial output and the audio hash of a fixed scenario, on
 # MAME's Z180 (0.7).  Two hosts, two baselines: the in-process host (bl.dll, the add-on's) has the lockstep cancel
 # protection on by default (blazie_{en,es}.txt, Astra's Replies 124-128); the pipe host (bns_live.exe / bl_live.exe,

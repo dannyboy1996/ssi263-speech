@@ -1,8 +1,11 @@
 """The SAPI pipe server (ssi_serve.py) as the DLL drives it: every voice --list offers speaks voiced audio, and a
 cancel mid-utterance keeps the stream in step -- the cancelled response still ends with its terminator, and the
-next utterance comes out whole (as long as when spoken on its own, within 10 %).
+next utterance comes out whole (as long as when spoken on its own, within 10 %).  And the same with the Braille
+Lite's "Run the unit ahead" on (--run-ahead 1), against it off: the same phonemes in every Braille Lite line, from
+the server's write log (SSI263_SAPI_WRITE_LOG), nothing of a cancelled line at the next one's head, and the setting
+reaching the unit.
 
-    python sapi/test_serve.py [python.exe]        # default: this interpreter, against nvda/dist's built add-ons
+    python sapi/test_serve.py [python.exe] [--run-ahead-only]   # default: this interpreter, nvda/dist's add-ons
 """
 import os
 import struct
@@ -12,7 +15,9 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PY = sys.argv[1] if len(sys.argv) > 1 else sys.executable
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+ONLY_RUN_AHEAD = "--run-ahead-only" in sys.argv[1:]     # run_tests.py's must-fail control runs only that part
+PY = ARGS[0] if ARGS else sys.executable
 SERVE = os.environ.get("SSI_SERVE", os.path.join(HERE, "ssi_serve.py"))   # a staged copy: nvda/dist/sapi/ssi_serve.py
 RATE = 22050
 REQ, RSP, CANCEL = 0x4F535034, 0x4F535052, 0x4F535043
@@ -24,9 +29,12 @@ def voices():
 
 
 class Client:
-    def __init__(self, extra=()):
+    def __init__(self, extra=(), write_log=None):
+        env = dict(os.environ)
+        if write_log:
+            env["SSI263_SAPI_WRITE_LOG"] = write_log      # the server's test hook: the Braille Lite's writes
         self.p = subprocess.Popen([PY, SERVE, "--serve"] + list(extra), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.DEVNULL)
+                                  stderr=subprocess.DEVNULL, env=env)
         self.seq = 0
 
     def exact(self, n):
@@ -73,15 +81,148 @@ def voiced(pcm):
     return len(a) and (sum(x * x for x in a[::4]) / max(1, len(a[::4]))) ** 0.5 > 300
 
 
+def utterances(path):
+    """[[voice, run_ahead, text, phonemes]]: each Braille Lite say in the server's write log (SSI263_SAPI_WRITE_LOG),
+    with the phonemes spoken from it up to the next say or cancel -- run_ahead_driver.py's reading: a register-0
+    write while the control register's bit 7 is clear, its code not a pause."""
+    out, cur, ctrl = [], None, 0
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            parts = ln.rstrip("\n").split(" ", 3)
+            if parts[0] == "say":
+                cur = [parts[1], parts[2], parts[3], []]
+                out.append(cur)
+            elif parts[0] == "cancel":
+                cur = None
+            elif parts[0] == "w":
+                reg, val = int(parts[1]), int(parts[2])
+                if reg == 3:
+                    ctrl = val
+                elif reg == 0 and cur is not None and not ctrl & 0x80 and val & 0x3F:
+                    cur[3].append(val & 0x3F)
+    return out
+
+
+def line_for(lang):
+    return "Hola, ¿cómo estás?" if lang == "es" else "Hello, how are you??"
+
+
+# the run-ahead session's Braille Lite lines: a short one, said whole, then again after a long one cancelled mid-way
+RA_TEXTS = {"en": ("OK button", "This sentence is long enough to be cancelled somewhere in the middle of it, surely."),
+            "es": ("Botón aceptar", "Esta frase es bastante larga para cortarla en algún lugar de la mitad, seguro.")}
+
+
+def run_ahead_session(extra, log):
+    """The same requests with the setting on or off: every voice's line, then for each Braille Lite voice the short
+    line, the long one cancelled 0.3 s in, and the short one again.  Returns the responses by (voice, part), the
+    Braille Lite's utterances from the write log, and what each of those was."""
+    heard, parts = {}, []
+    c = Client(extra, log)
+    try:
+        for vid, _name, lang in vs:
+            c.send(vid, line_for(lang))
+            heard[vid, "line"] = c.response()
+            if vid.startswith("blazie:"):
+                parts.append((vid, "line"))
+        for vid, _name, lang in vs:
+            if not vid.startswith("blazie:"):
+                continue
+            short, long_ = RA_TEXTS["es" if lang == "es" else "en"]
+            c.send(vid, short)
+            heard[vid, "whole"] = c.response()
+            seq = c.send(vid, long_)
+            fired = []
+
+            def chunk(n, seq=seq, fired=fired):
+                if not fired and n > RATE * 0.3:
+                    fired.append(n)
+                    threading.Thread(target=c.cancel, args=(seq,)).start()
+            heard[vid, "cut"] = c.response(chunk)
+            heard[vid, "fired"] = fired
+            c.send(vid, short)
+            heard[vid, "after"] = c.response()
+            parts += [(vid, "whole"), (vid, "cut"), (vid, "after")]
+    finally:
+        c.close()
+    return heard, utterances(log), parts
+
+
+def run_ahead_checks():
+    """The Braille Lite's "Run the unit ahead" (--run-ahead 1, the dialog's; EXPERIMENTAL, off by default): every voice
+    still speaks whole lines, each Braille Lite line spoken with the same phonemes as with the setting off (the timing
+    may differ), a cancel mid-utterance keeps the stream in step with nothing of the cancelled text at the head of the
+    next, and the setting reaches the unit: run_ahead 1 at every Braille Lite say, 0 without the flag (its control,
+    SSI263_SAPI_IGNORE_RUN_AHEAD=1 in the server, must fail that)."""
+    import shutil
+    import tempfile
+    nbad = 0
+    tmp = tempfile.mkdtemp(prefix="ssi_serve_ra_")
+    try:
+        on, on_utts, parts = run_ahead_session(["--run-ahead", "1"], os.path.join(tmp, "on.log"))
+        off, off_utts, _parts = run_ahead_session([], os.path.join(tmp, "off.log"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    for vid, _name, _lang in vs:
+        (s1, p1), (_s0, p0) = on[vid, "line"], off[vid, "line"]
+        ok = s1 == 0 and voiced(p1)
+        nbad += not ok
+        print("%-4s %-22s run ahead: %.2f s of audio (off: %.2f s)" % ("ok" if ok else "FAIL", vid,
+                                                                       len(p1) / 2 / RATE, len(p0) / 2 / RATE))
+    # the write logs, utterance by utterance, against what was asked
+    whole = len(on_utts) == len(parts) == len(off_utts) and \
+        all(u[0] == vid.split(":")[1] for u, (vid, _p) in zip(on_utts, parts))
+    nbad += not whole
+    print("%-4s the write logs hold one say per Braille Lite request (%d with run ahead, %d without, %d asked)" % (
+        "ok" if whole else "FAIL", len(on_utts), len(off_utts), len(parts)))
+    if not whole:
+        return nbad
+    by = {p: (u, v) for p, u, v in zip(parts, on_utts, off_utts)}
+    for vid in sorted({v for v, _p in parts}):
+        for part in ("line", "whole", "after"):
+            (u, v) = by[vid, part]
+            ok = bool(u[3]) and u[3] == v[3]
+            nbad += not ok
+            print("%-4s %-22s %-5s the same %d phonemes with run ahead as without%s" % (
+                "ok" if ok else "FAIL", vid, part, len(v[3]), "" if ok else ": %s against %s" % (u[3][:8], v[3][:8])))
+        # the cancel: the cancelled response ends in step, the next line whole, nothing of the cancelled one in it
+        (_sw, pw), (_sa, pa), fired = on[vid, "whole"], on[vid, "after"], on[vid, "fired"]
+        same = by[vid, "after"][0][3] == by[vid, "whole"][0][3]
+        ok = bool(fired) and same and voiced(pa) and abs(len(pa) - len(pw)) <= 0.1 * len(pw)
+        nbad += not ok
+        print("%-4s %-22s run ahead, cancel after %.2f s (%d phonemes spoken): the next line %.2f s (alone %.2f s), "
+              "its phonemes %s" % ("ok" if ok else "FAIL", vid, (fired[0] if fired else 0) / RATE,
+                                   len(by[vid, "cut"][0][3]), len(pa) / 2 / RATE, len(pw) / 2 / RATE,
+                                   "its own" if same else "NOT its own: %s" % by[vid, "after"][0][3][:8]))
+    # the setting reaches the unit, and is off by default
+    ahead = sorted({u[1] for u in on_utts})
+    plain = sorted({u[1] for u in off_utts})
+    ok = ahead == ["1"] and plain == ["0"]
+    nbad += not ok
+    print("%-4s run ahead reaches the Braille Lite unit: run_ahead %s at its says with --run-ahead 1, %s without" % (
+        "ok" if ok else "FAIL", "/".join(ahead), "/".join(plain)))
+    # ... and is heard: its timing differs from the lockstep's (the same phonemes, above), which is all SAPI itself
+    # can see (test_sapi_settings.ps1)
+    for vid in sorted({v for v, _p in parts}):
+        ok = on[vid, "line"][1] != off[vid, "line"][1]
+        nbad += not ok
+        print("%-4s %-22s run ahead changes the audio (%d samples, lockstep %d)" % (
+            "ok" if ok else "FAIL", vid, len(on[vid, "line"][1]) // 2, len(off[vid, "line"][1]) // 2))
+    return nbad
+
+
 bad = 0
 vs = voices()
 print("voices: %s" % ", ".join(v[0] for v in vs))
+if any(v[0].startswith("blazie:") for v in vs):
+    bad += run_ahead_checks()
+if ONLY_RUN_AHEAD:
+    print("serve (run ahead only): %s" % ("ok" if not bad else "%d FAILED" % bad))
+    sys.exit(1 if bad else 0)
 c = Client()
 try:
     for vid, name, lang in vs:
-        text = "Hola, ¿cómo estás?" if lang == "es" else "Hello, how are you??"
         t0 = time.perf_counter()
-        c.send(vid, text)
+        c.send(vid, line_for(lang))
         status, pcm = c.response()
         ok = status == 0 and voiced(pcm)
         bad += not ok
