@@ -135,8 +135,9 @@ audio_out *audio_open(const char *device, int rate, int block, int blocks, char 
     at.prebuf = (uint32_t)-1;
     at.minreq = (uint32_t)(block * 2);
     at.fragsize = (uint32_t)-1;
-    a->s = pa_simple_new(NULL, "Blazie emulator", PA_STREAM_PLAYBACK, device && *device ? device : NULL, "unit", &ss,
-                         NULL, &at, &e);
+    if (device && (!*device || !strcmp(device, "default")))
+        device = NULL;                          /* the server's default sink (ALSA's name for it is not a sink's) */
+    a->s = pa_simple_new(NULL, "Blazie emulator", PA_STREAM_PLAYBACK, device, "unit", &ss, NULL, &at, &e);
     if (!a->s) {
         snprintf(err, errlen, "could not open the sound server: %s", pa_strerror(e));
         free(a);
