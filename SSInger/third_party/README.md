@@ -16,12 +16,17 @@ that goes into an SSInger binary, and every tool that only checks one.
 | LV2 headers, and serd / sord / sratom / lilv (inside JUCE: `.../format_types/LV2_SDK`) | as bundled by JUCE 9.0.3 | ISC | LV2 |
 | [clap-juce-extensions](https://github.com/free-audio/clap-juce-extensions) | commit `55525c98` (2026-09-12, JUCE 9 support) | MIT | CLAP |
 | [CLAP](https://github.com/free-audio/clap) and [clap-helpers](https://github.com/free-audio/clap-helpers) (submodules of clap-juce-extensions) | as pinned by that commit | MIT | CLAP |
-| JUCE's own bundled libraries that SSInger's modules compile in: zlib (zlib), libpng (PNG Reference Library v2), HarfBuzz (Old MIT), SheenBidi (Apache-2.0), lunasvg + plutovg (MIT), libwebp (BSD-3-Clause), FLAC / Ogg / Vorbis / Opus (BSD-3-Clause) | as bundled by JUCE 9.0.3 | as listed | all |
+| JUCE's own bundled libraries that SSInger's modules compile in: zlib (zlib), libpng (PNG Reference Library v2), the Independent JPEG Group's jpeglib (IJG), HarfBuzz (Old MIT), SheenBidi (Apache-2.0), lunasvg + plutovg (MIT), libwebp (BSD-3-Clause), FLAC / Ogg / Vorbis / Opus / opusfile / libopusenc (BSD-3-Clause), PreSonus's pslextensions headers (public domain, VST3) | as bundled by JUCE 9.0.3 | as listed | all |
 
 JUCE keeps a complete, versioned inventory of its bundled dependencies in
 `JUCE.spdx.json` at the root of the fetched JUCE tree
 (`build/<dir>/_deps/juce-src/`). JUCE's ASIO support (Windows) is off, so
 Steinberg's ASIO SDK is not compiled in.
+
+Every release download carries these notices: `licenses/` beside the
+bundles, copied from the fetched trees by `../packaging/release.py`, with
+`licenses/THIRD-PARTY-NOTICES.txt` as the index (this file ships there as
+`licenses/README.md`), and `SOURCE.txt` naming the commit built.
 
 Not used: the AAX SDK that JUCE also ships (no AAX target: BUILD.md, "Not
 built: AAX"); JUCE's web browser and curl (turned off).
