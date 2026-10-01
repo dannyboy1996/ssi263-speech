@@ -21,6 +21,23 @@ including the channel left open (hiss or whine) until the firmware clicks it off
 | `test_idle.c` | The idle channel against Tomi's unit (the noise's level at volumes 1, 6 and 15, keep open off/until/always, the pop, the click-off, the tick); `--break=...` puts one bug back for run_tests' must-fail controls. |
 | `test_serial.c` | The serial port plugged in, headless: the storage handshake answered from the far end, on every unit (below); built with the receive path cut, it must fail. |
 | `test_serial_win.c` | `serial_win.c` end to end, a named pipe standing in for the COM port and this program for WinDisk; built with the receive path cut, it must fail. |
+| `tns_keys.h` | The Type 'n Speak's key codes by key name: the one table `tns_keymap_win.c` and `tns_term.c` both read. Portable. |
+
+The Linux shell (`README-linux.md`: build, keys, sound, the BTSpeak):
+
+| File | What it does |
+| --- | --- |
+| `main_linux.c` | The terminal shell: the menu (F11), the settings and memory in `~/.config/ssi263-speech/blazie-emu`, the sound thread, headless runs for the tests. |
+| `keys.h`, `keys.c` | A key as the shells see it (a character or a named key, pressed, down or up) and the key names of the settings file. Portable. |
+| `term_keys.h`, `.c` | A terminal's bytes as keys: xterm, VTE and the Linux console's sequences, Alt as ESC. Portable. |
+| `bl_keys.h`, `.c` | The Braille Lite's chords from keys: keys mode (by time), letters mode (computer braille, the BTSpeak), an input device's keys down and up, the hold key. Portable. |
+| `tns_term.h`, `.c` | Keys as the Type 'n Speak's key events, a terminal's whole strokes with their modifiers. Portable. |
+| `ini.h`, `ini.c` | The settings file, read and written back with the person's own lines kept. Portable. |
+| `audio_linux.h`, `.c` | The sound card: ALSA (or PulseAudio's simple API), small blocks, the writes pacing the unit. |
+| `evdev_linux.h`, `.c` | The keyboard from `/dev/input`: keys down and up, grabbed while the program runs. |
+| `serial_linux.h`, `.c` | The unit's serial port on a tty or a pseudo-terminal. |
+| `test_keys.c` | The keyboard without a unit; `BLAZIE_KEYS_BREAK=1` must fail. |
+| `test_emu_linux.py` | The whole program headless, and its serial port end to end in a pseudo-terminal. |
 
 ## Keys
 
@@ -175,4 +192,4 @@ part of the program.
 
 ## Not yet
 
-- Linux and Android shells (the portable files are ready for them; the serial port would be a tty there).
+- An Android shell (the portable files are ready for it). The Linux shell is `main_linux.c` (`README-linux.md`).

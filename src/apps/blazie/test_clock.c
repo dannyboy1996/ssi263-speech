@@ -18,7 +18,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <process.h>
+#else
+#include <unistd.h>
+#define _getpid getpid
+#endif
 #include "emu_unit.h"
 #include "../../csrc/blazie/bl_board.h"   /* bl_keys_break */
 

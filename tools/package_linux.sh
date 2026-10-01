@@ -27,6 +27,24 @@ cp "$FW/BL2ENG.BNS" "$FW/bl2_2003_warm.state" "$STAGE/share/ssi263-speech/"
 if [ -f "$FW/BL2SPA.BNS" ] && [ -f "$FW/bl2spa_fresh.state" ]; then
     cp "$FW/BL2SPA.BNS" "$FW/bl2spa_fresh.state" "$STAGE/share/ssi263-speech/"
 fi
+# the Blazie emulator (src/apps/blazie/README-linux.md): bin/blazie_emu finds the firmware in ../share/ssi263-speech,
+# the Type 'n Speak's in its tns folder (from the firmware folder's tns/, or beside the Braille Lite's)
+if [ -f "$ROOT/build/linux/blazie_emu" ]; then
+    cp "$ROOT/build/linux/blazie_emu" "$STAGE/bin/"
+    chmod +x "$STAGE/bin/blazie_emu"
+    cp "$ROOT/src/apps/blazie/README-linux.md" "$STAGE/README-blazie-emu.md"
+    for t in TNSENG.TNS TNSSPA.TNS; do
+        for src in "$FW/tns/$t" "$FW/$t"; do
+            if [ -f "$src" ]; then
+                mkdir -p "$STAGE/share/ssi263-speech/tns"
+                cp "$src" "$STAGE/share/ssi263-speech/tns/"
+                break
+            fi
+        done
+    done
+else
+    echo "note: build/linux/blazie_emu not built, so not packaged"
+fi
 cat > "$STAGE/share/ssi263-speech/speech-dispatcher/ssi263.conf" <<'EOF'
 # The Braille Lite 2000 voice (sd_ssi263): the unit's own firmware speaking through an emulated SSI-263.
 #

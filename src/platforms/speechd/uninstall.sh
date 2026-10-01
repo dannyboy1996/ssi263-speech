@@ -1,6 +1,7 @@
 #!/bin/sh
-# Remove what install.sh added: the module, its settings, the firmware folder and the library, and the voice's lines
-# in speechd.conf (a DefaultModule install.sh commented out is restored).
+# Remove what install.sh added: the module, its settings, the firmware folder, the library and the Blazie emulator,
+# and the voice's lines in speechd.conf (a DefaultModule install.sh commented out is restored).  The emulator's own
+# settings and units' memory (~/.config/ssi263-speech/blazie-emu) are the user's and stay.
 #
 #   sudo ./uninstall.sh            (PREFIX as at install time)
 set -e
@@ -19,6 +20,6 @@ for CONF in "$USER_HOME/.config/speech-dispatcher/speechd.conf" /etc/speech-disp
     fi
     rm -f "$(dirname "$CONF")/modules/ssi263.conf"
 done
-rm -f /usr/lib/speech-dispatcher-modules/sd_ssi263 "$PREFIX/lib/libssi263speech.so"
+rm -f /usr/lib/speech-dispatcher-modules/sd_ssi263 "$PREFIX/lib/libssi263speech.so" "$PREFIX/bin/blazie_emu"
 rm -rf "$PREFIX/share/ssi263-speech"
 echo "Removed.  Restart speech-dispatcher: killall speech-dispatcher"
