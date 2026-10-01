@@ -21,7 +21,7 @@ copier from resuming).
 
 This check runs the DEFAULT, as the driver gets it (no override): every retained cancel time must respeak exactly
 the reference -- the respoken text said alone after the same history.  The 1.040 and 1.050 s leaks of the z180emu
-core (the 0.6 add-on's) are kept as times too: clean on both.
+core (the 0.6 add-on's) are kept as times too: on MAME they are clean with and without the fix.
 
     python lockstep_cancel.py
     SSI263_BLAZIE_CANCEL_SETTLE=0   the control (hosts/native_blazie.py's override): the race put back.  Every MAME
