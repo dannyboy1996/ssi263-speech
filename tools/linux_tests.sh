@@ -246,6 +246,18 @@ control "no-BNS CONTROL (a package with the Braille 'n Speak 2000's firmware, mu
     "^FAIL Braille 'n Speak 2000 firmware in the package: pkg/share/ssi263-speech/bns2000/BS03ENG\.BNS$" \
     "^no-BNS check: FAILED$" -- no_bns build/audit/bns-control.tar.gz
 check "package" sh tools/package_linux.sh "$DATA"
+# Every voice on every platform (Tomi: a green suite that hides a broken integration is worse than a red one): voices.c's
+# voices by id, here from the built module (sd_ssi263 --voices) and the package's ssi263.conf just made (the Braille
+# Lite's SSI263RunAhead and SSI263BrailleLiteNumbers), and Android from its sources; NVDA and SAPI are Windows's
+# (nvda/tools/run_tests.py requires them) and say "skip" here.  The control drops one Linux cell and must name it.
+check "uniform: every voice on Linux and Android" python3 tools/check_uniform.py --require linux,android \
+    --sd-binary build/linux/sd_ssi263
+control "uniform CONTROL (Linux lacks the Spanish Braille Lite, must fail)" \
+    "^Braille Lite 2000 \(espa.ol\) +skip +skip +NO +yes +$" \
+    "^MISSING  Braille Lite 2000 \(espa.ol\) \[blazie:blazie_es\] on Linux$" \
+    "^gap +Linux: [0-9]+ of [0-9]+ voices, from build/linux/sd_ssi263 --voices" "^ok +Android: " "^uniform: 1 gap$" \
+    -- env SSI263_UNIFORM_DROP=linux:blazie:blazie_es python3 tools/check_uniform.py --require linux,android \
+    --sd-binary build/linux/sd_ssi263
 check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
     --out build/audit
 check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \

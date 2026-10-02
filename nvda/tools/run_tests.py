@@ -167,6 +167,27 @@ CHECKS.append(check("run_tests control judgement", [PY, "run_tests_guard.py"]))
 CHECKS.append(check("slider_fuzz", [PY, "slider_fuzz.py", "150", "7"], env={"SIM_SPEED": "10"}))
 CHECKS.append(check("cut_test", [PY, "cut_test.py"], env={"CUTS": "0.1", "CUT_REPS": "2"},
                     ok=lambda out: re.search(r"tail bug in 0 of", out) is not None))
+# Every voice on every platform (Tomi: a green suite that hides a broken integration is worse than a red one -- 0.7.0
+# passed while Linux and Android lacked three voices): voices.c's voices, by id, on NVDA (the built add-ons' drivers),
+# SAPI (the stage's voices.txt and ssi263speech.dll), Linux (sd_voices.c and build_linux.sh's engines; the binary on
+# Linux, tools/linux_tests.sh) and Android (SsiEngine.kt through ssa_engine.c and build_android.sh's engines), and the
+# Braille Lite's run ahead and number words on each.  Every platform is required here: the add-ons and the SAPI stage
+# are built for this suite, the Linux and Android sides read from their sources.  Each control drops one cell from one
+# platform's discovered list and must fail naming exactly that cell.
+UNIFORM = [PY, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "check_uniform.py"),
+           "--require", "nvda,sapi,linux,android"]
+CHECKS.append(check("uniform: every voice on every platform", UNIFORM))
+CHECKS.append(check("uniform CONTROL (Android lacks the Speak-Out, must fail)", UNIFORM,
+                    env={"SSI263_UNIFORM_DROP": "android:speakout:speakout"}, expect_fail=True,
+                    fail_marks=[r"^Speak-Out +yes +yes +yes +NO +$",
+                                r"^MISSING  Speak-Out \[speakout:speakout\] on Android$",
+                                r"^ok +NVDA: (\d+) of \1 voices", r"^gap +Android: (\d+) of (?!\1)\d+ voices",
+                                r"^uniform: 1 gap$"]))
+CHECKS.append(check("uniform CONTROL (Linux lacks the Spanish number words, must fail)", UNIFORM,
+                    env={"SSI263_UNIFORM_DROP": "linux:blazie:blazie_es:numbers"}, expect_fail=True,
+                    fail_marks=[r"^  number words: Braille Lite 2000 \(espa.ol\) +yes +yes +NO +yes +$",
+                                r"^MISSING  number words for Braille Lite 2000 \(espa.ol\) \[blazie:blazie_es\] on "
+                                r"Linux: dropped by SSI263_UNIFORM_DROP$", r"^uniform: 1 gap$"]))
 SAPI_SERVE_TEST = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sapi", "test_serve.py")
 CHECKS.append(check("SAPI pipe server", [PY, SAPI_SERVE_TEST]))
 # The three SAPI tests' reference server runs 0.7.0's Python drivers (legacy_drivers.py), not nvda/dist's, which since
