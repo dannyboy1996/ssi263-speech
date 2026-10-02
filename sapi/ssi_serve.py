@@ -29,6 +29,8 @@ loaded outside Windows and Python (sapi/reference_drivers.py checks the tests' r
 `--run-ahead 1|0`: the Braille Lite's "Run the unit ahead" (EXPERIMENTAL, off by default), as its NVDA setting: the
 unit writes the whole utterance flat out and the chip plays the script (src/csrc/blazie/run_ahead.c).  Both Braille
 Lite voices; the driver decides where it applies (short pauses on, the in-process unit, the voices it was tested on).
+`--bl-numbers 1|0`: the Braille Lite's "Read numbers as words" (on by default), its NVDA driver's numberWords ("Custom
+number processing"): both its voices; the Accents keep their own driver's default.
 
 Test hooks, never set by the engine DLL: SSI263_SAPI_DRIVERS=<folder> takes the drivers from <folder>/<add-on>-build/
 synthDrivers instead (the SAPI tests point it at nvda/tools/legacy_drivers.py's 0.7.0 drivers: since 0.7.5 nvda/dist
@@ -218,7 +220,8 @@ def _install_fakes():
 _drivers = {}
 # The settings no SAPI request carries (the settings dialog, sapi/settings.ps1): the engine DLL passes them on the
 # command line and replaces this server when they change.
-OPTIONS = {"inflection": True, "whine": "off", "rate": RATE, "accent_inflection": 100, "run_ahead": False}
+OPTIONS = {"inflection": True, "whine": "off", "rate": RATE, "accent_inflection": 100, "run_ahead": False,
+           "bl_numbers": None}     # None: the driver's own default (numberWords on), never set
 
 
 def _log_writes(cls, path):
@@ -265,6 +268,8 @@ def driver(module):
             d._set_whine(OPTIONS["whine"])
             if hasattr(d, "_set_runAhead") and os.environ.get("SSI263_SAPI_IGNORE_RUN_AHEAD") != "1":   # 1: a control
                 d._set_runAhead(OPTIONS["run_ahead"])     # applied by the driver at each utterance, for both voices
+            if OPTIONS["bl_numbers"] is not None:
+                d._set_numberWords(OPTIONS["bl_numbers"])  # read by the driver at each utterance, for both voices
             # never the open channel after speech: SAPI gives the engine its next text only after this utterance's
             # stream ends, so the idle hiss would hold every queued utterance back by up to ~10 s (the driver's
             # tail would feed on and this server would wait for it: a response ends 0.12 s after the last feed)
@@ -325,6 +330,8 @@ def main():
             OPTIONS["accent_inflection"] = max(0, min(100, int(args[k + 1])))
         elif args[k] == "--run-ahead":
             OPTIONS["run_ahead"] = args[k + 1] in ("1", "on", "true")
+        elif args[k] == "--bl-numbers":
+            OPTIONS["bl_numbers"] = args[k + 1] not in ("0", "off", "false")
     done_evt = _install_fakes()
     if "--drivers" in args:
         ds = [driver(m) for m in modules_present()]      # each made as a request makes it (its unit booted)

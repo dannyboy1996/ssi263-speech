@@ -39,20 +39,22 @@ typedef struct {
 int ssi_load(ssi_api *api, const wchar_t *dir, char *err, int errlen);
 
 /* The settings dialog's values (HKCU "Software\SSI-263 SAPI", sapi/settings.ps1), as ssi_serve.py's command line took
-   them: --rate, --inflection, --whine, --accent-inflection, --run-ahead. */
+   them: --rate, --inflection, --whine, --accent-inflection, --run-ahead, --bl-numbers. */
 typedef struct {
     int sample_rate;               /* SampleRate: 11025, 22050 (default), 44100 */
     int inflection;                /* Inflection: the Braille Lite's on/off (1) */
     int whine;                     /* Whine: 0 off, 1 hiss, 2 whine */
     int accent_inflection;         /* AccentInflection: 0-100 (100) */
     int run_ahead;                 /* RunAhead: the Braille Lite's (0) */
+    int numbers;                   /* BrailleLiteNumbers: the Braille Lite's number words, its driver's numberWords (1);
+                                      the Accents keep their own driver's default */
 } ssi_options;
 void ssi_options_defaults(ssi_options *o);
 
 /* ssi_serve.py's driver(): the boot settings every unit gets (the rate the DLL declared to SAPI, the Braille Lite's
    inflection and whine), and the utterance's settings for voice i -- the driver's defaults, the dialog's Accent
-   intonation and Braille Lite run ahead, and the request's rate, pitch and volume (NVDA's 0-100, clamped as the
-   drivers' setters clamp them). */
+   intonation and Braille Lite run ahead and number words, and the request's rate, pitch and volume (NVDA's 0-100,
+   clamped as the drivers' setters clamp them). */
 void ssi_boot(const ssi_options *o, ssv_boot *b);
 void ssi_settings(const ssi_api *api, int i, const ssi_options *o, int rate, int pitch, int volume, ssv_settings *s);
 

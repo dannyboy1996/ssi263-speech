@@ -1,8 +1,8 @@
 # The settings dialog's values reach the voices through SAPI: the Braille Lite speaks the same line with the
 # defaults, the defaults again (the control: identical), inflection off, the whine on and "run the unit ahead" (each
 # must differ: run ahead keeps the phonemes and changes the timing, sapi/test_serve.py; the English and the Spanish
-# voice both); the
-# Accent with its inflection at 0 (must differ from its default); and every sample rate (the WAV SAPI writes carries
+# voice both); "read numbers as words" off for "1,234,567" and Spain's "1.234.567" (must differ; no value must be the
+# same as on); the Accent with its inflection at 0 (must differ from its default); and every sample rate (the WAV SAPI writes carries
 # that rate and lasts as long as the default's), with the diagnostic log on for the timing.  This user's settings
 # are put back as they were afterwards.
 #
@@ -10,7 +10,7 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Speech
 $key = 'HKCU:\Software\SSI-263 SAPI'
-$names = @('Inflection', 'Whine', 'Diagnostics', 'AccentInflection', 'SampleRate', 'RunAhead')
+$names = @('Inflection', 'Whine', 'Diagnostics', 'AccentInflection', 'SampleRate', 'RunAhead', 'BrailleLiteNumbers')
 $saved = @{}
 if (Test-Path $key) { foreach ($n in $names) { try { $saved[$n] = (Get-ItemProperty $key -Name $n -ErrorAction Stop).$n } catch {} } }
 New-Item -Path $key -Force | Out-Null
@@ -38,6 +38,7 @@ function WavSeconds($b) {
 $bad = 0
 try {
     Set-S 'Diagnostics' 1; Set-S 'Inflection' 1; Set-S 'Whine' 0; Set-S 'AccentInflection' 100; Set-S 'SampleRate' 22050
+    Set-S 'BrailleLiteNumbers' 1
     $default = Say 'default'
     # every boot setting changed boots the units again; the control must be fresh too, so toggle one and come back
     Set-S 'Whine' 1; $null = Say 'toggle'; Set-S 'Whine' 0
@@ -57,6 +58,18 @@ try {
     Set-S 'RunAhead' 0
     Set-S 'Whine' 1; $null = Say 'toggle_es'; Set-S 'Whine' 0
     $esDefault = Say 'es_default' $spanish $esText
+    # "Read numbers as words" (BrailleLiteNumbers): each voice's number on freshly booted units (the Whine toggle
+    # reboots them), 1 against 0 (must differ) and against no value at all (must be the same: the default is on)
+    $english = 'Braille Lite 2000 (June 2003)'; $numEn = '1,234,567'; $numEs = '1.234.567'
+    Set-S 'Whine' 1; $null = Say 'toggle_n1'; Set-S 'Whine' 0
+    $numOn = Say 'numbers_on' $english $numEn; $esNumOn = Say 'es_numbers_on' $spanish $numEs
+    Set-S 'BrailleLiteNumbers' 0
+    Set-S 'Whine' 1; $null = Say 'toggle_n0'; Set-S 'Whine' 0
+    $numOff = Say 'numbers_off' $english $numEn; $esNumOff = Say 'es_numbers_off' $spanish $numEs
+    Remove-ItemProperty -Path $key -Name 'BrailleLiteNumbers'
+    Set-S 'Whine' 1; $null = Say 'toggle_nx'; Set-S 'Whine' 0
+    $numUnset = Say 'numbers_unset' $english $numEn; $esNumUnset = Say 'es_numbers_unset' $spanish $numEs
+    Set-S 'BrailleLiteNumbers' 1
     $accent = Say 'accent_default' 'Accent-mini'
     Set-S 'AccentInflection' 0
     $accentFlat = Say 'accent_inflection0' 'Accent-mini'
@@ -69,6 +82,10 @@ try {
                 @('the whine changes the sound', -not (Same $default $whine)),
                 @('run ahead changes the Braille Lite''s sound (English)', -not (Same $default $ahead)),
                 @('run ahead changes the Braille Lite''s sound (Spanish)', -not (Same $esDefault $esAhead)),
+                @('numbers as words off changes the Braille Lite''s "1,234,567" (English)', -not (Same $numOn $numOff)),
+                @('numbers as words off changes the Braille Lite''s "1.234.567" (Spanish)', -not (Same $esNumOn $esNumOff)),
+                @('numbers as words with no value is on (English)', (Same $numOn $numUnset)),
+                @('numbers as words with no value is on (Spanish)', (Same $esNumOn $esNumUnset)),
                 @('the Accent''s inflection 0 changes its sound', -not (Same $accent $accentFlat)))
     # System.Speech writes its WAV in its own default format and converts what the engine gives it, so the file's
     # header cannot show the engine's rate.  Two checks instead: the engine's own log (the last three utterances)

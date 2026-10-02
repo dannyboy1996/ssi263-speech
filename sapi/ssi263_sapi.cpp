@@ -75,7 +75,9 @@ static const DWORD LOG_CAP = 4u * 1024u * 1024u;
  * this user's): Inflection (the Braille Lite's own on/off: 1 = on, the default), AccentInflection (the Accent's
  * intonation, 0 25 50 75 100 as its NVDA slider; 100 = full, the default), Whine (0 off, 1 hiss, 2 whine),
  * SampleRate (11025 / 22050 / 44100, every voice), RunAhead (the Braille Lite's "Run the unit ahead", EXPERIMENTAL:
- * 0 = off, the default; 1 = on, both its voices) and Diagnostics (0 = off).  Each reaches the next thing spoken:
+ * 0 = off, the default; 1 = on, both its voices), BrailleLiteNumbers (the Braille Lite's "Read numbers as words",
+ * its NVDA driver's custom number processing: 1 = on, the default; 0 = the firmware reads the digits; both its voices,
+ * the Accents keep their own) and Diagnostics (0 = off).  Each reaches the next thing spoken:
  * read fresh per Speak, and a boot setting that changed (the rate, the inflection, the whine) boots the units again,
  * as the NVDA drivers do. */
 static DWORD setting_dword(const wchar_t *name, DWORD def) {
@@ -307,9 +309,11 @@ public:
         o.whine=(int)setting_dword(L"Whine",0);
         o.accent_inflection=(int)setting_dword(L"AccentInflection",100);
         o.run_ahead=setting_dword(L"RunAhead",0)!=0;
+        o.numbers=setting_dword(L"BrailleLiteNumbers",1)!=0;
 #ifdef SSI263_SAPI_DEV
         char brk[16]={0}; GetEnvironmentVariableA("SSI263_SAPI_TEST_BREAK",brk,sizeof brk);
         if(!strcmp(brk,"setting")){int r=o.sample_rate;ssi_options_defaults(&o);o.sample_rate=r;}   /* a control */
+        if(!strcmp(brk,"bl-numbers"))o.numbers=1;   /* a control: BrailleLiteNumbers ignored (its default, on) */
 #endif
         std::string u=utf8(text);
         CsLock lock(&g_lock);

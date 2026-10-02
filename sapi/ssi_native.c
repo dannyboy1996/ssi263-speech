@@ -45,6 +45,7 @@ void ssi_options_defaults(ssi_options *o)
     o->whine = 0;
     o->accent_inflection = 100;
     o->run_ahead = 0;
+    o->numbers = 1;                                          /* blazie.py: numberWords, defaultVal=True */
 }
 
 static int clamp(int x, int lo, int hi) { return x < lo ? lo : x > hi ? hi : x; }
@@ -61,6 +62,8 @@ void ssi_settings(const ssi_api *api, int i, const ssi_options *o, int rate, int
     api->defaults(i, s);
     s->inflection = clamp(o->accent_inflection, 0, 100);     /* accentmini: d._set_inflection */
     s->run_ahead = o->run_ahead != 0;                        /* blazie: d._set_runAhead */
+    if (api->info(i)->engine == SSV_BLAZIE)                  /* blazie: d._set_numberWords; the Accents' stays theirs */
+        s->numbers = o->numbers != 0;
     s->rate = clamp(rate, 0, 100);                           /* d._set_rate(max(0, min(100, rate))) */
     s->pitch = clamp(pitch, 0, 100);
     s->volume = clamp(volume, 0, 100);

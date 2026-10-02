@@ -60,7 +60,7 @@ function Invoke-Elevated([string]$switches) {
 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'SSI-263 SAPI settings'; $form.Size = New-Object Drawing.Size(640, 610)
+$form.Text = 'SSI-263 SAPI settings'; $form.Size = New-Object Drawing.Size(640, 644)
 $form.StartPosition = 'CenterScreen'
 $label = New-Object Windows.Forms.Label
 $label.Text = '&Voices:'; $label.AutoSize = $true; $label.Location = New-Object Drawing.Point(12, 14)
@@ -100,9 +100,9 @@ $unregister.Location = New-Object Drawing.Point(110, 214)
 $close = New-Object Windows.Forms.Button; $close.Text = '&Close'; $close.AutoSize = $true
 $close.Location = New-Object Drawing.Point(208, 214)
 
-# The Braille Lite's three settings, as in the NVDA add-on.
+# The Braille Lite's four settings, as in the NVDA add-on.
 $group = New-Object Windows.Forms.GroupBox
-$group.Text = 'Braille Lite'; $group.Location = New-Object Drawing.Point(12, 256); $group.Size = New-Object Drawing.Size(600, 130)
+$group.Text = 'Braille Lite'; $group.Location = New-Object Drawing.Point(12, 256); $group.Size = New-Object Drawing.Size(600, 164)
 $inflection = New-Object Windows.Forms.CheckBox
 $inflection.Text = 'Voice &inflection'
 $inflection.AccessibleName = 'Voice inflection'
@@ -122,9 +122,16 @@ $runAhead.Text = 'Run the unit &ahead (experimental)'
 $runAhead.AccessibleName = 'Run the unit ahead (experimental)'
 $runAhead.AccessibleDescription = 'Experimental, off by default. The unit writes a whole utterance at once and the chip plays it, with shorter pauses. Takes effect with the next thing spoken.'
 $runAhead.Location = New-Object Drawing.Point(12, 94); $runAhead.AutoSize = $true
+# The NVDA add-on's "Custom number processing" (numberWords), on by default; both Braille Lite voices.  The Accents
+# keep their own.
+$numbers = New-Object Windows.Forms.CheckBox
+$numbers.Text = 'Read numbers as &words'
+$numbers.AccessibleName = 'Read numbers as words'
+$numbers.AccessibleDescription = 'On by default. Numbers are read as words, as the NVDA add-on''s custom number processing does; off, the unit''s firmware reads them itself. Takes effect with the next thing spoken.'
+$numbers.Location = New-Object Drawing.Point(12, 128); $numbers.AutoSize = $true
 # The Accent's own voice setting, as its NVDA add-on's Inflection slider (five steps).
 $accentGroup = New-Object Windows.Forms.GroupBox
-$accentGroup.Text = 'Accent'; $accentGroup.Location = New-Object Drawing.Point(12, 394); $accentGroup.Size = New-Object Drawing.Size(600, 60)
+$accentGroup.Text = 'Accent'; $accentGroup.Location = New-Object Drawing.Point(12, 428); $accentGroup.Size = New-Object Drawing.Size(600, 60)
 $accentLabel = New-Object Windows.Forms.Label
 $accentLabel.Text = 'Accent i&nflection:'; $accentLabel.AutoSize = $true
 $accentLabel.Location = New-Object Drawing.Point(12, 26)
@@ -137,22 +144,23 @@ foreach ($item in @('100 (the card''s own, the default)', '75', '50', '25', '0')
 # Every voice's output rate, as the add-ons' Sample rate.
 $rateLabel = New-Object Windows.Forms.Label
 $rateLabel.Text = '&Sample rate (every voice):'; $rateLabel.AutoSize = $true
-$rateLabel.Location = New-Object Drawing.Point(12, 470)
+$rateLabel.Location = New-Object Drawing.Point(12, 504)
 $rate = New-Object Windows.Forms.ComboBox
 $rate.DropDownStyle = 'DropDownList'; $rate.AccessibleName = 'Sample rate, every voice'
 $rate.AccessibleDescription = '22 kHz keeps everything the chip produces. 44 kHz keeps the clock images and the brightest hiss, 11 kHz sounds like a unit''s own speaker. Takes effect with the next thing spoken.'
-$rate.Location = New-Object Drawing.Point(190, 467); $rate.Size = New-Object Drawing.Size(260, 24)
+$rate.Location = New-Object Drawing.Point(190, 501); $rate.Size = New-Object Drawing.Size(260, 24)
 $rateSteps = @(11025, 22050, 44100)
 foreach ($item in @('11 kHz', '22 kHz (default)', '44 kHz')) { [void]$rate.Items.Add($item) }
 $diagnostics = New-Object Windows.Forms.CheckBox
 $diagnostics.Text = 'Write a &diagnostic log'
 $diagnostics.AccessibleName = 'Write a diagnostic log'
 $diagnostics.AccessibleDescription = 'Off by default. Records what the engine did, not what was spoken, to a file in your temp folder. Turn it on only if a bug report asks for it.'
-$diagnostics.Location = New-Object Drawing.Point(12, 506); $diagnostics.AutoSize = $true
+$diagnostics.Location = New-Object Drawing.Point(12, 540); $diagnostics.AutoSize = $true
 
 $inflection.Checked = [bool](Load-Setting 'Inflection' 1)
 $whine.SelectedIndex = [Math]::Max(0, [Math]::Min(2, (Load-Setting 'Whine' 0)))
 $runAhead.Checked = [bool](Load-Setting 'RunAhead' 0)
+$numbers.Checked = [bool](Load-Setting 'BrailleLiteNumbers' 1)
 $ai = [Array]::IndexOf($accentSteps, (Load-Setting 'AccentInflection' 100)); if ($ai -lt 0) { $ai = 0 }
 $accentInfl.SelectedIndex = $ai
 $ri = [Array]::IndexOf($rateSteps, (Load-Setting 'SampleRate' 22050)); if ($ri -lt 0) { $ri = 1 }
@@ -161,6 +169,7 @@ $diagnostics.Checked = [bool](Load-Setting 'Diagnostics' 0)
 $inflection.Add_CheckedChanged({ Save-Setting 'Inflection' ([int]$inflection.Checked) })
 $whine.Add_SelectedIndexChanged({ if ($whine.SelectedIndex -ge 0) { Save-Setting 'Whine' $whine.SelectedIndex } })
 $runAhead.Add_CheckedChanged({ Save-Setting 'RunAhead' ([int]$runAhead.Checked) })
+$numbers.Add_CheckedChanged({ Save-Setting 'BrailleLiteNumbers' ([int]$numbers.Checked) })
 $accentInfl.Add_SelectedIndexChanged({ if ($accentInfl.SelectedIndex -ge 0) { Save-Setting 'AccentInflection' $accentSteps[$accentInfl.SelectedIndex] } })
 $rate.Add_SelectedIndexChanged({ if ($rate.SelectedIndex -ge 0) { Save-Setting 'SampleRate' $rateSteps[$rate.SelectedIndex] } })
 $diagnostics.Add_CheckedChanged({ Save-Setting 'Diagnostics' ([int]$diagnostics.Checked) })
@@ -179,14 +188,14 @@ $unregister.Add_Click({
 })
 $close.Add_Click({ $form.Close() })
 $form.CancelButton = $close
-$group.Controls.AddRange(@($inflection, $whineLabel, $whine, $runAhead))
+$group.Controls.AddRange(@($inflection, $whineLabel, $whine, $runAhead, $numbers))
 $accentGroup.Controls.AddRange(@($accentLabel, $accentInfl))
 $form.Controls.AddRange(@($label, $list, $status, $register, $unregister, $close, $group, $accentGroup, $rateLabel, $rate, $diagnostics))
 Refresh-Voices
 if ($Check) {
     foreach ($item in $list.Items) { Write-Output ('voice: ' + $item) }
     Write-Output ('status: ' + $status.Text)
-    Write-Output ('inflection: {0}; whine: {1}; run ahead: {2}; accent inflection: {3}; sample rate: {4}; diagnostics: {5}' -f $inflection.Checked, $whine.SelectedItem, $runAhead.Checked, $accentInfl.SelectedItem, $rate.SelectedItem, $diagnostics.Checked)
+    Write-Output ('inflection: {0}; whine: {1}; run ahead: {2}; numbers as words: {3}; accent inflection: {4}; sample rate: {5}; diagnostics: {6}' -f $inflection.Checked, $whine.SelectedItem, $runAhead.Checked, $numbers.Checked, $accentInfl.SelectedItem, $rate.SelectedItem, $diagnostics.Checked)
     exit 0
 }
 $form.Add_Shown({ $list.Focus() })

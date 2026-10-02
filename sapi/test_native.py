@@ -6,7 +6,8 @@ drivers under NVDA stand-ins -- 0.7.0's Python drivers (nvda/tools/legacy_driver
 ssi263speech.dll the way the SAPI DLL does and maps every setting with the DLL's own code (sapi/ssi_native.c) -- as
 outspoken-nvda holds its osp_host to osp_serve.py.  Both get the same requests -- texts with numbers, money, currencies,
 accents; SAPI's rates and pitches; the voices one after another, and back; the settings dialog's values on the command
-line; a cancel mid-utterance and the utterance after it -- and every PCM byte must be equal.  Both widths of the native
+line (--bl-numbers among them: with no value, 1 and 0, also held against each other); a cancel mid-utterance and the
+utterance after it -- and every PCM byte must be equal.  Both widths of the native
 library are held to the one reference (the x86 DLL computes as the x64 one: -msse2 -mfpmath=sse).
 
 A cancel lands where the client's pipe lets it (both hosts stop at the same block, as measured); if they ever stop at
@@ -21,6 +22,8 @@ skipped; every voice it does have must match.
     SSI263_SERVE_BREAK=voice       control: the native host swaps English/Spanish and mini/SA -- FAILS
     SSI263_SERVE_BREAK=numbers     control: the native host turns the drivers' number words off -- the texts with
                                    digits FAIL, in English and in Spanish
+    SSI263_SERVE_BREAK=bl-numbers  control: the native host ignores --bl-numbers (the dialog's BrailleLiteNumbers) --
+                                   the "blnum0" session FAILS on both Braille Lite voices
     SSI263_SAPI_REF_BREAK=dist     control: the reference on nvda/dist's (native) drivers -- the reference check FAILS
 
 Build first: python src/csrc/build_ssi263speech.py (and the add-ons' libraries, which legacy_drivers.py puts under
@@ -53,10 +56,13 @@ TEXTS = {
     "en": ["Hello, how are you??",
            "Room 12, $3.50 and 1,234,567 items; the 21st of 3 at 9:45, -2.5 degrees.",
            "Pay $1,234,567,890,123.45 now, or £2.63, 5 € and 50¢.",
-           "It’s “quoted” – café… OK button"],
+           "It’s “quoted” – café… OK button",
+           "1,234,567"],
     "es": ["Mañana, ¿qué tal? Él está aquí.",
-           "Son 1.234.567 personas, 3,5 metros y el 21 de 1999; -4,25 grados y 2.000.000.000.000 de euros."],
+           "Son 1.234.567 personas, 3,5 metros y el 21 de 1999; -4,25 grados y 2.000.000.000.000 de euros.",
+           "1.234.567"],
 }
+NUMBERS_REQS = [("blazie:blazie", 4, 50, 50), ("blazie:blazie_es", 2, 50, 50), ("accentmini:sa", 4, 50, 50)]
 
 # A session: the server's command-line options (the settings dialog's values) and its requests, in order.  A request
 # is (voice, text, rate, pitch) on the drivers' 0-100 (SAPI's rate -10..10 and pitch -10..10 land on multiples of
@@ -83,6 +89,12 @@ SESSIONS = {
     "rate44": (["--rate", "44100", "--accent-inflection", "0"], [
         ("blazie:blazie", 1, 50, 50), ("accentmini:sa", 1, 50, 50), ("speakout:speakout", 0, 50, 50),
         ("accentmini:mini", 1, 50, 50)]),
+    # the dialog's "Read numbers as words" (BrailleLiteNumbers): no value, 1 and 0, the same requests on fresh units --
+    # each against the reference with the same setting, and across them (numbers_checks): no value is on, 0 changes
+    # both Braille Lite voices' audio, and never the Accent's (its own driver's number words stay on)
+    "blnum": ([], NUMBERS_REQS),
+    "blnum1": (["--bl-numbers", "1"], NUMBERS_REQS),
+    "blnum0": (["--bl-numbers", "0"], NUMBERS_REQS),
 }
 
 
@@ -207,6 +219,25 @@ def compare(session, arch, requests, ref, nat, rate):
     return bad, lines
 
 
+def numbers_checks(side, unset, on, off, requests):
+    """The blnum sessions against each other, on one side (the reference or a native width): no value = 1 for every
+    voice (the default is on); 0 differs from 1 for the Braille Lite's voices and is the same for the Accent's."""
+    bad, lines = 0, []
+    for r, (su, u), (s1, a), (s0, b) in zip(requests, unset, on, off):
+        voice = r[0]
+        ok = su == s1 == 0 and u == a and voiced(a)
+        bad += not ok
+        lines.append("%-4s numbers %-3s %s: no value %s 1" % ("ok" if ok else "FAIL", side, voice,
+                                                               "=" if u == a else "DIFFERS from"))
+        blazie = voice.startswith("blazie:")
+        ok = s0 == 0 and voiced(b) and (a != b if blazie else a == b)
+        bad += not ok
+        lines.append("%-4s numbers %-3s %s: 0 %s 1 (%.2f s against %.2f s)%s" % (
+            "ok" if ok else "FAIL", side, voice, "differs from" if a != b else "the same as", len(b) / 2 / 22050,
+            len(a) / 2 / 22050, "" if blazie else ", the Accent's own number words untouched"))
+    return bad, lines
+
+
 def main():
     ref_cmd = [sys.executable, os.path.join(HERE, "ssi_serve.py"), "--serve"]
     nat_cmd = {a: [os.path.join(REPO, "build", "win", a, "ssi263_serve.exe"), "--serve", "--firmware", FIRMWARE]
@@ -235,7 +266,7 @@ def main():
             results[name, "ref"] = pool.submit(play, ref_cmd + opts, reqs, ref_env)
             for a in ARCHES:
                 results[name, a] = pool.submit(play, nat_cmd[a] + opts, reqs)
-        bad, total = 0, 0
+        bad, total, nbad = 0, 0, 0
         for name, opts, reqs in jobs:
             rate = int(opts[opts.index("--rate") + 1]) if "--rate" in opts else 22050
             ref = results[name, "ref"].result()
@@ -246,10 +277,22 @@ def main():
                 for ln in lines:
                     if ln.startswith("DIFF") or "--verbose" in ARGS:
                         print(ln)
+        names = [j[0] for j in jobs]
+        if all(n in names for n in ("blnum", "blnum1", "blnum0")):
+            reqs = next(j[2] for j in jobs if j[0] == "blnum")
+            for side in ["ref"] + ARCHES:
+                b, lines = numbers_checks(side, *[results[n, side].result() for n in ("blnum", "blnum1", "blnum0")],
+                                          requests=reqs)
+                nbad += b
+                for ln in lines:
+                    if ln.startswith("FAIL") or "--verbose" in ARGS:
+                        print(ln)
+                print("numbers %s: %d of %d right (no value = 1; 0 changes the Braille Lite, not the Accent)" % (
+                    side, len(lines) - b, len(lines)))
     print("native: %d of %d utterances byte-identical to the Python server (%s)" % (total - bad, total,
                                                                                   ", ".join(ARCHES)))
-    print("native: %s" % ("ok" if not bad else "%d FAILED" % bad))
-    sys.exit(1 if bad else 0)
+    print("native: %s" % ("ok" if not bad + nbad else "%d FAILED" % (bad + nbad)))
+    sys.exit(1 if bad + nbad else 0)
 
 
 if __name__ == "__main__":

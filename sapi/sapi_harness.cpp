@@ -13,8 +13,9 @@
  *
  * The job: one case per line, UTF-8, tab-separated --
  *     voice id, SAPI rate (-10..10), MiddleAdj (-10..10), settings "Inflection,Whine,AccentInflection,RunAhead,
- *     SampleRate", SSI263_SAPI_TEST_BREAK for this case ("-" for none), writes before an abort (0: none), text,
- *     and optionally a second text after a bookmark named 7.
+ *     SampleRate,BrailleLiteNumbers" (a "-" deletes that value: the engine's default), SSI263_SAPI_TEST_BREAK for this
+ *     case ("-" for none), writes before an abort (0: none), text, and optionally a second text after a bookmark
+ *     named 7.
  * The settings go to the key SSI263_SAPI_SETTINGS_KEY names (the development DLL reads that one).  For each case the
  * audio goes to <folder>\case_<k>.pcm and a line to stdout:
  *     case <k> hr=<hex> rate=<declared Hz> bytes=<written> writes=<n> marks=<names, comma-separated or -> ms=<n>
@@ -154,10 +155,13 @@ int wmain(int argc, wchar_t **argv) {
         if (f.size() < 7) continue;
         /* the settings, then the break for this case */
         std::vector<std::string> s = split(f[3], ',');
-        const wchar_t *names[] = {L"Inflection", L"Whine", L"AccentInflection", L"RunAhead", L"SampleRate"};
+        const wchar_t *names[] = {L"Inflection", L"Whine", L"AccentInflection", L"RunAhead", L"SampleRate",
+                                  L"BrailleLiteNumbers"};
+        const int nnames = (int)(sizeof names / sizeof names[0]);
         HKEY h;
         if (RegCreateKeyExW(HKEY_CURRENT_USER, keyname, 0, 0, 0, KEY_WRITE, 0, &h, 0) == ERROR_SUCCESS) {
-            for (int i = 0; i < 5 && i < (int)s.size(); i++) {
+            for (int i = 0; i < nnames && i < (int)s.size(); i++) {
+                if (s[i] == "-") { RegDeleteValueW(h, names[i]); continue; }       /* no value: the engine's default */
                 DWORD v = (DWORD)atol(s[i].c_str());
                 RegSetValueExW(h, names[i], 0, REG_DWORD, (const BYTE *)&v, sizeof v);
             }

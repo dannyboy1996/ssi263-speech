@@ -16,12 +16,15 @@ drivers (nvda/tools/legacy_drivers.py; nvda/dist's are the native ones since 0.7
 checks first -- SSI263_SAPI_REF_BREAK=dist, the reference on nvda/dist's drivers, must fail that:
   - each voice at SAPI's rates and pitches, texts with numbers and money: byte for byte, then the engine's 150 ms of
     silence, at the rate GetOutputFormat declared;
-  - the dialog's settings (inflection off, the whine, the Accent's intonation, run ahead) and each sample rate: the same;
+  - the dialog's settings (inflection off, the whine, the Accent's intonation, run ahead, the Braille Lite's number
+    words off) and each sample rate: the same;
+  - BrailleLiteNumbers with no value, 1 and 0 on both Braille Lite voices ("1,234,567", Spain's "1.234.567"): each the
+    same as the Python server with the driver's numberWords so; no value = 1, and 0 differs from 1;
   - a bookmark between two halves: the event comes, and the audio is the joined text's;
   - SAPI's abort after a few writes: Speak returns S_OK at once, nothing more is written (no events, no silence),
     and the next text comes out whole (voiced, as long as alone within 10 %);
   - the controls, in the same run (each must make its cases differ): SSI263_SAPI_TEST_BREAK=voice (English and
-    Spanish swapped) and =setting (the dialog's settings dropped).
+    Spanish swapped), =setting (the dialog's settings dropped) and =bl-numbers (BrailleLiteNumbers 0 ignored).
 
     python sapi/test_sapi_engine.py [--arch x64|x86|both] [--verbose]
 """
@@ -45,9 +48,17 @@ ARCHES = ["x64", "x86"]
 if "--arch" in ARGS and ARGS[ARGS.index("--arch") + 1] != "both":
     ARCHES = [ARGS[ARGS.index("--arch") + 1]]
 REQ = 0x4F535034
-KEYS = ("Inflection", "Whine", "AccentInflection", "RunAhead", "SampleRate")
-DEFAULTS = {"Inflection": 1, "Whine": 0, "AccentInflection": 100, "RunAhead": 0, "SampleRate": 22050}
-DIALOG = {"Inflection": 0, "Whine": 2, "AccentInflection": 50, "RunAhead": 1, "SampleRate": 22050}
+KEYS = ("Inflection", "Whine", "AccentInflection", "RunAhead", "SampleRate", "BrailleLiteNumbers")
+# None: no value in the key at all (the harness deletes it), the engine's own default
+DEFAULTS = {"Inflection": 1, "Whine": 0, "AccentInflection": 100, "RunAhead": 0, "SampleRate": 22050,
+            "BrailleLiteNumbers": None}
+DIALOG = {"Inflection": 0, "Whine": 2, "AccentInflection": 50, "RunAhead": 1, "SampleRate": 22050,
+          "BrailleLiteNumbers": 0}
+# the Braille Lite's "Read numbers as words": no value, 1 and 0, each on fresh units (a harness and a Python server of
+# its own: the setting is not a boot setting, so in the main run the units would carry the last case's state)
+NUMBERS = (("numbers unset", DEFAULTS), ("numbers on", dict(DEFAULTS, BrailleLiteNumbers=1)),
+           ("numbers off", dict(DEFAULTS, BrailleLiteNumbers=0)))
+NUMBERS_TEXT = {"en": "1,234,567", "es": "1.234.567"}
 TEXT_EN = ["Hello, how are you??", "Room 12, $3.50 and 1,234,567 items; the 21st of 3, -2.5 degrees."]
 TEXT_ES = ["Mañana, ¿qué tal? Son 1.234.567 y 3,5."]
 LONG = "This sentence is long enough to be cut somewhere in the middle of it, surely. And a few more words follow it."
@@ -79,10 +90,16 @@ def cases(voices):
             for vid, _name, _lang in voices:
                 out += [("%s abort" % vid, vid, 0, 0, s, "-", ABORT_AFTER, LONG, None),
                         ("%s after the abort" % vid, vid, 0, 0, s, "-", 0, "OK button", None)]
+    for tag, s in NUMBERS:
+        for vid, _name, lang in voices:
+            if vid.startswith("blazie:"):
+                out.append(("%s %s" % (vid, tag), vid, 0, 0, s, "-", 0, NUMBERS_TEXT[lang], None))
     for vid, _name, lang in voices:                                 # the controls
         texts = TEXT_ES if lang == "es" else TEXT_EN
         if vid.startswith("blazie:"):
             out.append(("%s CONTROL voice" % vid, vid, 0, 0, DEFAULTS, "voice", 0, texts[0], None))
+            out.append(("%s CONTROL numbers ignored" % vid, vid, 0, 0, NUMBERS[2][1], "bl-numbers", 0,
+                        NUMBERS_TEXT[lang], None))
         if not vid.startswith("speakout:"):    # the dialog has nothing for the Speak-Out: dropping it changes nothing
             out.append(("%s CONTROL setting" % vid, vid, 0, 0, DIALOG, "setting", 0, texts[-1], None))
     return out
@@ -124,7 +141,13 @@ def reference(opts, requests, env):
 def opts_for(s):
     return ["--inflection", str(s["Inflection"]), "--whine", ("off", "hiss", "whine")[s["Whine"]],
             "--accent-inflection", str(s["AccentInflection"]), "--run-ahead", str(s["RunAhead"]),
-            "--rate", str(s["SampleRate"])]
+            "--rate", str(s["SampleRate"])] + \
+        ([] if s["BrailleLiteNumbers"] is None else ["--bl-numbers", str(s["BrailleLiteNumbers"])])
+
+
+def numbers_run(label):
+    """The NUMBERS group a case belongs to ("numbers on" ...), or None."""
+    return next((tag for tag, _s in NUMBERS if label.endswith(" " + tag)), None)
 
 
 def voiced(pcm):
@@ -156,7 +179,8 @@ def harness(arch, todo, tmp, name):
     os.makedirs(out, exist_ok=True)
     with open(job, "w", encoding="utf-8", newline="\n") as f:
         for _label, vid, rate, pitch, s, brk, abort, t1, t2 in todo:
-            f.write("\t".join([vid, str(rate), str(pitch), ",".join(str(s[k]) for k in KEYS), brk, str(abort), t1]
+            f.write("\t".join([vid, str(rate), str(pitch), ",".join("-" if s[k] is None else str(s[k]) for k in KEYS),
+                               brk, str(abort), t1]
                               + ([t2] if t2 else [])) + "\n")
     try:
         r = subprocess.run([os.path.join(STAGE, arch, "sapi_harness.exe"), os.path.join(STAGE, arch, "ssi263_sapi.dll"),
@@ -190,13 +214,15 @@ def main():
     todo = cases(voices)
     # the harness runs: every arch speaks the cases in order in one engine; each control alone in a fresh one (x64),
     # against a fresh Python server, so what differs is the control's doing and nothing else
-    main_idx = [k for k, c in enumerate(todo) if "CONTROL" not in c[0]]
+    main_idx = [k for k, c in enumerate(todo) if "CONTROL" not in c[0] and not numbers_run(c[0])]
     runs = [(a, a, main_idx) for a in ARCHES] + [("x64", "control%d" % k, [k]) for k, c in enumerate(todo)
                                                  if "CONTROL" in c[0]]
+    runs += [(a, "%s-%s" % (a, tag.replace(" ", "-")), [k for k, c in enumerate(todo) if numbers_run(c[0]) == tag])
+             for a in ARCHES for tag, _s in NUMBERS]
     groups = {}                                                     # one Python server per settings, or per control
     for k, (label, vid, rate, pitch, s, brk, abort, t1, t2) in enumerate(todo):
         text = t1 + " " + t2 if t2 else t1                          # the engine joins the fragments with a space
-        g = json.dumps(s, sort_keys=True) + (label if "CONTROL" in label else "")
+        g = json.dumps(s, sort_keys=True) + (label if "CONTROL" in label else "") + (numbers_run(label) or "")
         groups.setdefault(g, []).append((k, (vid, text, (rate + 10) * 5, 50 + pitch * 5)))
     tmp = tempfile.mkdtemp(prefix="ssi263_sapi_engine_")
     bad = 0
@@ -243,6 +269,18 @@ def main():
                     n += 1
                     bad += not ok
                     lines.append("%-4s %s %-38s %s" % ("ok" if ok else "FAIL", a, label, what))
+                # across the numbers runs: no value = 1, and 0 changes the audio (each is the Python server's above)
+                for vid, _name, _lang in voices:
+                    if not vid.startswith("blazie:"):
+                        continue
+                    pcm = {tag: results[a, next(k for k, c in enumerate(todo) if c[0] == "%s %s" % (vid, tag))][5]
+                           for tag, _s in NUMBERS}
+                    for what, ok in (("no value = 1", pcm["numbers unset"] == pcm["numbers on"]),
+                                     ("0 differs from 1", pcm["numbers off"] != pcm["numbers on"])):
+                        n += 1
+                        bad += not ok
+                        lines.append("%-4s %s %-38s %s" % ("ok" if ok else "FAIL", a, "%s numbers" % vid,
+                                                           "BrailleLiteNumbers: " + what))
                 for ln in lines:
                     if ln.startswith("FAIL") or "--verbose" in ARGS:
                         print(ln)

@@ -13,14 +13,15 @@
  * 16-bit mono at the --rate -- and a zero frame count to finish.  rate/pitch/volume are the drivers' 0-100.
  *
  *   ssi263_serve.exe --serve [--firmware <dir>] [--rate 11025|22050|44100] [--inflection 1|0]
- *                    [--whine off|hiss|whine] [--accent-inflection 0..100] [--run-ahead 1|0]
+ *                    [--whine off|hiss|whine] [--accent-inflection 0..100] [--run-ahead 1|0] [--bl-numbers 1|0]
  *   ssi263_serve.exe --list [--firmware <dir>]        one voice per line: "id<TAB>name<TAB>language", UTF-8
  *   ssi263_serve.exe --files [--firmware <dir>]       the firmware those voices need, one path per line (the stage)
  *
  * The firmware folder defaults to ..\firmware beside this program's folder (the installed layout: {app}\x64\, and
  * {app}\firmware).  Test hooks, for test_native.py's must-fail controls only: SSI263_SERVE_BREAK=setting drops the
  * dialog's settings (inflection, whine, Accent intonation, run ahead) on their way to the voices; =voice swaps each
- * voice for its sibling (English and Spanish, Accent-mini and SA); =numbers turns the drivers' number words off.
+ * voice for its sibling (English and Spanish, Accent-mini and SA); =numbers turns the drivers' number words off;
+ * =bl-numbers ignores --bl-numbers (the Braille Lite's number words stay at their default, on).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -169,7 +170,7 @@ static int sibling(const ssi_api *api, int i, const char *fwdir)
 static void usage(void)
 {
     fputs("ssi263_serve.exe --serve|--list [--firmware <dir>] [--rate 11025|22050|44100] [--inflection 1|0] "
-          "[--whine off|hiss|whine] [--accent-inflection 0..100] [--run-ahead 1|0]\n", stderr);
+          "[--whine off|hiss|whine] [--accent-inflection 0..100] [--run-ahead 1|0] [--bl-numbers 1|0]\n", stderr);
 }
 
 int wmain(int argc, wchar_t **argv)
@@ -209,6 +210,11 @@ int wmain(int argc, wchar_t **argv)
             k++;
         }
         else if (!wcscmp(a, L"--run-ahead")) { o.run_ahead = !wcscmp(v, L"1") || !wcscmp(v, L"on") || !wcscmp(v, L"true"); k++; }
+        else if (!wcscmp(a, L"--bl-numbers")) {
+            if (!(brk && !strcmp(brk, "bl-numbers")))         /* the control: the value ignored */
+                o.numbers = wcscmp(v, L"0") && wcscmp(v, L"off") && wcscmp(v, L"false");
+            k++;
+        }
     }
     if (!list && !serve) { usage(); return 2; }
     if (!ssi_load(&api, exe, err, sizeof err)) { fprintf(stderr, "%s\n", err); return 1; }
