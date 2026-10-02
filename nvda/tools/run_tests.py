@@ -1182,6 +1182,15 @@ def run(c):
     first_bad = [ln.strip() for ln in out.splitlines() if re.search(r"ended with|died|Error|FAILED|began with", ln)][:1]
     if not passed and first_bad:
         why = (why + ": " if why else "") + first_bad[0]
+    if not passed:                      # the whole output kept: a failure seen only under the suite's load can be named
+        try:
+            keep = os.path.join(HERE, "out", "failed")
+            os.makedirs(keep, exist_ok=True)
+            with open(os.path.join(keep, re.sub(r"[^A-Za-z0-9._-]+", "_", c["name"])[:120] + ".log"), "w",
+                      encoding="utf-8") as f:
+                f.write("%s\nexit %s\n\n%s" % (" ".join(c["argv"]), code, out))
+        except OSError:
+            pass
     return c["name"], passed, time.perf_counter() - t0, why, last[0][:90]
 
 
