@@ -81,7 +81,6 @@ def host_menu(worker: Worker, dialogs: ModuleType, preferences: Preferences,
         choices = {
             "r": _("Resume emulator"),
             "s": _("Save memory"),
-            "a": _("Press advance bar and resume"),
             "k": _("Quick key response: {state}").format(state=_("on") if preferences.quick_keys else _("off")),
             "o": _("Audio settings"),
             "h": _("Keyboard help"),
@@ -89,8 +88,6 @@ def host_menu(worker: Worker, dialogs: ModuleType, preferences: Preferences,
         }
         if units:
             choices["f"] = _("Firmware: {name}").format(name=units[preferences.unit])
-        if not preferences.unit.startswith("bl-"):
-            choices.pop("a")
         if BY_KEY[preferences.unit].kind == "tns":
             choices["t"] = _("Send Type 'n Speak key")
         choice = dialogs.request_choice(choices, prompt=_("Blazie emulator"), default="r")
@@ -113,8 +110,6 @@ def host_menu(worker: Worker, dialogs: ModuleType, preferences: Preferences,
                     continue
                 return "resume"
             continue
-        if choice.key == "a":
-            return "advance"
         if choice.key == "f" and units:
             selected = dialogs.request_choice(units, prompt=_("Choose firmware"), default=preferences.unit)
             if selected is not None and selected.key != preferences.unit:
@@ -144,8 +139,7 @@ def host_menu(worker: Worker, dialogs: ModuleType, preferences: Preferences,
                     "M-chord with Dot 7 opens this menu; Z-chord with Dot 7 saves and closes the terminal."
                 ))
                 continue
-            display_help = (_("On BT Braille, L3 or R3 advances braille; L2 or R2 moves it back. Routing keys are unused.\n"
-                              "On BT Speak, the advance bar is available from the host menu.\n")
+            display_help = (_("On BT Braille, L3 or R3 advances braille; L2 or R2 moves it back. Routing keys are unused.\n")
                             if preferences.unit.startswith("bl-") else
                             _("Braille 'n Speak has no braille display or advance bars.\n"))
             dialogs.show_message(_(
@@ -251,9 +245,6 @@ def main() -> int:
             worker.request("RESUME", "RUNNING")
             worker.request("BRAILLE", "BRAILLE")
             display.show(worker.braille, force=True)
-            if action == "advance":
-                worker.send("BARS 1")
-                worker.send("BARS 0")
             try:
                 action = capture(worker, kb_client, display, tns=BY_KEY[preferences.unit].kind == "tns")
             finally:

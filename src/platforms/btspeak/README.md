@@ -83,9 +83,8 @@ first start; Type 'n Speak uses its own cold setup. An existing saved state take
 | L2 or R2 on BT Braille | Original Braille Lite back bar |
 | Other panel keys and all routing keys | Unassigned |
 
-The host menu offers Resume, Save memory, Press advance bar and resume, Quick key response, Audio settings, Firmware, Keyboard help, and Save and exit.
-The advance-bar menu entry also works on BT Speak, which has no panel keys. The normal BT dialog controls
-apply while in the host menu.
+The host menu offers Resume, Save memory, Quick key response, Audio settings, Firmware, Keyboard help, and Save and exit.
+The normal BT dialog controls apply while in the host menu.
 
 Z-chord with Dot 7 uses the platform's existing `Tools/deep-escape`, after the emulator has saved and restored
 its host context. The helper runs detached from the terminal it closes, using noninteractive sudo when needed,
