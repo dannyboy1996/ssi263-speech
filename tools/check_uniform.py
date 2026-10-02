@@ -296,7 +296,7 @@ def sapi(voices, p, stage=None):
     for feat, value in (("run-ahead", "RunAhead"), ("numbers", "BrailleLiteNumbers")):
         wide = value.encode("utf-16-le")
         in_dlls = [rel(d) for d, b in zip(dlls, blobs) if wide in b]
-        in_dialog = bool(re.search(r"Save-Setting\s+'%s'" % value, ps1))
+        in_dialog = bool(re.search(r"^[^#\n]*Save-Setting\s+'%s'" % value, ps1, re.M))    # not in a comment
         for v in voices:
             if v["engine"] != "SSV_BLAZIE":
                 continue
