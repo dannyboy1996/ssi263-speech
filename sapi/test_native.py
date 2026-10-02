@@ -186,11 +186,12 @@ def compare(session, arch, requests, ref, nat, rate):
                 ok = sa == sb == 0 and a[:n] == b[:n]
                 note = "the cancel landed %d samples apart; %s as far as both go" % (
                     (len(a) - len(b)) // 2, "the same audio" if ok else "OTHER audio")
-            elif part == "after" and (not cut_same or (voice.startswith("blazie:") and a != b)):
-                # the Braille Lite's firmware runs on until the cancel reaches it, so the same cut audio does not mean
-                # the same unit after it: under a loaded machine the reference server (Python) takes its cancel a
-                # little later in the unit's time (seen in the suite: 20202 vs 19862 samples).  The rule test_serve
-                # uses for a cancel: the next utterance whole and voiced, within 10 %.
+            elif part == "after" and (not cut_same or a != b):
+                # every voice is its device's firmware running, and it runs on until the cancel reaches it, so the
+                # same cut audio does not mean the same unit after it: under a loaded machine the reference server
+                # (Python) takes its cancel a little later in the unit's time (seen in the suite: the Braille Lite
+                # 20202 vs 19862 samples, the Accent SA 20608 vs 20542).  The rule test_serve uses for a cancel: the
+                # next utterance whole and voiced, within 10 %.
                 ok = sb == 0 and voiced(b) and abs(len(a) - len(b)) <= 0.1 * len(a)
                 note = "after a cancel at another point: %.2f s against %.2f s, voiced" % (len(b) / 2 / rate,
                                                                                          len(a) / 2 / rate)
