@@ -429,7 +429,10 @@ static const char DEFAULT_INI[] =
     "; text console, when a keyboard can be read), on, off, or a device (/dev/input/by-id/...)\n"
     "evdev = auto\n"
     "; 1: only this program gets those keys while it runs (not the console, not a screen reader)\n"
-    "grab = 1\n";
+    "grab = 1\n"
+    "; blazie_emu on a BT Speak or BT Braille: auto (it hands over to blazie_emu_bt, which uses the device's own\n"
+    "; keyboard, speech and braille display) or off (it runs in the terminal, as everywhere else; --no-bt once)\n"
+    "bt = auto\n";
 
 /* the keys: the Braille Lite's dots, space and advance bar as the terminal shell reads them ([keys] dot1 ..
    advance; GTK's keys go down and up, so keys mode's timing, letters mode and the hold key are not needed here), and

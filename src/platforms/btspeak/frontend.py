@@ -33,7 +33,7 @@ def capture(worker: Worker, kb_client: ModuleType, display: BrailleOutput | None
     next_display = time.monotonic()
     with kb_client.connect(kb_client.FLAG_EXCLUSIVE | kb_client.FLAG_WANT_RAW) as conn:
         while True:
-            ready, _, _ = select.select([conn, worker.output], [], [], 0.02 if display else 0.1)
+            ready, _writable, _failed = select.select([conn, worker.output], [], [], 0.02 if display else 0.1)
             if conn in ready:
                 event = conn.read_key()
                 conn.ack_consume()

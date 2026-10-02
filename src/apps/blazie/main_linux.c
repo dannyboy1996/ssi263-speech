@@ -41,6 +41,7 @@
 #include "audio_linux.h"
 #include "audio_pace.h"
 #include "bl_keys.h"
+#include "bt_handover.h"
 #include "emu_unit.h"
 #include "evdev_linux.h"
 #include "ini.h"
@@ -332,7 +333,10 @@ static const char DEFAULT_INI[] =
     "; text console, when a keyboard can be read), on, off, or a device (/dev/input/by-id/...)\n"
     "evdev = auto\n"
     "; 1: only this program gets those keys while it runs (not the console, not a screen reader)\n"
-    "grab = 1\n";
+    "grab = 1\n"
+    "; blazie_emu on a BT Speak or BT Braille: auto (it hands over to blazie_emu_bt, which uses the device's own\n"
+    "; keyboard, speech and braille display) or off (it runs in the terminal, as everywhere else; --no-bt once)\n"
+    "bt = auto\n";
 
 static void load_keys(void)
 {
@@ -1283,7 +1287,11 @@ static void usage(void)
            "  blazie_emu [--unit bl-en|bl-es|tns-en|tns-es|bns-en|bns-sk] [--firmware DIR] [--config DIR]\n"
            "  blazie_emu --show-keys          what this keyboard sends (for the key settings)\n"
            "  blazie_emu --no-sound           no sound card: the unit runs on silent, paced by the system clock\n"
+           "  blazie_emu --no-bt              on a BT Speak or BT Braille, run here in the terminal all the same\n"
+           "  blazie_emu --bt-probe           is this a BT Speak or BT Braille? (yes: exit 0)\n"
            "  blazie_emu --help\n\n"
+           "On a BT Speak or BT Braille, blazie_emu hands over to blazie_emu_bt (the device's keyboard, speech and\n"
+           "braille display), with --unit, --firmware, --config (as --state-dir) and --rate.\n\n"
            "Headless (no sound card, no terminal; the tests):\n"
            "  --wav FILE | --null   render --seconds S of the unit (to FILE, or nowhere)\n"
            "  --script FILE         keys at their times: \"8.0 type f\", \"12.0 type \\e[24~\", \"3.0 down f\"\n"
@@ -1300,6 +1308,7 @@ int main(int argc, char **argv)
     const char *save_to = NULL, *input = NULL, *ram_texts[16];
     rms_window win[16];
     int n_ram = 0, n_win = 0, null_out = 0, clock_check = 0, autosave = 0, show = 0, i, kind = -1, rate = 0;
+    int no_bt = 0;
     double seconds = 10.0;
     char v[64];
     struct sigaction sa;
@@ -1326,6 +1335,12 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--clock-check")) clock_check = 1;
         else if (!strcmp(a, "--show-keys")) show = 1;
         else if (!strcmp(a, "--no-sound")) g_no_sound = 1;
+        else if (!strcmp(a, "--no-bt")) no_bt = 1;
+        else if (!strcmp(a, "--bt-probe")) {
+            int yes = bt_detect();
+            printf("BT Speak or BT Braille: %s\n", yes ? "yes" : "no");
+            return yes ? 0 : 1;
+        }
         else if (!strcmp(a, "--ram-has") && val && n_ram < 16) ram_texts[n_ram++] = TAKE();
         else if (!strcmp(a, "--rms") && val && n_win < 16) {
             const char *r = TAKE();
@@ -1377,6 +1392,12 @@ int main(int argc, char **argv)
             return 2;
         }
         g_rate = rate;
+    }
+    /* on a BT Speak or BT Braille: the device's own keyboard, speech and braille display (bt_handover.h); never for
+       the headless runs or --show-keys */
+    if (!g_headless && !show) {
+        const char *fw = fw_given ? fw_given : ini_get(g_ini, "unit", "firmware_dir", "");
+        bt_hand_over(no_bt, ini_get(g_ini, "input", "bt", "auto"), unit_id, *fw ? fw : NULL, cfg_given, rate);
     }
     term_dec_init(&g_term);
     find_firmware(fw_given);

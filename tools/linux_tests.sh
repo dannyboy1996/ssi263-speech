@@ -146,6 +146,17 @@ if [ -x "$EMU" ]; then
         "^FAIL +the clock, from the system time \(letters\)" "^emulator: [23] of 4 FAILED$" \
         -- env BLAZIE_KEYS_BREAK=1 python3 src/apps/blazie/test_emu_linux.py "$EMU" "$DATA" \
         --only boot,clock-keys,clock-letters
+    # one emulator everywhere (Tomi): on a BT Speak or BT Braille blazie_emu hands over to blazie_emu_bt
+    # (bt_handover.c) -- the detection against a stand-in BTSpeak library, this machine's own answer (no), the
+    # hand-over's options to a stand-in frontend, and --no-bt, [input] bt = off, no device and a missing frontend
+    # keeping the terminal; its control ignores --no-bt and the setting and loses --unit
+    check "emulator: a BT Speak or BT Braille found, handed over to blazie_emu_bt" \
+        python3 src/apps/blazie/test_bt_handover.py "$EMU"
+    control "emulator: BT hand-over CONTROL (--no-bt and the setting ignored, --unit lost, must fail)" \
+        "^ok +detection: the BTSpeak library and its keyboard service" "^ok +detection: no BTSpeak library" \
+        "^FAIL +hand-over: the device found, its options" "^FAIL +--no-bt: the terminal emulator" \
+        "^FAIL +\[input\] bt = off: the terminal emulator" "^ok +no device: the terminal emulator" \
+        "^bt hand-over: 3 of 10 FAILED$" -- env BLAZIE_BT_BREAK=1 python3 src/apps/blazie/test_bt_handover.py "$EMU"
     check "emulator: libraries needed (libc, libm, libasound/libpulse; libstdc++ inside)" sh -c "! ldd $EMU | \
         grep -v -E 'linux-vdso|ld-linux|libc\.so|libm\.so|libpthread|libasound|libpulse|libdl' | grep -q . && \
         ! ldd $EMU | grep -q -E 'libstdc|libgcc_s' && echo 'only the C library and the sound library'"
@@ -204,12 +215,42 @@ control "Python wheel CONTROL (rate 70, must fail)" "^ok +the chip alone:" "^FAI
     "^wheel: 1 FAILED$" -- env WHEEL_TEST_BREAK=1 python3 python/test_wheel.py --build "$DATA"
 # the no-GPL audit: what ships -- the library, the module, the package (built here, firmware included) and a wheel
 rm -rf build/audit && mkdir -p build/audit
+# The Braille 'n Speak 2000's firmware ships in the emulator's own downloads only, never in this package (Tomi): a
+# package made from a firmware folder that has it (the data folder's files, and stand-ins in bns2000/ when it has
+# none) must carry none of it; the control, a package holding one Braille 'n Speak file, must fail
+no_bns() {                         # a package: no Braille 'n Speak 2000 firmware in it
+    hits="$(tar -tzf "$1" | grep -i -E '(^|/)bns2000/|bs03eng|bs2sll')"
+    if [ -n "$hits" ]; then
+        echo "$hits" | sed "s/^/FAIL Braille 'n Speak 2000 firmware in the package: /"
+        echo "no-BNS check: FAILED"
+        return 1
+    fi
+    echo "no Braille 'n Speak 2000 firmware in $(basename "$1")"
+}
+BNS_FW=build/audit/firmware-with-bns
+mkdir -p "$BNS_FW"
+for f in "$DATA"/*; do ln -s "$f" "$BNS_FW/"; done
+if [ ! -e "$BNS_FW/bns2000" ]; then
+    mkdir "$BNS_FW/bns2000"
+    for f in BS03ENG.BNS bs03eng_fresh.state BS2SLL.BNS bs2sll_fresh.state; do echo stand-in > "$BNS_FW/bns2000/$f"; done
+fi
+rm -rf build/ssi263-speech-bns-check-linux-* build/package/ssi263-speech-bns-check-linux-*
+check "package from a firmware folder with the Braille 'n Speak 2000's" sh tools/package_linux.sh "$BNS_FW" bns-check
+check "no Braille 'n Speak 2000 firmware in the Linux package" \
+    no_bns build/ssi263-speech-bns-check-linux-"$(uname -m)".tar.gz
+rm -rf build/ssi263-speech-bns-check-linux-* build/package/ssi263-speech-bns-check-linux-*
+mkdir -p build/audit/bns-control/pkg/share/ssi263-speech/bns2000
+echo stand-in > build/audit/bns-control/pkg/share/ssi263-speech/bns2000/BS03ENG.BNS
+tar -czf build/audit/bns-control.tar.gz -C build/audit/bns-control pkg
+control "no-BNS CONTROL (a package with the Braille 'n Speak 2000's firmware, must fail)" \
+    "^FAIL Braille 'n Speak 2000 firmware in the package: pkg/share/ssi263-speech/bns2000/BS03ENG\.BNS$" \
+    "^no-BNS check: FAILED$" -- no_bns build/audit/bns-control.tar.gz
 check "package" sh tools/package_linux.sh "$DATA"
 check "wheel for the audit" python3 python/build_wheel.py --lib-dir build/linux --plat "linux_$(uname -m)" \
     --out build/audit
 check "no z180emu or Unicorn engine, no GPL notice in what ships" python3 tools/check_no_gpl.py "$LIB" \
-    build/linux/sd_ssi263 build/linux/blazie_emu build/linux/blazie_files $GTK_SHIP \
-    build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
+    build/linux/sd_ssi263 build/linux/blazie_emu build/linux/blazie_files build/linux/blazie_bt \
+    build/linux/blazie_emu_bt $GTK_SHIP build/ssi263-speech-*-linux-"$(uname -m)".tar.gz \
     build/audit/ssi263speech-*.whl
 # the licences that must ship: MIT (ours, Casso's) and MAME's BSD-3-Clause for the Z180, in the package and the wheel
 check "licences in the package and the wheel" sh -c "tar -tzf build/ssi263-speech-*-linux-$(uname -m).tar.gz | \
@@ -235,14 +276,15 @@ fi
 check "no-GPL audit: comments and MAME compatibility names are not evidence" python3 tools/check_no_gpl.py \
     --clean-sample
 check "no build path in what ships" sh -c "! grep -a -q -F '$ROOT' '$LIB' build/linux/sd_ssi263 build/linux/blazie_emu \
-    build/linux/blazie_files $GTK_SHIP"
+    build/linux/blazie_files build/linux/blazie_bt build/linux/blazie_emu_bt $GTK_SHIP"
 control "no-GPL audit CONTROL (genuine legacy payloads, must fail)" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: z180emu engine" \
     "^FAIL control\.apk: control\.apk!lib/arm64-v8a/libssi263speech\.so: Unicorn engine" \
     "^FAIL control\.apk: control\.apk!lib/x86/unicorn\.dll: a legacy payload by name" \
     "^FAIL control\.apk: control\.apk!hosts/ucmini\.py: Unicorn import" \
     "^FAIL control\.apk: control\.apk!hosts/i8085\.py: a legacy payload by name" \
-    "^FAIL control\.apk: control\.apk!assets/licenses/third-party\.txt: GPL notice" "^no-GPL audit: 1 of 1 FAILED$" \
+    "^FAIL control\.apk: control\.apk!assets/licenses/third-party\.txt: GPL notice" \
+    "^FAIL control\.apk: control\.apk!bin/blazie_emu_bt!frontend\.py: Unicorn import" "^no-GPL audit: 1 of 1 FAILED$" \
     -- python3 tools/check_no_gpl.py --control
 if [ -f "$LEGACY/libssi263speech_legacy.so" ]; then
     # the real thing, stripped as the APK's library is: what stripping keeps must still give z180emu away

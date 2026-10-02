@@ -3,6 +3,7 @@
 import signal
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -15,6 +16,50 @@ EXE = ROOT / "build/linux/blazie_bt"
 FIRMWARE_DIR = Path(os.environ.get("BLAZIE_TEST_FIRMWARE", str(ROOT / "firmware/blazie"))).resolve()
 FIRMWARE = FIRMWARE_DIR / "BL2ENG.BNS"
 FACTORY = FIRMWARE_DIR / "bl2_2003_warm.state"
+
+# A stand-in backend with the real worker's replies: its queue-full warnings for KEY and BARS, its Type 'n Speak
+# queue-full answer to TNS, and a failed save. Needs no build and no firmware.
+STUB = """import sys
+print("READY", flush=True)
+for line in sys.stdin:
+    word = line.split()[0]
+    if word == "KEY":
+        print("ERROR Keyboard queue full; the last chord was not entered.", flush=True)
+    elif word == "BARS":
+        print("ERROR Braille bar queue full.", flush=True)
+    elif word == "TNS":
+        print("ERROR Type 'n Speak keyboard queue full.", flush=True)
+    elif word == "SAVE":
+        print("ERROR Could not save the unit's memory.", flush=True)
+    elif word == "QUIT":
+        print("BYE", flush=True)
+        break
+    else:
+        print("OK", flush=True)
+"""
+
+
+class TransientWarningTests(unittest.TestCase):
+    def test_queue_full_warnings_do_not_end_the_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "blazie_bt"
+            stub.write_text("#!" + sys.executable + "\n" + STUB)
+            stub.chmod(0o755)
+            worker = Worker(stub, Path(tmp) / "fw", None, Path(tmp) / "saved")
+            self.addCleanup(worker.abort)
+            with self.assertLogs("worker", "WARNING") as logged:
+                worker.send("KEY 0 1")
+                worker.send("BARS 1")
+                worker.request("QUICK 1", "OK")  # Both warnings arrive before this OK; the session goes on.
+            self.assertEqual(len(logged.records), 2)
+            self.assertIn("Keyboard queue full", logged.output[0])
+            self.assertIn("Braille bar queue full", logged.output[1])
+            # Every other error still ends it: the Type 'n Speak's answer to its request, and a failed save.
+            with self.assertRaisesRegex(WorkerError, "Type 'n Speak keyboard queue full"):
+                worker.request("TNS a", "OK")
+            with self.assertRaisesRegex(WorkerError, "save"):
+                worker.request("SAVE", "SAVED")
+            worker.close()
 
 
 @unittest.skipUnless(EXE.exists() and FIRMWARE.exists() and FACTORY.exists(), "Build the worker and supply firmware")

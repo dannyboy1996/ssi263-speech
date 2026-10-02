@@ -39,17 +39,8 @@ for dir in "$FW" "$FW/spanish"; do
         break
     fi
 done
-# Optional Braille 'n Speak pairs, in either layout supported by the emulator.
-for pair in "BS03ENG.BNS bs03eng_fresh.state" "BS2SLL.BNS bs2sll_fresh.state"; do
-    set -- $pair
-    for dir in "$FW/bns2000" "$FW"; do
-        if [ -f "$dir/$1" ] && [ -f "$dir/$2" ]; then
-            mkdir -p "$STAGE/share/ssi263-speech/bns2000"
-            cp "$dir/$1" "$dir/$2" "$STAGE/share/ssi263-speech/bns2000/"
-            break
-        fi
-    done
-done
+# The Braille 'n Speak 2000's firmware ships in the emulator's own downloads only, never in this package (Tomi);
+# the emulators offer it when the person supplies it.
 # the other voices' firmware, for the voices the module has (sd_ssi263 --voices), and their notices
 VOICES="$("$ROOT/build/linux/sd_ssi263" --voices | cut -f1)"
 has() { echo "$VOICES" | grep -qx "$1"; }

@@ -106,10 +106,11 @@ elif pkg-config --exists libpulse-simple 2>/dev/null; then
     AUDIO_DEF="-DBLAZIE_AUDIO_PULSE"; AUDIO_LIBS="$(pkg-config --libs libpulse-simple)"; SOUND=PulseAudio
 fi
 if [ -n "$AUDIO_LIBS" ]; then
-    for f in audio_linux serial_linux evdev_linux main_linux; do
+    # bt_handover: on a BT Speak or BT Braille, blazie_emu hands over to blazie_emu_bt (built below)
+    for f in audio_linux serial_linux evdev_linux bt_handover main_linux; do
         $CC $APPF $AUDIO_DEF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
     done
-    $CXX $SHARED_CXX -o "$OUT/blazie_emu" "$OUT/obj_emu/main_linux.o" "$OUT/obj_emu/audio_linux.o" \
+    $CXX $SHARED_CXX -o "$OUT/blazie_emu" "$OUT/obj_emu/main_linux.o" "$OUT/obj_emu/bt_handover.o" "$OUT/obj_emu/audio_linux.o" \
         "$OUT/obj_emu/audio_pace.o" "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS $EMU_OBJS $AUDIO_LIBS \
         -lpthread -lm
     echo "built $OUT/blazie_emu (sound: $SOUND)"

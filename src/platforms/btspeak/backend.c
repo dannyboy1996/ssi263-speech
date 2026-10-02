@@ -39,6 +39,28 @@ static double now(void)
 
 static void stop(int sig) { (void)sig; stopping = 1; }
 
+/* The rename itself made durable: the folder's entry flushed, so the new state survives a power loss on the device.
+   Best effort: by now the new state has replaced the old, so a folder that cannot be flushed (a file system without
+   it) is not reported as a failed save. */
+static void sync_folder(const char *path)
+{
+    char dir[PATH_MAX], *slash;
+    int fd;
+    snprintf(dir, sizeof dir, "%s", path);
+    slash = strrchr(dir, '/');
+    if (!slash)
+        snprintf(dir, sizeof dir, ".");
+    else if (slash == dir)
+        dir[1] = 0;
+    else
+        *slash = 0;
+    fd = open(dir, O_RDONLY | O_DIRECTORY);
+    if (fd >= 0) {
+        fsync(fd);
+        close(fd);
+    }
+}
+
 static int save(void)
 {
     char tmp[PATH_MAX];
@@ -52,6 +74,7 @@ static int save(void)
         if (fd >= 0) close(fd);
     }
     if (ok) ok = rename(tmp, save_path) == 0;
+    if (ok) sync_folder(save_path);
     if (!ok) {
         unlink(tmp);
         puts("ERROR Could not save the unit's memory.");

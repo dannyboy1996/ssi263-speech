@@ -1,5 +1,6 @@
 """Bounded pipe communication with the native worker; no BT UI imports."""
 
+import logging
 import os
 import select
 import subprocess
@@ -11,6 +12,13 @@ from pathlib import Path
 
 class WorkerError(RuntimeError):
     pass
+
+
+# A key or bar press dropped because the unit had not yet read the ones before it (typed faster than it reads):
+# the backend says so, and the session goes on. Every other ERROR line ends it. The Type 'n Speak's queue-full
+# answers a TNS request, so it stays an error there rather than a five-second wait for an OK that never comes.
+TRANSIENT = ("Keyboard queue full", "Braille bar queue full")
+log = logging.getLogger(__name__)
 
 
 class Worker:
@@ -61,6 +69,9 @@ class Worker:
             self.buffer = bytearray(remaining)
             text = line.decode("utf-8", errors="replace")
             if text.startswith("ERROR "):
+                if text[6:].startswith(TRANSIENT):
+                    log.warning("Blazie worker: %s", text[6:])
+                    continue
                 raise WorkerError(text[6:])
             if text.startswith("BRAILLE "):
                 try:

@@ -138,9 +138,13 @@ def clean_members():
 
 def control_artifact(folder, clean=False):
     """A fake APK: the clean members, and (unless `clean`) the genuine legacy payloads' marks -- a stripped z180emu
-    library keeps its daisy chain's assert text, Unicorn's library its API -- unicorn.dll, ucmini.py, i8085.py and the
-    GPL's text among the licences."""
+    library keeps its daisy chain's assert text, Unicorn's library its API -- unicorn.dll, ucmini.py, i8085.py, the
+    GPL's text among the licences, and an executable Python zipapp (a shebang before its zip, no extension, as the
+    BT frontend's bin/blazie_emu_bt) with a module importing Unicorn: seen only if the zipapp is opened."""
     apk = os.path.join(folder, "clean.apk" if clean else "control.apk")
+    zipapp = io.BytesIO()
+    with zipfile.ZipFile(zipapp, "w") as z:
+        z.writestr("frontend.py", "import unicorn\n")
     with zipfile.ZipFile(apk, "w") as z:
         for name, data in clean_members():
             z.writestr(name, data)
@@ -152,6 +156,7 @@ def control_artifact(folder, clean=False):
             z.writestr("hosts/i8085.py", "# the Python 8085\n")
             z.writestr("hosts/__pycache__/ucmini.cpython-37.pyc", b"\x42\x0d\x0d\x0a")
             z.writestr("assets/licenses/third-party.txt", "GNU GENERAL PUBLIC LICENSE\nVersion 2, June 1991\n")
+            z.writestr("bin/blazie_emu_bt", b"#!/usr/bin/env python3\n" + zipapp.getvalue())
     return apk
 
 

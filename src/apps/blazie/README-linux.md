@@ -35,13 +35,23 @@ too).
 Debian 13 (glibc 2.38 or later). On an older system -- quite possibly a BTSpeak, whose system is Raspberry Pi OS of
 some version -- build it on the machine itself (the three commands above), which also covers a 32-bit (armhf) system.
 
-## BT Speak and BT Braille frontend
+## BT Speak and BT Braille
 
-On a BT device, `./build/linux/blazie_emu_bt` provides the native Blazie Mode dialogs, direct six-dot
-keyboard input, and the firmware’s braille display. It is built alongside `blazie_emu` and `blazie_emu_gtk`.
-The Linux release includes `bin/blazie_emu_bt` and its companion worker `bin/blazie_bt`; keep both.
-The frontend needs Python 3.11+ and the device’s installed BTSpeak libraries. It keeps its memory and
-preferences in the BT user directory, separate from the terminal/GTK emulator’s settings.
+Run `blazie_emu`; on a BT Speak or BT Braille it uses the device automatically. It says "BT Speak or BT Braille
+detected: using its keyboard, speech and braille display." and hands over to `blazie_emu_bt` beside it, which
+provides the native Blazie Mode dialogs, direct six-dot keyboard input, and the firmware's braille display
+(`bt_handover.c`; `--unit`, `--firmware`, `--config` and `--rate` are passed on, `--config` as its `--state-dir`).
+The device is recognised when the system's `python3` imports the device's `BTSpeak` library and its keyboard
+service answers -- what the frontend itself needs; an ordinary PC or Raspberry Pi has no `BTSpeak` library, so
+`blazie_emu` stays in the terminal there (`blazie_emu --bt-probe` says what it finds). `--no-bt`, or
+`bt = off` under `[input]` in the settings, keeps the terminal emulator on the device; if `blazie_emu_bt` is not
+installed beside `blazie_emu`, one line says so and the terminal emulator runs. The desktop app (`blazie_emu_gtk`)
+never hands over: the BT devices have no desktop.
+
+`blazie_emu_bt` is built alongside `blazie_emu` and `blazie_emu_gtk`. The Linux release includes
+`bin/blazie_emu_bt` and its companion worker `bin/blazie_bt`; keep both. The frontend needs Python 3.11+ and the
+device's installed BTSpeak libraries. It keeps its memory and preferences in the BT user directory, separate from
+the terminal/GTK emulator's settings (unless `--config` is given).
 See [the BT guide](../../platforms/btspeak/README.md) in the source tree, or `README-blazie-bt.md` in the package.
 
 ## Run
@@ -52,6 +62,8 @@ See [the BT guide](../../platforms/btspeak/README.md) in the source tree, or `RE
     blazie_emu --show-keys        what this keyboard sends: the terminal's bytes and the keys they are, and the
                                   input devices' keys going down and up (for the key settings; q q stops it)
     blazie_emu --no-sound         no sound card: the unit runs on silent, paced by the system clock
+    blazie_emu --no-bt            on a BT Speak or BT Braille: the terminal emulator all the same (above)
+    blazie_emu --bt-probe         is this a BT Speak or BT Braille? (yes: exit 0)
     blazie_emu --help
 
 The firmware is looked for in `firmware_dir` in the settings, else beside the program: the package's
@@ -363,7 +375,9 @@ paced by the device (about a fifth of a core); each unit started from the unpack
 
 ## Not yet verified on a real BTSpeak
 
-None of this has run on a BTSpeak yet. To find out there:
+On a BT Speak or BT Braille, `blazie_emu` now hands over to the BT frontend (above), which Leo has run on a real BT
+Braille; this section is about the terminal emulator itself there (`blazie_emu --no-bt`). None of this has run on a
+BTSpeak yet. To find out there:
 
 - which build runs (its system's glibc; 64- or 32-bit) -- else build it on the device;
 - what its braille keyboard sends in a terminal: `blazie_emu --show-keys`, in the Blazie-mode console and in Desktop

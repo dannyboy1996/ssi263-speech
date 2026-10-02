@@ -33,7 +33,7 @@ fi
 echo "Installing the SSI-263 voices"
 mkdir -p "$DATA" "$PREFIX/lib" "$MODCONF"
 cp "$HERE"/share/ssi263-speech/*.BNS "$HERE"/share/ssi263-speech/*.state "$DATA/"
-for d in aicom-accent-sa aicom-accent-mini gw-micro-speakout bns2000; do   # other voices and optional emulator models
+for d in aicom-accent-sa aicom-accent-mini gw-micro-speakout; do   # the other voices' firmware (sd_voices.h)
     if [ -d "$HERE/share/ssi263-speech/$d" ]; then
         mkdir -p "$DATA/$d"
         cp "$HERE/share/ssi263-speech/$d"/* "$DATA/$d/"

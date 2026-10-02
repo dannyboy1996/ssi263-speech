@@ -1,6 +1,6 @@
 # Blazie firmware on BT Speak and BT Braille
 
-This frontend runs the existing emulator’s Braille Lite 2000, Braille ’n Speak 2000, and Type ’n Speak firmware
+This frontend runs the existing emulator's Braille Lite 2000, Braille 'n Speak 2000, and Type 'n Speak firmware
 using the shared emulator core and SSI-263 voice.
 The device's keyboard server supplies the original dot keys, before BRLTTY translates them. Host menus use
 the installed `BTSpeak.dialogs` library. The firmware handles editing, commands, speech settings, and files.
@@ -10,12 +10,24 @@ Speech, keyboard access, and the firmware's own braille output are supported. Th
 
 ## Build and run
 
-From the repository root, with the English firmware and factory state in `firmware/blazie/`:
+Run `blazie_emu`, the same command as on any other Linux machine; on a BT Speak or BT Braille it uses the device
+automatically. From the repository root, with the English firmware and factory state in `firmware/blazie/`:
 
 ```sh
 ./build_linux.sh
-./build/linux/blazie_emu_bt
+./build/linux/blazie_emu
 ```
+
+On the device, `blazie_emu` says "BT Speak or BT Braille detected: using its keyboard, speech and braille display."
+and hands over to `blazie_emu_bt` beside it (`src/apps/blazie/bt_handover.c`), passing on `--unit`, `--firmware`,
+`--config` (as `--state-dir`) and `--rate`; its terminal-only options have no equivalent here and are left behind.
+The device is recognised when the system's `python3` imports the device's `BTSpeak` library and its keyboard service
+answers (`kb_client.server_available()`), which is what this frontend needs to run; an ordinary PC or Raspberry Pi
+has no `BTSpeak` library, so `blazie_emu` stays in the terminal there. `blazie_emu --bt-probe` says what it finds.
+`blazie_emu --no-bt`, or `bt = off` under `[input]` in its `blazie_emu.ini`, keeps the terminal emulator on the
+device. If `blazie_emu_bt` or `blazie_bt` is missing beside it, `blazie_emu` says so in one line and runs in the
+terminal. `./build/linux/blazie_emu_bt` can also be run directly, with the options below. The desktop app,
+`blazie_emu_gtk`, never hands over: the BT devices have no desktop.
 
 The build produces two runtime files:
 
@@ -33,8 +45,10 @@ using the same compiled worker in `build/linux`. Rebuild the normal launcher aft
 `python3 tools/build_bt_frontend.py`; rerun `./build_linux.sh` after native-code changes.
 
 The existing `tools/package_linux.sh firmware/blazie VERSION` includes both runtime files under `bin/`,
-this guide as `README-blazie-bt.md`, and supplied firmware under `share/ssi263-speech/`. From an unpacked
-package run `./bin/blazie_emu_bt`; after installation with the existing Linux installer, run `blazie_emu_bt`.
+this guide as `README-blazie-bt.md`, and the packaged firmware under `share/ssi263-speech/`. The Braille 'n Speak
+2000's firmware is never in that package (it ships with the emulator's own downloads only); its profiles appear
+when you supply it. From an unpacked package run `./bin/blazie_emu`; after installation with the existing Linux
+installer, run `blazie_emu`.
 That installer also installs/configures speech-dispatcher and requires its existing system configuration;
 it is not needed to run the unpacked BT application. No BT device library is bundled or replaced.
 Firmware is located relative to the executable, so the build and unpacked package can run from any working
@@ -52,8 +66,8 @@ Optional arguments:
 
 The initial default is 22050 Hz with the long (250 ms) audio buffer. Audio choices are remembered;
 `--rate` overrides and saves the sample rate for this and later runs. Sound-device
-failure is reported; it does not silently continue without a voice. Braille Lite and Braille ’n Speak require a factory state on the
-first start; Type ’n Speak uses its own cold setup. An existing saved state takes precedence; a damaged state is reported instead of reset.
+failure is reported; it does not silently continue without a voice. Braille Lite and Braille 'n Speak require a factory state on the
+first start; Type 'n Speak uses its own cold setup. An existing saved state takes precedence; a damaged state is reported instead of reset.
 
 ## Keyboard
 
@@ -109,13 +123,13 @@ firmware switches and launches. Existing preferences without audio settings reta
 | 10 Hz channel tick | On/off | On |
 
 The sample rate and buffer apply to every model. Idle sound, channel behavior, pops, and ticks are hidden for
-Type ’n Speak because the shared emulator does not model those effects for it. Original idle behavior means
+Type 'n Speak because the shared emulator does not model those effects for it. Original idle behavior means
 hiss at even firmware volume settings and whine at odd settings. Firmware speech speed, pitch, inflection,
-and volume still use the firmware’s own commands. Quick key response remains a separate host-menu setting.
+and volume still use the firmware's own commands. Quick key response remains a separate host-menu setting.
 
 A smaller buffer reduces additional speech latency; choose a larger one if playback breaks up. Automatic
 uses the existing shared audio pacing code, starting fresh when the output device reopens. The unsupported
-40 ms “short” test mode is not offered. Actual latency also depends on the sound device and system mixer.
+40 ms "short" test mode is not offered. Actual latency also depends on the sound device and system mixer.
 
 Buffer and sound-effect choices do not restart the unit. Changing sample rate saves memory and recreates
 the unit from that saved memory, as the original emulator does. The worker checks audio-device support first
@@ -138,32 +152,33 @@ The same nested and flat firmware-folder layouts as the original terminal emulat
 | `bns-en` | `bns2000/BS03ENG.BNS` | `bns_english.state` | None |
 | `bns-sk` | `bns2000/BS2SLL.BNS` | `bns_slovak.state` | None |
 
-Braille Lite and Braille ’n Speak use the factory filenames from the original emulator (`main_linux.c` KINDS).
-Type ’n Speak starts cold if there is no saved memory. English and Spanish Braille Lite and Type ’n Speak
-are present on this checkout; Braille ’n Speak appears when its firmware and factory state are supplied.
+Braille Lite and Braille 'n Speak use the factory filenames from the original emulator (`main_linux.c` KINDS).
+Type 'n Speak starts cold if there is no saved memory. English and Spanish Braille Lite and Type 'n Speak
+are present on this checkout; Braille 'n Speak appears when its firmware and factory state are supplied.
 The firmware controls display length: speech-only models clear the cells. The older Braille Lite 18 and
 40 ROMs are rejected by the existing core; a 40-cell display decoder alone does not make those ROMs runnable.
 
-Type ’n Speak has a QWERTY keyboard. Only for that model, six-dot computer braille is converted to QWERTY
-keystrokes using the original emulator’s `keys.c` and `tns_term.c`. E-chord sends Enter, B-chord Backspace,
+Type 'n Speak has a QWERTY keyboard. Only for that model, six-dot computer braille is converted to QWERTY
+keystrokes using the original emulator's `keys.c` and `tns_term.c`. E-chord sends Enter, B-chord Backspace,
 dots 3-6 chord Escape, I-chord Tab, dots 1/4 chords Up/Down, dots 2/5 chords Left/Right. Other space chords
-send Control plus the character. **Send Type ’n Speak key** in the host menu accepts names such as `ctrl-e`,
+send Control plus the character. **Send Type 'n Speak key** in the host menu accepts names such as `ctrl-e`,
 `shift-a`, `alt-x`, `f1`, and `ctrl-alt-delete`, covering combinations without a direct braille shortcut.
 The panel bars are unused for this model. Host menu and deep-escape chords remain available.
-This adapter never changes Braille Lite or Braille ’n Speak keyboard input.
+This adapter never changes Braille Lite or Braille 'n Speak keyboard input.
 
-On a new Type ’n Speak, answer each setup question with `y` (English) or `s` (Spanish), seven answers in all:
+On a new Type 'n Speak, answer each setup question with `y` (English) or `s` (Spanish), seven answers in all:
 initialize files, confirm, initialize flash, confirm, initialize folders, delete file area, confirm.
 Wait for the next prompt: flash initialization takes about 45 seconds of clicks; the final clear takes
-about 35 seconds of silence. This is the original firmware’s setup of its own fresh memory.
+about 35 seconds of silence. This is the original firmware's setup of its own fresh memory.
 
 ## Memory and cleanup
 
 Memory is kept under `script.getUserSubdirectory("blazie-emulator")`, separate from the desktop
-and terminal emulator’s settings. Each firmware profile has its own state file; the original English
+and terminal emulator's settings. Each firmware profile has its own state file; the original English
 Braille Lite memory remains `english.state`. A lock prevents two instances from writing the same unit. Memory is saved
 every minute while running, on an explicit save, and on exit, SIGINT, SIGTERM, SIGHUP, or loss of the frontend.
-Saves use a flushed temporary file followed by replacement of the previous state. As with other processes,
+Saves use a flushed temporary file followed by replacement of the previous state, and the folder is flushed after
+the replacement so it survives a power loss. As with other processes,
 SIGKILL or loss of power can lose changes since the most recent save.
 
 The worker pauses and closes audio for a host menu. Keyboard capture is released before any host dialog or
@@ -176,7 +191,9 @@ The native worker starts paused and uses a small private stdin/stdout protocol. 
 `BRAILLE`, `TNS key-name`, `QUICK 0` / `QUICK 1`, `AUDIO`,
 `AUDIO rate buffer idle keep-open pop-click tick`, `SAVE`, and `QUIT`.
 Responses are `READY`, `RUNNING`, `PAUSED`, `OK` (for `QUICK`, `TNS`, and audio changes), `SAVED`, `BYE`, or `ERROR reason`.
-`KEY` and `BARS` have no success response. A zero chord updates only held keys.
+`KEY` and `BARS` have no success response. A zero chord updates only held keys. Their "Keyboard queue full" and
+"Braille bar queue full" errors (keys typed faster than the unit reads them) are logged and the session continues;
+every other `ERROR` ends it.
 `AUDIO` queries the current options; the six-argument form changes them only while paused. Buffer is
 `auto`, `medium`, or `long`; idle is 0–3; keep-open is 0–2; pop-click and tick are 0/1. A sample-rate change
 can also emit `SAVED` before `OK`. The initial CLI rate accepts the same six rates as the menu.
@@ -186,7 +203,7 @@ The keyboard loop acknowledges server events before writing to the worker, using
 ## Braille display
 
 The emulator decodes the physical display bus, rather than reading firmware RAM or translating its speech.
-This preserves the firmware’s own braille translation, cursor dots, and display messages. L3/R3 press the
+This preserves the firmware's own braille translation, cursor dots, and display messages. L3/R3 press the
 forward contact, and L2/R2 press the back contact. The firmware still controls an 18-cell line on a BT Braille 40; extra physical cells
 do not change the firmware's navigation or wrapping. BT Speak continues to work with speech alone.
 
@@ -230,12 +247,36 @@ and help text. The physical cells still need a user's tactile check.
 
 Navigation tests press and release the real emulated port contacts, verify forward/back help text,
 and check overlapping left/right holds. Profile tests cover all six choices, separate memories,
-remembered selection, successful switching, and recovery from a failed switch. Type ’n Speak tests
+remembered selection, successful switching, and recovery from a failed switch. Type 'n Speak tests
 exercise both installed languages, keyboard input, absent braille output, and saving.
 
 Audio tests cover old-preference migration, every menu control, all six native sample rates, all buffer
 modes, memory preservation, cancellation, device/save failures, and rollback after a preference-write failure.
 Hardware listening is still needed to choose the shortest buffer that plays smoothly on a particular device.
+
+`blazie_emu`'s hand-over is tested by `src/apps/blazie/test_bt_handover.py` (in `tools/linux_tests.sh`): the
+detection against a stand-in `BTSpeak` library and keyboard service, either one missing, and the test machine
+itself; the options passed to a stand-in `blazie_emu_bt`; `--no-bt`, `bt = off`, no device and a missing frontend
+keeping the terminal emulator. Its control (`BLAZIE_BT_BREAK=1`) must fail.
+
+## Files
+
+| File | What it does |
+| --- | --- |
+| `frontend.py` | The frontend: arguments, start-up checks, the capture loop (keyboard service events to the worker, braille polling), the host menu, firmware switching, deep escape, and the final save. |
+| `worker.py` | The native worker's pipe protocol: start, bounded requests and replies, `BRAILLE` frames, logged queue-full warnings, close and abort. No BT UI imports. |
+| `backend.c` | The native worker (`build/linux/blazie_bt`): one unit from `src/apps/blazie/emu_unit.c` with the Linux audio code, its commands on stdin, saves to a flushed temporary file renamed over the state. |
+| `keymap.py` | Six-dot chords from the device's key events: held keys, the menu and deep-escape chords, dots 7 and 8 ignored. |
+| `tns_keyboard.py` | Six-dot computer braille to the Type 'n Speak's key names (Type 'n Speak only). |
+| `display.py` | Firmware braille frames to the device's cells, padded to its width, sent only when changed. |
+| `profiles.py` | The six firmware profiles: firmware and factory-state names in both folder layouts, each one's saved memory. |
+| `preferences.py` | `preferences.json` beside the saved memory: the unit, quick key response, the audio settings. |
+| `audio_options.py`, `audio_menu.py` | The audio settings and their host menu. |
+| `runtime_paths.py` | The worker and firmware beside the launcher: the source tree, `build/linux`, or the package's `bin/`. |
+| `blazie` | The source-tree launcher (`./src/platforms/btspeak/blazie`). |
+| `test_*.py` | The unit tests (Verification above); `test_worker.py` also drives the real worker and firmware, and `test_launch.py` builds and runs the bundle. |
+
+The bundle is made by `tools/build_bt_frontend.py`; `blazie_emu`'s hand-over to it is `src/apps/blazie/bt_handover.c`.
 
 ## Contributing
 
