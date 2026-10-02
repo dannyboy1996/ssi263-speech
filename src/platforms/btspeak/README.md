@@ -257,7 +257,8 @@ Hardware listening is still needed to choose the shortest buffer that plays smoo
 `blazie_emu`'s hand-over is tested by `src/apps/blazie/test_bt_handover.py` (in `tools/linux_tests.sh`): the
 detection against a stand-in `BTSpeak` library and keyboard service, either one missing, and the test machine
 itself; the options passed to a stand-in `blazie_emu_bt`; `--no-bt`, `bt = off`, no device and a missing frontend
-keeping the terminal emulator. Its control (`BLAZIE_BT_BREAK=1`) must fail.
+keeping the terminal emulator. Its control (`BLAZIE_BT_BREAK=1`) must fail. On a BT device itself, run the gate
+with `BLAZIE_TEST_ON_BT_DEVICE=1`, so the test machine's own detection is expected to say yes.
 
 ## Files
 
