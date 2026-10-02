@@ -952,6 +952,11 @@ BL_API int bh_memory(const bl_host *h, int which, const unsigned char **bytes)
     return bl_memory(h->unit, which, bytes);
 }
 
+BL_API int bh_braille(const bl_host *h, unsigned char *cells, int capacity)
+{
+    return bl_braille(h->unit, cells, capacity);
+}
+
 BL_API double bh_get_double(const bl_host *h, const char *name)
 {
     if (!strcmp(name, "last_speech")) return h->last_speech;
@@ -1023,6 +1028,11 @@ void bh_battery(bl_host *h, int level)
 void bh_keys_down(bl_host *h, int bits)
 {
     bl_keys_down(h->unit, bits);
+}
+
+void bh_braille_bars(bl_host *h, int down)
+{
+    bl_braille_bars(h->unit, down);
 }
 
 int bh_clock_on(bl_host *h, const blc_time *now, long long unix_now)

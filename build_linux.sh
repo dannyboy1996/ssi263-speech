@@ -70,7 +70,7 @@ rm -f "$OUT/test_bl_board_mame"                     # the old name of test_bl_bo
 # built, and tools/linux_tests.sh says so.  test_keys: its keyboard without a unit (no sound, no firmware).
 APP="$ROOT/src/apps/blazie"
 APPF="-O2 -std=gnu99 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter -Wno-format-truncation -I$APP -I$SRC -fmacro-prefix-map=$ROOT=."
-rm -rf "$OUT/obj_emu" "$OUT/blazie_emu"; mkdir -p "$OUT/obj_emu"
+rm -rf "$OUT/obj_emu" "$OUT/blazie_emu" "$OUT/blazie_bt" "$OUT/blazie_emu_bt"; mkdir -p "$OUT/obj_emu"
 $CC $BOARD -c -o "$OUT/obj_emu/tns_board.o" "$SRC/blazie/tns_board.c"
 for f in emu_unit chords keys term_keys bl_keys tns_term ini tns_setup tns_rescue audio_pace; do
     $CC $APPF -c -o "$OUT/obj_emu/$f.o" "$APP/$f.c"
@@ -86,6 +86,7 @@ EMU_OBJS="$CHIP_OBJS $BOARD_OBJS $OUT/obj/bl_host.o $OUT/obj_emu/tns_board.o $OU
 # a saved Type 'n Speak that was never set up (the previews' first start), told apart and set up anew
 RESCUE_OBJS="$OUT/obj_emu/tns_rescue.o $OUT/obj_emu/bl_files.o $OUT/obj_emu/bl_files_state.o"
 $CC $APPF -o "$OUT/test_keys" "$APP/test_keys.c" $KEY_OBJS
+$CC $APPF -o "$OUT/test_display" "$APP/test_display.c"
 # blazie_files: a saved unit's files from the command line (export, import, extract, pack, unpack), as on Windows
 $CC $APPF -o "$OUT/blazie_files" "$APP/blazie_files.c" $FILES_OBJS
 # the unit's own headless tests, as on Windows (build_app.py's test_emu_unit, test_clock, test_rescue), on MAME's Z180
@@ -112,6 +113,13 @@ if [ -n "$AUDIO_LIBS" ]; then
         "$OUT/obj_emu/audio_pace.o" "$OUT/obj_emu/serial_linux.o" "$OUT/obj_emu/evdev_linux.o" $KEY_OBJS $RESCUE_OBJS $EMU_OBJS $AUDIO_LIBS \
         -lpthread -lm
     echo "built $OUT/blazie_emu (sound: $SOUND)"
+    # Native worker for the BT Speak / BT Braille Python frontend. Shares the same board and audio code.
+    $CC $APPF $AUDIO_DEF -c -o "$OUT/obj_emu/bt_backend.o" "$ROOT/src/platforms/btspeak/backend.c"
+    $CXX $SHARED_CXX -o "$OUT/blazie_bt" "$OUT/obj_emu/bt_backend.o" "$OUT/obj_emu/audio_linux.o" \
+        "$OUT/obj_emu/audio_pace.o" "$OUT/obj_emu/keys.o" "$OUT/obj_emu/tns_term.o" $EMU_OBJS $AUDIO_LIBS -lm
+    echo "built $OUT/blazie_bt (BT Speak / BT Braille worker)"
+    python3 "$ROOT/tools/build_bt_frontend.py" "$OUT/blazie_emu_bt"
+    echo "built $OUT/blazie_emu_bt (BT Speak / BT Braille frontend, Python 3.11+)"
 else
     echo "NOT built: blazie_emu -- no ALSA (sudo apt install libasound2-dev) nor PulseAudio (libpulse-dev) headers"
 fi

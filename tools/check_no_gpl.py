@@ -48,17 +48,22 @@ NOTICE_NAME = re.compile(r"(?i)(^|/)(LICEN[CS]E|COPYING|NOTICE|DISTRIBUTION)[^/]
                          r"\.dist-info/METADATA$|(^|/)classes[0-9]*\.dex$")
 BINARY_MAGIC = (b"\x7fELF", b"MZ", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa", b"!<arch>\n",
                 b"\x4c\x01", b"\x64\x86")
-ARCHIVE = (".zip", ".apk", ".whl", ".jar", ".aar", ".nvda-addon", ".tar.gz", ".tgz", ".tar")
+ARCHIVE = (".zip", ".pyz", ".apk", ".whl", ".jar", ".aar", ".nvda-addon", ".tar.gz", ".tgz", ".tar")
+
+
+def is_zip(data):
+    # Executable Python zipapps have a shebang before the ZIP header, and often no extension.
+    return data[:4] == b"PK\x03\x04" or (data.startswith(b"#!") and zipfile.is_zipfile(io.BytesIO(data)))
 
 
 def is_archive(name, data):
     """By name or by content: a zip (an APK, a wheel, an NVDA add-on) or a gzip'd tar."""
-    return name.lower().endswith(ARCHIVE) or data[:4] == b"PK\x03\x04" or data[:2] == b"\x1f\x8b"
+    return name.lower().endswith(ARCHIVE) or is_zip(data) or data[:2] == b"\x1f\x8b"
 
 
 def members(data):
     """(member name, bytes) of an archive held in memory."""
-    if data[:4] != b"PK\x03\x04":
+    if not is_zip(data):
         with tarfile.open(fileobj=io.BytesIO(data)) as t:
             for m in t.getmembers():
                 if m.isfile():

@@ -35,6 +35,15 @@ too).
 Debian 13 (glibc 2.38 or later). On an older system -- quite possibly a BTSpeak, whose system is Raspberry Pi OS of
 some version -- build it on the machine itself (the three commands above), which also covers a 32-bit (armhf) system.
 
+## BT Speak and BT Braille frontend
+
+On a BT device, `./build/linux/blazie_emu_bt` provides the native Blazie Mode dialogs, direct six-dot
+keyboard input, and the firmware’s braille display. It is built alongside `blazie_emu` and `blazie_emu_gtk`.
+The Linux release includes `bin/blazie_emu_bt` and its companion worker `bin/blazie_bt`; keep both.
+The frontend needs Python 3.11+ and the device’s installed BTSpeak libraries. It keeps its memory and
+preferences in the BT user directory, separate from the terminal/GTK emulator’s settings.
+See [the BT guide](../../platforms/btspeak/README.md) in the source tree, or `README-blazie-bt.md` in the package.
+
 ## Run
 
     blazie_emu                    the unit you used last (the first time: the English Braille Lite)

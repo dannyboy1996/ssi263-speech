@@ -50,6 +50,15 @@ Windows on ARM too. You don't need numpy or a Visual C++ runtime. All three supp
 pitch change. The Braille Lite and Accent have an option to read numbers as words, because
 the Accent reads 100 as "one zero zero" and the Braille Lite stops short of trillions.
 
+## BT Speak and BT Braille emulator
+
+The [Blazie Mode frontend](src/platforms/btspeak/README.md) runs the original Blazie firmware, with a menu for the
+installed Braille Lite 2000, Braille 'n Speak 2000, and Type 'n Speak models and languages,
+with direct six-dot keyboard input and its SSI-263 voice. Build with `./build_linux.sh`, then run
+`./build/linux/blazie_emu_bt` from a Blazie Mode terminal. M-chord with Dot 7 opens the host menu.
+Braille Lite's own 18-cell output appears on BT Braille, with L2/R2 for back and L3/R3 for forward.
+Speech-only models clear the cells; host menus use the device's normal speech and braille dialogs.
+
 ## About the firmware
 
 The released add-ons carry each device's firmware, because without it there's no voice.

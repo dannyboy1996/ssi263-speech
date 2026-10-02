@@ -34,6 +34,11 @@ int emu_kind(const emu_unit *u);
    firmware never reads that bit).  Its idle channel is the Braille Lite's (measured on Tomi's Braille Lite only). */
 enum { EMU_MODEL_BRAILLE_LITE, EMU_MODEL_BNS2000, EMU_MODEL_TYPE_N_SPEAK };
 int emu_model(const emu_unit *u);
+/* Raw display cells (up to 40), left to right in standard eight-dot order; 0 when unavailable.
+   Copy of the last complete hardware latch, including any cursor dots set by the firmware. */
+int emu_braille(const emu_unit *u, unsigned char *cells, int capacity);
+/* Physical display bars, independent of keyboard chords: bit 0 forward, bit 1 back. */
+void emu_braille_bars(emu_unit *u, int down);
 
 /* renders `n` samples of the unit running in real time into out (16-bit mono PCM at out_rate) */
 void emu_render(emu_unit *u, short *out, int n);

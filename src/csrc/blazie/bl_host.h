@@ -104,6 +104,8 @@ BL_API int bh_pace(bl_host *h, const double *t, int n);
 /* tests: the unit's state (bl_board.h's bl_probe, bl_memory) for comparing two units at a checkpoint */
 BL_API void bh_probe(const bl_host *h, bl_probe *p);
 BL_API int bh_memory(const bl_host *h, int which, const unsigned char **bytes);
+BL_API int bh_braille(const bl_host *h, unsigned char *cells, int capacity);
+BL_API void bh_braille_bars(bl_host *h, int down);
 BL_API double bh_get_double(const bl_host *h, const char *name);
 BL_API void bh_set_double(bl_host *h, const char *name, double v);
 BL_API int bh_tx(const bl_host *h, const unsigned char **bytes);   /* every byte the unit sent back */

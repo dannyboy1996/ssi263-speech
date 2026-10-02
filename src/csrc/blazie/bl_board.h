@@ -46,6 +46,13 @@ void bl_destroy(bl_unit *u);
 #define BL_MODEL_BRAILLE_LITE 0      /* Braille Lite 2000 */
 #define BL_MODEL_BNS2000 1           /* Braille 'n Speak 2000 */
 int  bl_model(const bl_unit *u);
+/* Last complete display latch in standard dot order (dot 1 = bit 0, dot 8 = bit 7), left to right.
+   Returns 18 or 40 cells copied, or 0 before the first valid latch, without a display, or if capacity is too small.
+   The padding shift registers are not cells. This is hardware output, including the firmware cursor dots. */
+int bl_braille(const bl_unit *u, unsigned char *cells, int capacity);
+/* Physical display bars: bit 0 forward, bit 1 back. Active-low contacts at port 81h bits 6/7.
+   These contacts are polled separately from the chord keyboard. */
+void bl_braille_bars(bl_unit *u, int down);
 
 void bl_boot(bl_unit *u, unsigned long long target_instr);   /* bns 'B': run until that instruction count */
 void bl_live(bl_unit *u);                                    /* bns 'LIVE': the host drives A/R from now on */

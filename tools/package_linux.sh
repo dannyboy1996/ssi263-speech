@@ -33,9 +33,23 @@ mkdir -p "$STAGE/bin" "$STAGE/lib" "$STAGE/share/ssi263-speech/speech-dispatcher
 cp "$ROOT/build/linux/sd_ssi263" "$STAGE/bin/"
 cp "$ROOT/build/linux/libssi263speech.so" "$STAGE/lib/"
 cp "$FW/BL2ENG.BNS" "$FW/bl2_2003_warm.state" "$STAGE/share/ssi263-speech/"
-if [ -f "$FW/BL2SPA.BNS" ] && [ -f "$FW/bl2spa_fresh.state" ]; then
-    cp "$FW/BL2SPA.BNS" "$FW/bl2spa_fresh.state" "$STAGE/share/ssi263-speech/"
-fi
+for dir in "$FW" "$FW/spanish"; do
+    if [ -f "$dir/BL2SPA.BNS" ] && [ -f "$dir/bl2spa_fresh.state" ]; then
+        cp "$dir/BL2SPA.BNS" "$dir/bl2spa_fresh.state" "$STAGE/share/ssi263-speech/"
+        break
+    fi
+done
+# Optional Braille 'n Speak pairs, in either layout supported by the emulator.
+for pair in "BS03ENG.BNS bs03eng_fresh.state" "BS2SLL.BNS bs2sll_fresh.state"; do
+    set -- $pair
+    for dir in "$FW/bns2000" "$FW"; do
+        if [ -f "$dir/$1" ] && [ -f "$dir/$2" ]; then
+            mkdir -p "$STAGE/share/ssi263-speech/bns2000"
+            cp "$dir/$1" "$dir/$2" "$STAGE/share/ssi263-speech/bns2000/"
+            break
+        fi
+    done
+done
 # the other voices' firmware, for the voices the module has (sd_ssi263 --voices), and their notices
 VOICES="$("$ROOT/build/linux/sd_ssi263" --voices | cut -f1)"
 has() { echo "$VOICES" | grep -qx "$1"; }
@@ -86,6 +100,12 @@ if [ -f "$ROOT/build/linux/blazie_emu" ]; then
     done
 else
     echo "note: build/linux/blazie_emu not built, so not packaged"
+fi
+# The BT frontend is an executable Python zipapp plus its native worker; BTSpeak itself is supplied by the device.
+if [ -f "$ROOT/build/linux/blazie_emu_bt" ] && [ -f "$ROOT/build/linux/blazie_bt" ]; then
+    cp "$ROOT/build/linux/blazie_emu_bt" "$ROOT/build/linux/blazie_bt" "$STAGE/bin/"
+    chmod +x "$STAGE/bin/blazie_emu_bt" "$STAGE/bin/blazie_bt"
+    cp "$ROOT/src/platforms/btspeak/README.md" "$STAGE/README-blazie-bt.md"
 fi
 # the same emulator in a GTK window, for Orca (README-blazie-emu.md, "The desktop app"), when it was built (GTK 3's
 # headers there), with a menu entry for the desktop; GTK is the system's own library, not packaged

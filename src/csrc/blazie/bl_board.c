@@ -28,6 +28,7 @@
 #include "bl_board.h"
 #include "bl_serial.h"
 #include "bl_clock.h"
+#include "bl_display.h"
 #include "flash29.h"
 
 #ifdef BH_TRACE                              /* a scratch build's trace (never in a release build) */
@@ -84,6 +85,8 @@ struct bl_unit {
     int has_clk_tail;
     long long clk_wall;                      /* bl_clock_wall: the host's time for the next save */
     int model;                               /* bl_model */
+    bld_display display;                    /* Latched dots, independent of RAM/text translation. */
+    int braille_bars;                        /* Forward/back contacts on PPI B6/B7, active low. */
 };
 
 static void event(bl_unit *u, unsigned char type, unsigned char a, unsigned char b)
@@ -165,6 +168,8 @@ static uint8_t io_read(void *ctx, uint16_t Port)
     if (p >= 0xC0 && p <= 0xC4)
         return u->ssi_ar ? u->ssi_ready_value : (unsigned char)(u->ssi_ready_value ^ 0x80);
     v = p == 0x40 ? 0x00 : 0xFF;
+    if (p == 0x81 && u->model == BL_MODEL_BRAILLE_LITE)
+        v &= (unsigned char)~((u->braille_bars & 3) << 6);
     /* The battery gauge (status menu, %): a serial A/D converter, found by running the firmware.  Each read of B0h
        clocks it; the first read of 81h after the clock shows bit 3 low (the firmware waits for that), later reads
        carry the next data bit in bit 3, least significant first, 8 bits.  Without it bit 3 stayed high and the unit
@@ -206,8 +211,16 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
     int p = Port & 0xFF;
     if (p == 0xE0)
         u->port_e0 = V;
-    if (p == 0x83)
+    if (p == 0x83) {
+        unsigned char before = u->ppi_c;
         blc_ppi_control(&u->ppi_c, V);       /* the 8255's control word: port C bit 4 calls the clock controller */
+        bld_port(&u->display, before, u->ppi_c, (V & 0x80) != 0);
+    }
+    if (p == 0x82) {
+        unsigned char before = u->ppi_c;
+        u->ppi_c = V;
+        bld_port(&u->display, before, V, 0);
+    }
     if (p == 0xA0)
         u->port_a0 = V;                      /* bit 0: the serial port's line drivers on; bit 1: the speech
                                                 channel's power (bl_port_a0) */
@@ -229,6 +242,19 @@ static void io_write(void *ctx, uint16_t Port, uint8_t V)
             ar_line(u);
         }
     }
+}
+
+int bl_braille(const bl_unit *u, unsigned char *cells, int capacity)
+{
+    int n = u->display.count;
+    if (u->model != BL_MODEL_BRAILLE_LITE || capacity < n) return 0;
+    if (n) memcpy(cells, u->display.cells, (size_t)n);
+    return n;
+}
+
+void bl_braille_bars(bl_unit *u, int down)
+{
+    u->braille_bars = down & 3;
 }
 
 static int asci_rx(void *ctx, int channel)

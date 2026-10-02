@@ -320,6 +320,16 @@ int emu_memory(const emu_unit *u, const unsigned char **ram)
     return u->tns ? tns_memory(u->tns, 0, ram) : bh_memory(u->host, 0, ram);
 }
 
+int emu_braille(const emu_unit *u, unsigned char *cells, int capacity)
+{
+    return u->host ? bh_braille(u->host, cells, capacity) : 0;
+}
+
+void emu_braille_bars(emu_unit *u, int down)
+{
+    if (u->host) bh_braille_bars(u->host, down);
+}
+
 int emu_clock_time(const emu_unit *u, int alarm, blc_time *t)
 {
     return u->tns ? tns_clock_time(u->tns, alarm, t) : bh_clock_time(u->host, alarm, t);

@@ -33,7 +33,7 @@ fi
 echo "Installing the SSI-263 voices"
 mkdir -p "$DATA" "$PREFIX/lib" "$MODCONF"
 cp "$HERE"/share/ssi263-speech/*.BNS "$HERE"/share/ssi263-speech/*.state "$DATA/"
-for d in aicom-accent-sa aicom-accent-mini gw-micro-speakout; do   # the other voices' firmware (sd_voices.h)
+for d in aicom-accent-sa aicom-accent-mini gw-micro-speakout bns2000; do   # other voices and optional emulator models
     if [ -d "$HERE/share/ssi263-speech/$d" ]; then
         mkdir -p "$DATA/$d"
         cp "$HERE/share/ssi263-speech/$d"/* "$DATA/$d/"
@@ -55,6 +55,12 @@ if [ -f "$HERE/bin/blazie_emu" ]; then   # the Blazie emulator (README-blazie-em
         cp "$HERE"/share/ssi263-speech/tns/* "$DATA/tns/"
     fi
     echo "  emulator: $PREFIX/bin/blazie_emu"
+fi
+if [ -f "$HERE/bin/blazie_emu_bt" ] && [ -f "$HERE/bin/blazie_bt" ]; then
+    mkdir -p "$PREFIX/bin"
+    cp "$HERE/bin/blazie_emu_bt" "$HERE/bin/blazie_bt" "$PREFIX/bin/"
+    chmod 755 "$PREFIX/bin/blazie_emu_bt" "$PREFIX/bin/blazie_bt"
+    echo "  emulator (BT Speak / BT Braille): $PREFIX/bin/blazie_emu_bt"
 fi
 if [ -f "$HERE/bin/blazie_emu_gtk" ]; then   # the emulator in a GTK window, for Orca, and its desktop menu entry
     mkdir -p "$PREFIX/bin" "$PREFIX/share/applications"

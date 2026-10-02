@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+# blazie-flags: self-voice
+"""Run the original Blazie firmware with the BT Speak / BT Braille keyboard."""
+
+from frontend import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
