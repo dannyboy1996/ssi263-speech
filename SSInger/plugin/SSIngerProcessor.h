@@ -25,7 +25,10 @@ inline constexpr const char* voices = "voices";
 inline constexpr const char* embod = "embod";
 inline constexpr const char* ctlMap = "ctlMap";
 inline constexpr const char* artic = "artic";
-inline constexpr const char* filterFF = "filterFF";
+inline constexpr const char* filterFF1 = "filterFF1";
+inline constexpr const char* filterFF2 = "filterFF2";
+inline constexpr const char* filterFF3 = "filterFF3";
+inline constexpr const char* filterFF4 = "filterFF4";
 inline constexpr const char* rate = "rate";
 inline constexpr const char* glide = "glide";
 inline constexpr const char* dur = "dur";
@@ -34,11 +37,6 @@ inline constexpr const char* bendRange = "bendRange";
 inline constexpr const char* clockSt = "clockSt";
 inline constexpr const char* carrier = "carrier";
 inline constexpr const char* volume = "volume";
-/* Tour rig: chips 2-4's filter, in R4 steps from chip 1's (FF). */
-inline constexpr const char* ffOff2 = "ffOff2";
-inline constexpr const char* ffOff3 = "ffOff3";
-inline constexpr const char* ffOff4 = "ffOff4";
-inline constexpr const char* const ffOff[3] = { ffOff2, ffOff3, ffOff4 };
 }
 
 class SSIngerProcessor : public juce::AudioProcessor, private juce::Timer {
@@ -97,6 +95,12 @@ private:
 
     float volumeCache = 0.8f;
     int carrierCache = 0;
+    /* Parameter-change caches: params re-assert only when the *param*
+     * moves, never when MIDI moved the same destination (mod wheel,
+     * clock bend). Reset on slot swap so a fresh bus gets everything. */
+    int ffCache[SG_NVOICES_MAX] = { -1, -1, -1, -1 };
+    double clockCache = -1.0;
+    int appliedVoices = -1;
 
     static int slotForVoicesParam(float choice) { return (int)choice == 0 ? 0 : 1; }
     void buildSlot(int i, double sampleRate);

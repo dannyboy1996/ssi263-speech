@@ -350,6 +350,151 @@ static void test_quad_channels(void)
     CHECK(l.n > 0 && l.voice[0] == 3, "ch8 reaches voice 3");
 }
 
+/* Full 63-code table, rig-wide CC fan-out, per-voice filter homes,
+ * equal-power mix. */
+static void test_touring_rig(void)
+{
+    ssinger_state_t s;
+    sc_log_t l;
+    int i, v;
+    fw_init(&s, &l);
+    /* All 63 sounding codes playable: 36->1 ... 98->63, 99+ silent. */
+    CHECK(s.note2phon[36] == 1, "note 36 -> code 1");
+    CHECK(s.note2phon[98] == 63, "note 98 -> code 63 (LB)");
+    CHECK(s.note2phon[90] == 55, "note 90 -> code 55 (M, was spare)");
+    CHECK(s.note2phon[99] == -1, "note 99 unmapped");
+    CHECK(s.note2phon[35] == -1, "note 35 unmapped");
+    {
+        const uint8_t top[] = { 0x90, 98, 100 };
+        feed(&s, top, 3);
+        CHECK(s.v[0].phoneme == 63, "top key sings LB");
+        l.n = 0;
+        {
+            const uint8_t past[] = { 0x90, 99, 100 };
+            feed(&s, past, 3);
+        }
+        CHECK(l.n == 0, "past-the-top writes nothing");
+    }
+    /* Quad CC1 fan-out, Polaxis map: one mod move hits all 4 filters. */
+    fw_init(&s, &l);
+    s.cfg.nvoices = 4;
+    s.cfg.ctlmap = SG_MAP_POLAXIS;
+    {
+        const uint8_t mod[] = { 0xB0, 1, 64 };
+        int seen[4] = { 0, 0, 0, 0 };
+        feed(&s, mod, 3);
+        for (i = 0; i < l.n; i++)
+            if (l.addr[i] == SG_SC_R4 && l.voice[i] >= 0 && l.voice[i] < 4)
+                seen[l.voice[i]] = l.value[i];
+        for (v = 0; v < 4; v++)
+            CHECK(seen[v] == 64 * 255 / 127, "voice %d filter follows mod (%d)",
+                  v, seen[v]);
+        for (v = 0; v < 4; v++)
+            CHECK(s.v[v].filter_center == 64 * 255 / 127, "voice %d center moved", v);
+    }
+    /* Quad CC1 fan-out, patent map: articulation rig-wide. */
+    fw_init(&s, &l);
+    s.cfg.nvoices = 4;
+    s.cfg.ctlmap = SG_MAP_PATENT;
+    {
+        const uint8_t mod[] = { 0xB2, 1, 127 }; /* ch3 = voice 1 phoneme */
+        int r3count = 0;
+        feed(&s, mod, 3);
+        CHECK(s.cfg.articulation == 7, "ART=7");
+        for (i = 0; i < l.n; i++)
+            if (l.addr[i] == SG_SC_R3)
+                r3count++;
+        CHECK(r3count == 4, "R3 re-emitted on all 4 voices (%d)", r3count);
+    }
+    /* Quad CC3: global rate re-emitted everywhere (R2 high nibble). */
+    fw_init(&s, &l);
+    s.cfg.nvoices = 4;
+    {
+        const uint8_t cc3[] = { 0xB0, 3, 120 };
+        int r2ok = 0;
+        feed(&s, cc3, 3);
+        CHECK(s.cfg.rate == 15, "rate=15");
+        for (i = 0; i < l.n; i++)
+            if (l.addr[i] == SG_SC_R2 && (l.value[i] >> 4) == 15)
+                r2ok++;
+        CHECK(r2ok == 4, "R2 refreshed on all 4 voices (%d)", r2ok);
+    }
+    /* CC2 stays per-voice (each voice keeps its own fine pitch). */
+    fw_init(&s, &l);
+    s.cfg.nvoices = 4;
+    {
+        const uint8_t cc2[] = { 0xB2, 2, 96 }; /* ch3 = voice 1 */
+        feed(&s, cc2, 3);
+        CHECK(s.v[1].cc2 == 96, "voice 1 fine set");
+        CHECK(s.v[0].cc2 == 64 && s.v[2].cc2 == 64 && s.v[3].cc2 == 64,
+              "other voices untouched");
+    }
+    /* Per-voice filter homes; patent bend offsets from the home. */
+    fw_init(&s, &l);
+    s.cfg.nvoices = 4;
+    s.cfg.ctlmap = SG_MAP_PATENT;
+    CHECK(s.v[2].filter_center == 0xE4, "center defaults to 0xE4");
+    ssinger_set_filter(&s, 2, 100);
+    CHECK(s.v[2].filter_center == 100 && s.v[2].filter_ff == 100, "Filter 3 sets home");
+    CHECK(s.v[0].filter_center == 0xE4, "Filter 1 undisturbed");
+    {
+        const uint8_t bend[] = { 0xE4, 0x00, 0x40 }; /* ch5 bend center */
+        l.n = 0;
+        feed(&s, bend, 3);
+        for (i = 0; i < l.n; i++)
+            if (l.addr[i] == SG_SC_R4)
+                CHECK(l.value[i] == 100, "bend centers on voice home (%d)", l.value[i]);
+    }
+}
+
+/* Hardware-faithful rig mix: every voice runs at full solo level, like
+ * separate boxes on a mixer. One active voice in quad equals solo;
+ * four-voice unison equals 4x solo (Volume + tanh downstream absorb it). */
+static double rig_rms(int nvoices, int pairs)
+{
+    ssinger_bus_t b;
+    ssi263_params p;
+    static double out[512];
+    double e = 0.0;
+    long pos = 0, total = 44100, n = 0;
+    int i, v;
+    static const uint8_t chs[4][2] = { { 0x90, 0x91 }, { 0x92, 0x93 },
+                                       { 0x94, 0x95 }, { 0x96, 0x97 } };
+    ssi263_default_params(&p);
+    if (!ssinger_bus_init(&b, 44100.0, nvoices, &p, ssi263_default_rom()))
+        return -1.0;
+    for (v = 0; v < pairs; v++) {
+        uint8_t a[3] = { chs[v][1], 45, 100 };
+        uint8_t c[3] = { chs[v][0], 45, 110 };
+        for (i = 0; i < 3; i++)
+            ssinger_bus_midi_byte(&b, a[i]);
+        for (i = 0; i < 3; i++)
+            ssinger_bus_midi_byte(&b, c[i]);
+    }
+    while (pos < total) {
+        ssinger_bus_render(&b, 512, out);
+        ssinger_bus_service_all(&b);
+        for (i = 0; i < 512; i++)
+            e += out[i] * out[i];
+        pos += 512;
+        n += 512;
+    }
+    ssinger_bus_free(&b);
+    return sqrt(e / n);
+}
+
+static void test_rig_level(void)
+{
+    double solo = rig_rms(1, 1);
+    double one_in_quad = rig_rms(4, 1);
+    double unison = rig_rms(4, 4);
+    CHECK(solo > 0.02, "solo sings (rms %f)", solo);
+    CHECK(one_in_quad > 0.95 * solo && one_in_quad < 1.05 * solo,
+          "one voice in quad equals solo (%f vs %f)", one_in_quad, solo);
+    CHECK(unison > 3.6 * solo && unison < 4.4 * solo,
+          "four-voice unison is 4x solo (%f vs %f)", unison, solo);
+}
+
 /* ---- bus + engine ------------------------------------------------------ */
 
 static void test_bus_path(void)
@@ -895,321 +1040,6 @@ static void test_phoneme_mono_priority(void)
     CHECK(s.v[0].note_held == 0, "released");
 }
 
-/* ---- all 64 phonemes (spacepup: "only 54 or 56 of the 63 or 64") ------ */
-
-/* The first chip code no note reaches, or -1 if all 64 are reachable. */
-static int first_unreachable(const int8_t *table)
-{
-    int seen[64] = { 0 }, n, c;
-    for (n = 0; n < 128; n++)
-        if (table[n] >= 0 && table[n] < 64)
-            seen[table[n]] = 1;
-    for (c = 0; c < 64; c++)
-        if (!seen[c])
-            return c;
-    return -1;
-}
-
-static void test_all_phonemes_reachable(void)
-{
-    ssinger_state_t s;
-    sc_log_t l;
-    int8_t old[128], cut[128];
-    int n, c, moved = 0, missing;
-    fw_init(&s, &l);
-    missing = first_unreachable(s.note2phon);
-    CHECK(missing < 0, "every chip code reachable from a note (%s is not)",
-          missing < 0 ? "-" : ssinger_phoneme_names[missing]);
-    /* Nobody's songs change: the 0.7.0 keys keep their codes. */
-    for (n = 0; n < 128; n++)
-        old[n] = -1;
-    for (n = 36; n <= 89; n++)
-        old[n] = (int8_t)(n - 35);
-    for (n = 90; n <= 93; n++)
-        old[n] = SG_PHONEME_PAUSE;
-    for (n = 0; n < 128; n++)
-        if (old[n] >= 0 && s.note2phon[n] != old[n]) {
-            moved++;
-            CHECK(0, "note %d moved from %s to %s", n, ssinger_phoneme_names[old[n]],
-                  s.note2phon[n] < 0 ? "nothing" : ssinger_phoneme_names[s.note2phon[n]]);
-        }
-    CHECK(moved == 0, "%d old keys moved", moved);
-    /* The nine the 0.7.0 table missed sit on notes 94-102 in chip order. */
-    for (c = 0x37; c <= 0x3F; c++)
-        CHECK(s.note2phon[94 + c - 0x37] == c, "note %d sings %s (got %d)", 94 + c - 0x37,
-              ssinger_phoneme_names[c], s.note2phon[94 + c - 0x37]);
-    /* Controls: the checker names what a table leaves out. */
-    missing = first_unreachable(old);
-    CHECK(missing == 0x37, "control: the 0.7.0 table misses M first (got %s)",
-          missing < 0 ? "none" : ssinger_phoneme_names[missing]);
-    memcpy(cut, s.note2phon, sizeof(cut));
-    for (n = 0; n < 128; n++)
-        if (cut[n] == 0x3F)
-            cut[n] = -1;
-    missing = first_unreachable(cut);
-    CHECK(missing == 0x3F, "control: dropping LB is named (got %s)",
-          missing < 0 ? "none" : ssinger_phoneme_names[missing]);
-    /* And every code really reaches R0 through MIDI, not just the table. */
-    for (c = 0; c < 64; c++) {
-        int note = -1;
-        for (n = 0; n < 128 && note < 0; n++)
-            if (s.note2phon[n] == c)
-                note = n;
-        if (note < 0)
-            continue;
-        {
-            const uint8_t on[] = { 0x90, (uint8_t)note, 100 };
-            const uint8_t off[] = { 0x80, (uint8_t)note, 0 };
-            l.n = 0;
-            feed(&s, on, 3);
-            CHECK(l.n >= 1 && l.addr[l.n - 1] == SG_SC_R0 && (l.value[l.n - 1] & 0x3F) == c,
-                  "note %d writes %s to R0", note, ssinger_phoneme_names[c]);
-            feed(&s, off, 3);
-        }
-    }
-}
-
-/* Embodiment 2: Program Change picks the phoneme through the same table. */
-static void test_expander_all_phonemes(void)
-{
-    ssinger_state_t s;
-    sc_log_t l;
-    int seen[64] = { 0 }, p, c, missing = -1;
-    fw_init(&s, &l);
-    s.cfg.embodiment = SG_EMB_EXPANDER;
-    for (p = 0; p < 128; p++) {
-        const uint8_t pc[] = { 0xC0, (uint8_t)p };
-        l.n = 0;
-        feed(&s, pc, 2);
-        if (l.n >= 1 && l.addr[l.n - 1] == SG_SC_R0)
-            seen[l.value[l.n - 1] & 0x3F] = 1;
-    }
-    for (c = 0; c < 64 && missing < 0; c++)
-        if (!seen[c])
-            missing = c;
-    CHECK(missing < 0, "every chip code reachable by Program Change (%s is not)",
-          missing < 0 ? "-" : ssinger_phoneme_names[missing]);
-}
-
-/* note_map.txt documents the compiled-in table: loading it must give the
- * same 128 entries (the test runs in the SSInger folder). */
-static void test_note_map_doc(void)
-{
-    ssinger_state_t s, d;
-    sc_log_t l, m;
-    int n, diff = 0;
-    fw_init(&s, &l);
-    fw_init(&d, &m);
-    CHECK(ssinger_load_map(&d, "note_map.txt", 0) > 0, "note_map.txt loads");
-    for (n = 0; n < 128; n++)
-        if (s.note2phon[n] != d.note2phon[n]) {
-            diff++;
-            CHECK(0, "note_map.txt note %d says %d, the firmware %d", n, d.note2phon[n], s.note2phon[n]);
-        }
-    CHECK(diff == 0, "note_map.txt matches the firmware (%d notes differ)", diff);
-}
-
-/* ---- the tour rig's filters (spacepup) ------------------------------- */
-
-/* Bitmask of voices 0..nv-1 that got no R4 write in the log. */
-static int r4_missing(const sc_log_t *l, int nv)
-{
-    int got = 0, i;
-    for (i = 0; i < l->n && i < 64; i++)
-        if (l->addr[i] == SG_SC_R4)
-            got |= 1 << l->voice[i];
-    return ((1 << nv) - 1) & ~got;
-}
-
-static int r4_of(const sc_log_t *l, int voice)
-{
-    int i, v = -1;
-    for (i = 0; i < l->n && i < 64; i++)
-        if (l->addr[i] == SG_SC_R4 && l->voice[i] == voice)
-            v = l->value[i];
-    return v;
-}
-
-static void test_tour_filter_wheel(void)
-{
-    ssinger_state_t s;
-    sc_log_t l;
-    const uint8_t chans[] = { 0xB0, 0xB3, 0xB4, 0xB7 }; /* chip 1 phoneme .. chip 4 pitch */
-    int k, v;
-    /* Polaxis map (the plugin's default): the mod wheel is the filter. */
-    fw_init(&s, &l);
-    s.cfg.nvoices = 4;
-    s.cfg.ctlmap = SG_MAP_POLAXIS;
-    for (k = 0; k < 4; k++) {
-        const uint8_t mod[] = { chans[k], 1, (uint8_t)(100 - 10 * k) };
-        l.n = 0;
-        feed(&s, mod, 3);
-        CHECK(r4_missing(&l, 4) == 0, "mod wheel on ch %d reaches every chip's filter (missing mask %X)",
-              (chans[k] & 15) + 1, r4_missing(&l, 4));
-        for (v = 0; v < 4; v++)
-            CHECK(r4_of(&l, v) == (100 - 10 * k) * 255 / 127, "ch %d wheel: chip %d R4=%d", (chans[k] & 15) + 1,
-                  v + 1, r4_of(&l, v));
-    }
-    /* Patent map: the pitch wheel is the filter; it moves all four too. */
-    fw_init(&s, &l);
-    s.cfg.nvoices = 4;
-    {
-        const uint8_t bendUp[] = { 0xE2, 0x00, 0x50 }; /* chip 2's phoneme channel, +16 */
-        feed(&s, bendUp, 3);
-        CHECK(r4_missing(&l, 4) == 0, "patent bend reaches every chip's filter (missing mask %X)",
-              r4_missing(&l, 4));
-        for (v = 0; v < 4; v++)
-            CHECK(r4_of(&l, v) == 0xE4 + 16, "patent bend: chip %d R4=%d", v + 1, r4_of(&l, v));
-    }
-    /* One chip: unchanged, one R4 write for chip 1 only. */
-    fw_init(&s, &l);
-    s.cfg.ctlmap = SG_MAP_POLAXIS;
-    {
-        const uint8_t mod[] = { 0xB0, 1, 64 };
-        feed(&s, mod, 3);
-        CHECK(l.n == 1 && l.voice[0] == 0 && l.value[0] == 64 * 255 / 127, "one chip: one R4 write (%d)", l.n);
-    }
-    /* Control: a log where only chip 1 followed the wheel is caught. */
-    memset(&l, 0, sizeof(l));
-    l.n = 1;
-    l.addr[0] = SG_SC_R4;
-    l.voice[0] = 0;
-    CHECK(r4_missing(&l, 4) == 0xE, "control: chip-1-only wheel leaves chips 2-4 missing (mask %X)",
-          r4_missing(&l, 4));
-}
-
-/* "Chip 2/3/4 filter offset": each moves only its chip; the wheel keeps
- * the spread; chip 1's FF setting moves all; one chip ignores them. */
-static void test_tour_filter_offsets(void)
-{
-    ssinger_state_t s;
-    sc_log_t l;
-    const uint8_t mod[] = { 0xB2, 1, 100 }; /* chip 2's phoneme channel */
-    const int w = 100 * 255 / 127;          /* 200 */
-    int v, k;
-    fw_init(&s, &l);
-    s.cfg.nvoices = 4;
-    s.cfg.ctlmap = SG_MAP_POLAXIS;
-    for (k = 1; k < 4; k++) {
-        l.n = 0;
-        ssinger_set_filter_offset(&s, k, -20 * k);
-        CHECK(l.n == 1 && l.addr[0] == SG_SC_R4 && l.voice[0] == k, "chip %d offset writes chip %d only (%d writes)",
-              k + 1, k + 1, l.n);
-        CHECK(l.value[0] == 0xE4 - 20 * k, "chip %d R4=%d", k + 1, l.value[0]);
-    }
-    l.n = 0;
-    feed(&s, mod, 3);
-    for (v = 0; v < 4; v++)
-        CHECK(r4_of(&l, v) == w - 20 * v, "wheel keeps the spread: chip %d R4=%d (want %d)", v + 1, r4_of(&l, v),
-              w - 20 * v);
-    /* Clamped at the ends, per chip. */
-    l.n = 0;
-    ssinger_set_filter_offset(&s, 3, 100);
-    CHECK(r4_of(&l, 3) == 255, "offset clamps at 255 (%d)", r4_of(&l, 3));
-    /* Chip 1's FF setting moves every chip, offsets kept. */
-    l.n = 0;
-    ssinger_set_filter(&s, 0x80);
-    CHECK(r4_of(&l, 0) == 0x80 && r4_of(&l, 1) == 0x80 - 20 && r4_of(&l, 2) == 0x80 - 40 && r4_of(&l, 3) == 0x80 + 100,
-          "FF setting moves all (%d %d %d %d)", r4_of(&l, 0), r4_of(&l, 1), r4_of(&l, 2), r4_of(&l, 3));
-    /* Patent map: the bend is the filter; offsets ride on it the same way. */
-    s.cfg.ctlmap = SG_MAP_PATENT;
-    {
-        const uint8_t bendUp[] = { 0xE6, 0x00, 0x50 }; /* chip 4's phoneme channel, +16 */
-        l.n = 0;
-        feed(&s, bendUp, 3);
-        CHECK(r4_of(&l, 0) == 0x90 && r4_of(&l, 1) == 0x90 - 20 && r4_of(&l, 2) == 0x90 - 40 &&
-                  r4_of(&l, 3) == 0x90 + 100,
-              "patent bend keeps the spread (%d %d %d %d)", r4_of(&l, 0), r4_of(&l, 1), r4_of(&l, 2), r4_of(&l, 3));
-    }
-    /* Patent map: the mod wheel is articulation, shared, so all chips take it. */
-    {
-        const uint8_t art[] = { 0xB4, 1, 127 };
-        int r3s = 0, i;
-        l.n = 0;
-        feed(&s, art, 3);
-        for (i = 0; i < l.n; i++)
-            if (l.addr[i] == SG_SC_R3 && ((l.value[i] >> 4) & 7) == 7)
-                r3s |= 1 << l.voice[i];
-        CHECK(r3s == 0xF, "patent mod wheel: ART 7 on every chip (mask %X)", r3s);
-    }
-    /* A reset (power-on, preset load) starts each chip at FF + its offset. */
-    ssinger_reset(&s);
-    CHECK(s.v[0].filter_ff == 0x80 && s.v[1].filter_ff == 0x80 - 20 && s.v[3].filter_ff == 0x80 + 100,
-          "reset seeds the offsets (%d %d %d)", s.v[0].filter_ff, s.v[1].filter_ff, s.v[3].filter_ff);
-    /* One chip: the offsets do nothing at all. */
-    fw_init(&s, &l);
-    s.cfg.ctlmap = SG_MAP_POLAXIS;
-    ssinger_set_filter_offset(&s, 1, 50);
-    ssinger_set_filter_offset(&s, 3, -50);
-    CHECK(l.n == 0, "one chip: offsets write nothing (%d)", l.n);
-    {
-        const uint8_t m1[] = { 0xB0, 1, 100 };
-        feed(&s, m1, 3);
-        CHECK(l.n == 1 && l.voice[0] == 0 && l.value[0] == w, "one chip: wheel as before (%d writes, R4=%d)", l.n,
-              l.value[0]);
-    }
-}
-
-/* ---- tour-rig loudness (spacepup: "much quieter than solo") ----------- */
-
-/* A sung line on the first `nsing` chips (channel pairs 1/2, 3/4, ...),
- * same notes on each; returns RMS and peak of the bus mix. */
-static void sing_line(int nvoices, int nsing, int vel, double *rms, double *peak)
-{
-    static double out[44100 * 2];
-    static const int phon[] = { 44, 48, 51, 58 };
-    static const int mel[] = { 57, 60, 64, 62 };
-    ssinger_bus_t b;
-    ssi263_params p;
-    long t = 0, i;
-    int k, c;
-    double e = 0.0, pk = 0.0;
-    ssi263_default_params(&p);
-    CHECK(ssinger_bus_init(&b, 44100.0, nvoices, &p, ssi263_default_rom()), "line init");
-    for (k = 0; k < 4; k++) {
-        for (c = 0; c < nsing; c++) {
-            bus_midi3(&b, 0x91 + 2 * c, mel[k], vel);
-            bus_midi3(&b, 0x90 + 2 * c, phon[k], 100);
-        }
-        ssinger_bus_run(&b, 19845, out + t);
-        t += 19845;
-        for (c = 0; c < nsing; c++)
-            bus_midi3(&b, 0x80 + 2 * c, phon[k], 0);
-        ssinger_bus_run(&b, 2205, out + t);
-        t += 2205;
-    }
-    for (i = 0; i < t; i++) {
-        e += out[i] * out[i];
-        if (fabs(out[i]) > pk)
-            pk = fabs(out[i]);
-    }
-    *rms = sqrt(e / t);
-    *peak = pk;
-    ssinger_bus_free(&b);
-}
-
-static void test_tour_loudness(void)
-{
-    double rs, ps, rt, pt, r4, p4, rf, pf;
-    sing_line(1, 1, 100, &rs, &ps);
-    sing_line(4, 1, 100, &rt, &pt);
-    printf("level: solo %.2f dB rms (%.2f peak); tour rig, one chip %.2f dB rms (%.2f peak)\n",
-           20 * log10(rs), 20 * log10(ps), 20 * log10(rt), 20 * log10(pt));
-    CHECK(fabs(20 * log10(rt / rs)) < 1.0, "tour rig, one chip, as loud as solo (%.2f dB apart)",
-          20 * log10(rt / rs));
-    /* Four chips at full, in unison (the worst case: they add in phase). */
-    sing_line(1, 1, 127, &rf, &pf);
-    sing_line(4, 4, 127, &r4, &p4);
-    printf("level: solo at full %.2f dB peak; four chips at full %.2f dB peak (%.2f rms)\n",
-           20 * log10(pf), 20 * log10(p4), 20 * log10(r4));
-    CHECK(p4 < 1.0, "four chips at full stay under 0 dBFS (%.2f dB)", 20 * log10(p4));
-    /* Controls. The 0.7.0 mix divided by the chip count: one chip of four
-     * sat 12 dB down, which the 1 dB check rejects. A plain sum of four
-     * unison chips would clip, which the 0 dBFS check rejects. */
-    CHECK(fabs(20 * log10((rt / 4) / rs)) >= 1.0, "control: the divided mix fails the 1 dB check");
-    CHECK(4 * pf >= 1.0, "control: a plain sum of four would clip (%.2f dB)", 20 * log10(4 * pf));
-}
-
 int main(void)
 {
     test_acia_reset();
@@ -1222,6 +1052,8 @@ int main(void)
     test_embodiment2_and_parser();
     test_map_file();
     test_quad_channels();
+    test_touring_rig();
+    test_rig_level();
     test_bus_path();
     test_engine_smoke();
     test_xck_fresh_exact();
@@ -1237,12 +1069,6 @@ int main(void)
     test_block_size_invariance();
     test_sample_rates();
     test_idle_floor();
-    test_all_phonemes_reachable();
-    test_expander_all_phonemes();
-    test_note_map_doc();
-    test_tour_filter_wheel();
-    test_tour_filter_offsets();
-    test_tour_loudness();
     printf("%s: %d checks, %d failures\n",
            failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;

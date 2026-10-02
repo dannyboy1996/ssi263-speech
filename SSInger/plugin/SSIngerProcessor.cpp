@@ -45,26 +45,6 @@ float volumeFromText(const juce::String& t)
     return leadingNumber(s);
 }
 
-/* Tour-rig filter offsets: "+12 from chip 1", "0 (same as chip 1)". */
-juce::String offsetText(int v, int)
-{
-    if (v == 0)
-        return "0 (same as chip 1)";
-    return (v > 0 ? "+" : "") + juce::String(v) + " from chip 1";
-}
-
-/* The first signed whole number in the text ("-30", "+12 from chip 1"). */
-int offsetFromText(const juce::String& t)
-{
-    const auto s = t.trim();
-    int i = 0, sign = 1, v = 0;
-    if (i < s.length() && (s[i] == '+' || s[i] == '-'))
-        sign = s[i++] == '-' ? -1 : 1;
-    while (i < s.length() && s[i] >= '0' && s[i] <= '9')
-        v = v * 10 + (int)(s[i++] - '0');
-    return juce::jlimit(-255, 255, sign * v);
-}
-
 } // namespace
 
 SSIngerProcessor::SSIngerProcessor()
@@ -107,16 +87,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SSIngerProcessor::createLayo
     layout.add(std::make_unique<juce::AudioParameterInt>(
         PID{ ids::artic, 1 }, "Articulation (ART)", 0, 7, 5));
     layout.add(std::make_unique<juce::AudioParameterInt>(
-        PID{ ids::filterFF, 1 }, "Filter frequency (FF)", 0, 255, 0xE4));
-    /* Tour rig: chips 2-4 sit this many FF steps from chip 1; the mod
-     * wheel (or the patent map's pitch wheel) moves all four and keeps the
-     * spread. One voice: no effect. */
-    for (int k = 0; k < 3; k++)
-        layout.add(std::make_unique<juce::AudioParameterInt>(
-            PID{ ids::ffOff[k], 1 }, "Chip " + juce::String(k + 2) + " filter offset (tour rig)", -255, 255, 0,
-            juce::AudioParameterIntAttributes()
-                .withStringFromValueFunction(offsetText)
-                .withValueFromStringFunction(offsetFromText)));
+        PID{ ids::filterFF1, 1 }, "Filter 1 frequency (FF)", 0, 255, 0xE4));
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        PID{ ids::filterFF2, 1 }, "Filter 2 frequency (Quad)", 0, 255, 0xE4));
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        PID{ ids::filterFF3, 1 }, "Filter 3 frequency (Quad)", 0, 255, 0xE4));
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        PID{ ids::filterFF4, 1 }, "Filter 4 frequency (Quad)", 0, 255, 0xE4));
     layout.add(std::make_unique<juce::AudioParameterInt>(
         PID{ ids::rate, 1 }, "Rate", 0, 15, 8));
     layout.add(std::make_unique<juce::AudioParameterInt>(
@@ -197,6 +174,14 @@ void SSIngerProcessor::applyParams(ssinger_bus_t& bus)
     cfg.embodiment = (int)get(ids::embod) == 0 ? SG_EMB_PHONEME_PITCH : SG_EMB_EXPANDER;
     cfg.ctlmap = (int)get(ids::ctlMap) == 0 ? SG_MAP_PATENT : SG_MAP_POLAXIS;
 
+    /* Fresh slot (or first block): re-assert every param once. */
+    if (bus.nvoices != appliedVoices) {
+        appliedVoices = bus.nvoices;
+        for (int v = 0; v < SG_NVOICES_MAX; v++)
+            ffCache[v] = -1;
+        clockCache = -1.0;
+    }
+
     int newRate = (int)get(ids::rate);
     int newArt = (int)get(ids::artic);
     int newGlide = (int)get(ids::glide);
@@ -216,20 +201,25 @@ void SSIngerProcessor::applyParams(ssinger_bus_t& bus)
     cfg.vel_curve = (int)get(ids::velCurve);
     cfg.bend_range_st = get(ids::bendRange);
 
-    /* FF is chip 1's filter and resets the shared filter for every chip,
-     * as before; chips 2-4 keep their offsets from it (tour rig). */
-    int newFF = (int)get(ids::filterFF);
-    if (newFF != cfg.filter_ff)
-        ssinger_set_filter(&bus.fw, newFF & 0xFF);
-    for (int k = 0; k < 3; k++) {
-        const int off = (int)get(ids::ffOff[k]);
-        if (off != cfg.filter_off[k + 1])
-            ssinger_set_filter_offset(&bus.fw, k + 1, off);
+    /* One filter home per voice: Filter 1 is the whole story in solo
+     * (SEQ); the Quad ones wake up with the touring rig. The mod wheel
+     * still masters all of them at once (firmware fan-out). */
+    static const char* ffIds[SG_NVOICES_MAX] = {
+        ids::filterFF1, ids::filterFF2, ids::filterFF3, ids::filterFF4
+    };
+    for (int v = 0; v < bus.nvoices; v++) {
+        int newFF = (int)get(ffIds[v]) & 0xFF;
+        if (newFF != ffCache[v]) {
+            ssinger_set_filter(&bus.fw, v, newFF);
+            ffCache[v] = newFF;
+        }
     }
 
     double base = 1000000.0 * std::pow(2.0, get(ids::clockSt) / 12.0);
-    if (base != bus.fw.nominal_xck)
+    if (base != clockCache) {
         ssinger_bus_master_write(base, &bus);
+        clockCache = base;
+    }
 
     volumeCache = get(ids::volume);
     carrierCache = (int)get(ids::carrier);

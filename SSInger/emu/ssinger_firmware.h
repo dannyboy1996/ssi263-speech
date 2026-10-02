@@ -17,10 +17,8 @@
  *
  * SC-02 phoneme codes/mnemonics below match the die-derived ROM order
  * (third_party/casso/.../Ssi263.cpp:24-88): 00 PA, 01 E .. 0x3F LB.
- * The default note table follows the patent's Fig. 2 span for the first
- * 54 codes (notes 36-89, dark->bright vowels, voiced, voiceless,
- * plosives; 90-93 the 4 spare keys = PA) and puts the chip's other nine
- * codes (M .. LB) on notes 94-102, so all 64 are playable.
+ * The default note table (notes 36-93 -> 54 codes) follows the patent's
+ * Fig. 2 grouping (dark->bright vowels, voiced, voiceless, plosives).
  * Polaxis anchors note 36 = U (code 0x16), so their table is arranged
  * phonetically rather than in chip order; until Fig. 2 is transcribed
  * the table stays user-editable (ssinger_set_note_phoneme).
@@ -81,10 +79,6 @@ typedef struct ssinger_cfg {
     int dur;               /* R0 DUR 0-3 (default 2) */
     int vel_curve;         /* 0 linear, 1 log (:L: 0-9 style) */
     double bend_range_st;  /* Polaxis-map bend full-scale in semitones (default 24) */
-    /* Tour rig: each chip's filter, in R4 steps from chip 1's ([0] is
-     * always 0). The filter control (mod wheel, or the patent map's pitch
-     * wheel) moves every chip and keeps this spread. */
-    int filter_off[SG_NVOICES_MAX];
 } ssinger_cfg_t;
 
 typedef struct ssinger_voice {
@@ -102,6 +96,7 @@ typedef struct ssinger_voice {
     int amplitude;     /* current R3 amplitude nibble */
     int inflection;    /* current 12-bit I */
     int filter_ff;     /* current R4 (bend/mod offsets applied) */
+    int filter_center; /* R4 home position (Filter N param / mod master) */
     int carrier_ext;   /* CC64 state */
 } ssinger_voice_t;
 
@@ -120,10 +115,6 @@ typedef struct ssinger_state {
     void *sink_ctx;
     double nominal_xck;    /* Master-knob base clock (default 1 MHz) */
     int bend_val;          /* last 14-bit pitch bend, 8192 = center */
-    /* Chip 1's filter before clamping: the last of the FF setting, the
-     * patent bend (FF + offset) or the Polaxis wheel (absolute) -- the
-     * latest writer wins, as on one chip. Chip k gets it + filter_off[k]. */
-    int ff_common;
 } ssinger_state_t;
 
 static void ssinger_default_cfg(ssinger_cfg_t *c)
@@ -140,42 +131,21 @@ static void ssinger_default_cfg(ssinger_cfg_t *c)
     c->dur = 2;
     c->vel_curve = 0;
     c->bend_range_st = 24.0;
-    memset(c->filter_off, 0, sizeof(c->filter_off));
 }
 
-/* Default note table, all 64 chip codes:
- *   notes 36..89  -> codes 1..54 (E .. TH) in chip order: vowels, R/L/W,
- *                    voiced stops, unvoiced stops, H sounds, fricatives
- *                    (the patent's Fig. 2 span, unchanged since 0.7.0);
- *   notes 90..93  -> PA (the patent's 4 spare keys);
- *   notes 94..102 -> codes 55..63 (M N NG :A :OH :U :UH E2 LB): the
- *                    nasals, German vowels, E2 and LB, in chip order,
- *                    above the spare keys so no earlier key moves. */
-#define SG_NOTE_FIRST 36
-#define SG_NOTE_SPARE 90
-#define SG_NOTE_EXTRA 94
+/* Default note table: notes 36..98 -> codes 1..63 in chip order
+ * (vowels, voiced stops, unvoiced stops, holds, fricatives, nasals,
+ * German vowels). The patent text says "54 phonemes" and Fig. 2 spans
+ * keys 36-93, but the chip carries 64 codes (0 = PA pause, 1..63 sound;
+ * see src/data/rom_bits.csv: 0x00 PA .. 0x3F LB). All 63 sounding codes
+ * are playable; the top octave past key 93 is the extension. */
 static void ssinger_default_table(ssinger_state_t *s)
 {
     int i;
     for (i = 0; i < 128; i++)
         s->note2phon[i] = -1;
-    for (i = 0; i < 54; i++)
-        s->note2phon[SG_NOTE_FIRST + i] = (int8_t)(i + 1);
-    for (i = SG_NOTE_SPARE; i < SG_NOTE_EXTRA; i++)
-        s->note2phon[i] = SG_PHONEME_PAUSE;
-    for (i = 55; i < 64; i++)
-        s->note2phon[SG_NOTE_EXTRA + i - 55] = (int8_t)i;
-}
-
-static int sg_clamp_ff(int ff)
-{
-    return ff < 0 ? 0 : (ff > 255 ? 255 : ff);
-}
-
-/* Chip v's filter: the shared filter plus its tour-rig offset. */
-static int ssinger_chip_ff(const ssinger_state_t *s, int v)
-{
-    return sg_clamp_ff(s->ff_common + (v > 0 ? s->cfg.filter_off[v] : 0));
+    for (i = 0; i < 63; i++)
+        s->note2phon[36 + i] = (int8_t)(i + 1);
 }
 
 static void ssinger_reset(ssinger_state_t *s)
@@ -190,11 +160,9 @@ static void ssinger_reset(ssinger_state_t *s)
         s->v[i].amplitude = 0;
         s->v[i].inflection = 0;
         s->v[i].filter_ff = s->cfg.filter_ff;
+        s->v[i].filter_center = s->cfg.filter_ff;
         s->v[i].carrier_ext = 0;
     }
-    s->ff_common = s->cfg.filter_ff;
-    for (i = 0; i < SG_NVOICES_MAX; i++)
-        s->v[i].filter_ff = ssinger_chip_ff(s, i);
     s->running = 0;
     s->need = s->got = 0;
     s->in_sysex = 0;
@@ -272,11 +240,8 @@ static int ssinger_load_map(ssinger_state_t *s, const char *path, int overlay)
     while (fgets(line, sizeof(line), f)) {
         char *eq, *nm, *ph, *end;
         int note, code;
-        /* '#' opens a comment at the line's start or after a space; right
-         * after a letter it is a sharp (C#2=E1). */
-        for (end = line; *end && *end != '\r' && *end != '\n'; end++)
-            if (*end == '#' && (end == line || end[-1] == ' ' || end[-1] == '\t'))
-                break;
+        for (end = line; *end && *end != '#' && *end != '\r' && *end != '\n'; end++)
+            ;
         *end = 0;
         eq = strchr(line, '=');
         if (!eq)
@@ -540,44 +505,6 @@ static void ssinger_note_on(ssinger_state_t *s, int voice, int is_phoneme,
     }
 }
 
-/* The filter control moves every chip at once: chip 1 to `common`
- * (clamped), each other chip to common + its offset. One chip (SEQ) is
- * the same single R4 write as ever. */
-static void ssinger_filter_all(ssinger_state_t *s, int common)
-{
-    int v;
-    s->ff_common = common;
-    for (v = 0; v < s->cfg.nvoices && v < SG_NVOICES_MAX; v++) {
-        s->v[v].filter_ff = ssinger_chip_ff(s, v);
-        ssinger_emit(s, v, SG_SC_R4, s->v[v].filter_ff);
-    }
-}
-
-/* Host FF setting (chip 1's filter): resets the shared filter for all. */
-static void ssinger_set_filter(ssinger_state_t *s, int ff)
-{
-    s->cfg.filter_ff = ff & 0xFF;
-    ssinger_filter_all(s, s->cfg.filter_ff);
-}
-
-/* Host per-chip setting (tour rig): chip `voice` (1..3) sits `off` R4
- * steps from chip 1. Writes that chip's R4 only; with one chip, or for
- * chip 1, it is stored and does nothing. */
-static void ssinger_set_filter_offset(ssinger_state_t *s, int voice, int off)
-{
-    if (voice <= 0 || voice >= SG_NVOICES_MAX)
-        return;
-    if (off < -255)
-        off = -255;
-    if (off > 255)
-        off = 255;
-    s->cfg.filter_off[voice] = off;
-    if (voice < s->cfg.nvoices) {
-        s->v[voice].filter_ff = ssinger_chip_ff(s, voice);
-        ssinger_emit(s, voice, SG_SC_R4, s->v[voice].filter_ff);
-    }
-}
-
 static void ssinger_pitch_bend(ssinger_state_t *s, int voice, int value)
 {
     /* value: 14-bit, 8192 = center. */
@@ -591,26 +518,53 @@ static void ssinger_pitch_bend(ssinger_state_t *s, int voice, int value)
             s->xck_write(ssinger_effective_xck(s), s->sink_ctx);
     } else {
         /* Patent map: bend drives vocal-tract length (Filter Frequency),
-         * on every chip of the tour rig at once. */
-        ssinger_filter_all(s, s->cfg.filter_ff + (value - 8192) * 64 / 8192);
+         * as an offset from the voice's home position. */
+        int ff = s->v[voice].filter_center + (value - 8192) * 64 / 8192;
+        if (ff < 0)
+            ff = 0;
+        if (ff > 255)
+            ff = 255;
+        s->v[voice].filter_ff = ff;
+        ssinger_emit(s, voice, SG_SC_R4, ff);
     }
-    (void)voice;
+}
+
+/* Absolute filter set: new home position + immediate R4. Used by the
+ * Filter N params and by the mod-wheel master. */
+static void ssinger_set_filter(ssinger_state_t *s, int voice, int ff)
+{
+    if (ff < 0)
+        ff = 0;
+    if (ff > 255)
+        ff = 255;
+    s->v[voice].filter_center = ff;
+    s->v[voice].filter_ff = ff;
+    ssinger_emit(s, voice, SG_SC_R4, ff);
 }
 
 static void ssinger_cc(ssinger_state_t *s, int voice, int cc, int val)
 {
-    int i;
+    /* Touring rig (quad): CC1 and CC3 are rig-wide masters and fan out
+     * to every voice. CC2 (per-voice fine pitch) and CC64 (per-voice
+     * INT/EXT switch, as on the hardware) stay on the addressed voice. */
+    int w0 = voice, w1 = voice, w;
+    int ff;
+    if (s->cfg.nvoices > 1 && (cc == 1 || cc == 3)) {
+        w0 = 0;
+        w1 = s->cfg.nvoices - 1;
+    }
     switch (cc) {
-    case 1: /* Mod wheel: every chip of the tour rig at once. */
+    case 1: /* Mod wheel. */
         if (s->cfg.ctlmap == SG_MAP_POLAXIS) {
-            /* Polaxis: filter (7-bit). */
-            ssinger_filter_all(s, val * 255 / 127);
+            /* Polaxis: filter (7-bit) on every rig voice. */
+            ff = val * 255 / 127;
+            for (w = w0; w <= w1; w++)
+                ssinger_set_filter(s, w, ff);
         } else {
-            /* Patent: interpolation speed (Articulation), one setting
-             * for all chips, so all chips take it now. */
+            /* Patent: interpolation speed (Articulation) rig-wide. */
             s->cfg.articulation = (val * 8 / 128) & 7;
-            for (i = 0; i < s->cfg.nvoices && i < SG_NVOICES_MAX; i++)
-                ssinger_write_r3(s, i, s->v[i].amplitude);
+            for (w = w0; w <= w1; w++)
+                ssinger_write_r3(s, w, s->v[w].amplitude);
         }
         break;
     case 2: /* CC2: inflection fine (Polaxis; harmless under patent map). */
@@ -620,7 +574,8 @@ static void ssinger_cc(ssinger_state_t *s, int voice, int cc, int val)
         break;
     case 3: /* CC3: control/transition rate (Polaxis) -> RATE. */
         s->cfg.rate = (val * 16 / 128) & 15;
-        ssinger_write_inflection(s, voice, s->v[voice].inflection);
+        for (w = w0; w <= w1; w++)
+            ssinger_write_inflection(s, w, s->v[w].inflection);
         break;
     case 64: /* Sustain: internal/external carrier. */
         s->v[voice].carrier_ext = (val >= 64) ? 1 : 0;

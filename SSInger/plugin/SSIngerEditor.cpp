@@ -103,14 +103,10 @@ const Spec specs[] = {
       "pitch." },
     { "MIDI", ssinger_ids::bendRange, "How far the clock bend reaches at full wheel, in semitones." },
     { "Chip", ssinger_ids::artic, "Articulation: how fast the chip moves between sounds (register 3, bits 4 to 6)." },
-    { "Chip", ssinger_ids::filterFF,
-      "Filter frequency: the size of the voice's vocal tract (register 4). With four chips, chip 1's; the others "
-      "follow it by their offsets." },
-    { "Chip", ssinger_ids::ffOff2,
-      "Four chips only: chip 2's filter frequency, in steps above or below chip 1's. The mod wheel moves all four "
-      "chips' filters together and keeps these offsets. No effect with one chip." },
-    { "Chip", ssinger_ids::ffOff3, "Four chips only: chip 3's filter frequency, in steps above or below chip 1's." },
-    { "Chip", ssinger_ids::ffOff4, "Four chips only: chip 4's filter frequency, in steps above or below chip 1's." },
+    { "Chip", ssinger_ids::filterFF1, "Filter 1 frequency: the size of voice 1's vocal tract (register 4). The only filter in solo." },
+    { "Chip", ssinger_ids::filterFF2, "Filter 2 frequency (touring rig): voice 2's vocal tract. The mod wheel moves all four at once." },
+    { "Chip", ssinger_ids::filterFF3, "Filter 3 frequency (touring rig): voice 3's vocal tract. The mod wheel moves all four at once." },
+    { "Chip", ssinger_ids::filterFF4, "Filter 4 frequency (touring rig): voice 4's vocal tract. The mod wheel moves all four at once." },
     { "Chip", ssinger_ids::rate, "The chip's speaking rate (register 2, high bits)." },
     { "Chip", ssinger_ids::glide, "How fast the pitch glides to a new note, in glide mode (register 1, low bits)." },
     { "Chip", ssinger_ids::dur, "Phoneme duration and the chip's timing mode; 3 turns on pitch glides." },
@@ -131,7 +127,7 @@ const char* groupTitle(const juce::String& g)
     return "Output";
 }
 
-constexpr int rowH = 34, ctlH = 28, labelW = 240, ctlW = 290, pad = 12, headH = 26;
+constexpr int rowH = 34, ctlH = 28, labelW = 190, ctlW = 290, pad = 12, headH = 26;
 
 std::unique_ptr<Laf> theLaf;
 int lafUsers = 0;

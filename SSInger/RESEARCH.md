@@ -64,16 +64,12 @@ verbatim.
 - Pairs are N/N+1; the four-chip build uses speech on **1, 3, 5, 7** and
   pitch on **2, 4, 6, 8** (patent: "keys 36-93 control speech sounds on
   channels 1, 3, 5 and 7 whereas the pitch control is controlled on
-  channels 2, 4, 6 and 8"). Notes 36–93 = 58 keys for the chip's 54
-  phonemes (Fig. 2 groups: dark→bright vowels, voiced, voiceless,
-  plosives).
-- VST extension beyond Fig. 2: the SC-02 has 64 codes, so 54 phonemes
-  plus PA leave nine out (M, N, NG, :A, :OH, :U, :UH, E2, LB — codes
-  55–63). The VST keeps the 58-key span exactly as above (36–89 = codes
-  1–54, 90–93 = PA on the spare keys) and plays those nine on notes
-  94–102, above it, in chip order, so no key inside the patent's span
-  moved. Program Change (embodiment 2) uses the same table, so programs
-  94–102 reach them too.
+  channels 2, 4, 6 and 8"). The patent text says "54 phonemes", but the
+  chip carries **64 codes (0 = PA pause, 1–63 sounding — verified in
+  `src/data/rom_bits.csv`: 0x00 PA … 0x3F LB)** [secondary → repo]. Fig. 2's
+  58-key span cannot cover 63 sounding codes, so the VST default maps notes
+  36–98 in chip-code order; the top octave past key 93 is the extension
+  (details in `note_map.txt`; order question in §5.1).
 
 ### 1.2 Embodiment 2 (expander style — VST option) [patent]
 
@@ -135,8 +131,9 @@ auction photos) unless §8 gives a stronger record.
 | 2 | Fixed chip clock implied | Variable master clock = coarse pitch (lower MIDI interface → oscillator in the prototype; CC1 on Polaxis) | `Master Clock` param, ±octaves around nominal XCK |
 | 3 | Single or quad SC-02 | Rack of voices (quad mappings 1/3/5/7 + 2/4/6/8) | 1-voice SEQ default; 4-voice QUAD option |
 | 4 | Internal excitation | INT/EXT per-voice switches; vocoder/harmonizer downstream | `Carrier` audio input + INT/EXT mix (chip TP1/TP2 path is future work — see §5) |
-| 5 | Fig. 2 note→phoneme table | Same table, exact print unrecovered | Editable default table, notes 36–93 (placeholder order, §5), plus 94–102 for the nine codes Fig. 2's 54 leave out |
+| 5 | Fig. 2 note→phoneme table (text says 54) | Same table, exact print unrecovered; chip has 64 codes | Default table covers all 63 sounding codes, notes 36–98 (placeholder order, §5) |
 | 6 | Envelope CC sequences | Unknown numbers | Not modeled: the unit latches velocity straight to Amplitude (no attack/decay); CC learn |
+| 7 | One mod wheel, four voice filters | Presumed master behavior | QUAD: CC1/CC3 fan out rig-wide (filter/ART, rate); CC2/CC64 stay per-voice; voices sum at full solo level each; Filter 1–4 params, mod re-homes all |
 
 ## 3. SC-02 register map (what the translator writes)
 
@@ -181,35 +178,51 @@ there); CC2 fine (±1 st, 64 = center) stays sample-exact with it.
   master-reset + /16 divide select, 8N1, RDRF/TDRE/OVRN status, Rx IRQ
   enable. Byte-level model with framing check; 500 kHz Tx/Rx clocks
   implied. Behavior pinned by `tests/test_6850_midi.c`.
-- **Bus** (`emu/robovox_bus.h`): 6502 socket, 2 KB RAM + 2 KB ROM socket
+- **Bus** (`emu/ssinger_bus.h`): 6502 socket, 2 KB RAM + 2 KB ROM socket
   (the 6116 footnote, §1), 6850, 2×74LS245 latch to the SC-02 register
   addresses (`ssi263.h:104`: addrs 0–3 → R0–R3, 4–7 → R4), mode switch,
   XCK generator. IRQ: 6850 Rx → 6502 IRQ, as in the patent.
 - **Firmware**: the original ROM/Atari software is lost, so
-  `emu/robovox_firmware.h` is a new implementation of the patent text
+  `emu/ssinger_firmware.h` is a new implementation of the patent text
   (embodiment 1 default, embodiment 2 optional). Phase 2 moves it into a
   6502-resident ROM image running on the emulated core; the bus, vectors
   and translator API are already shaped for that.
+- **Touring-rig behavior** (QUAD = 4 voices, SEQ = 1):
+  - CC1 (mod) and CC3 (rate) are rig-wide masters in QUAD — one move
+    lands on all four voices (filter/articulation and R2 respectively);
+    CC2 fine-pitch and CC64 carrier stay per-voice, like the hardware's
+    per-unit switches. In SEQ everything addresses the one voice.
+  - Mix is a plain sum, like separate boxes on a mixer: every voice runs
+    at full solo level in every mode, so the same MIDI is equally loud in
+    SEQ and QUAD. Full-rig chords run hotter (up to N times); the Volume
+    param and the tanh stage downstream absorb it.
+  - Each voice keeps its own filter home (Filter 1–4 params; only
+    Filter 1 exists musically in SEQ), and the mod wheel re-homes all
+    of them at once. Patent-map pitch bend offsets from the voice's
+    own home, so bends never jump after a mod move.
 
 ## 5. Open questions (tour-hardware unknowns)
 
-1. Exact Fig. 2 note→phoneme order (which of notes 36–93 map to the 54
-   codes, and the 4 spare keys). Current table is an editable placeholder
-   following the patent's dark→bright ordering description.
+1. Exact Fig. 2 note→phoneme order (its 58-key span cannot cover the
+   chip's 63 sounding codes anyway — see §1.1; current table covers all
+   63 in chip-code order following the patent's dark→bright grouping
+   description).
 2. Nominal XCK of the tour units (1 MHz assumed; Atari-era units may have
    differed — everything pitch-related scales with it).
 3. Envelope CC numbers ("specific MIDI control change sequences" —
    undisclosed; Polaxis CC1/CC2/CC3/CC64 mapping adopted where it fits).
-4. TP1/TP2 external-excitation analog path (patent: pins 3+5; repo
-   `docs/sources.md` notes EP0396141A2 as the lead). VST models carrier
+4. External-excitation analog path (patent: audio "fed into the SC-02"
+   at "pins 3 and 5", replacing the internal tone generator; repo
+   `docs/sources.md` notes EP0396141A2 as the lead. Note: the labels
+   "TP1/TP2" do not appear in the patent text — they are presumably the
+   test-point designators for those pins on the application schematics.) VST models carrier
    select at the input for now, not injection behind the glottal source.
+   Parked: the recorded Kraftwerk sound is the internal excitation (even
+   Shaw's hardware covers don't use the carrier input), so true TP
+   injection stays behind genuinely unknown items; the monitor mix
+   remains as a utility.
 5. Quad-voice tour wiring (which chip sang lead vs choir; MONO organ-stop
-   assignments) and the Telefunken unit's f/s/d role. The VST's choice:
-   the four chips add at full level (one chip as loud as SEQ) through a
-   fixed soft knee, and the filter control moves all four at once, each
-   chip keeping its own offset from chip 1 (host parameters "Chip 2/3/4
-   filter offset (tour rig)") — a choir of different vocal-tract sizes
-   that the wheel sweeps together.
+   assignments) and the Telefunken unit's f/s/d role.
 6. Whether the '98 rig still used the 6502 boards or had moved to
   Atari/Doepfer-direct serial MIDI — sonically equivalent either way;
   the emulation keeps the patented CPU path.

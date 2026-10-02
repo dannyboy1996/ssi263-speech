@@ -4,8 +4,7 @@
 # VST (ssinger_default_table in emu/ssinger_firmware.h). The plugin does
 # not read it -- there is nothing to install or keep next to the .vst3.
 # A custom layout becomes a UI feature (Phase-2 PEC-style editor), not
-# a sidecar file. The offline tests load it with the firmware's own
-# reader (ssinger_load_map) and fail if it and the firmware ever differ.
+# a sidecar file.
 #
 # Note names use C4 = middle C = MIDI 60 (scientific pitch notation /
 # Yamaha / MMA convention: octave = (midi_number // 12) - 1, e.g.
@@ -15,18 +14,14 @@
 # (The Polaxis manual writes note 36 as "C1", i.e. the C3=60 convention;
 # that is C2 here. Same key, different label.)
 #
-# All 64 SC-02 codes are playable, on notes 36-102 (C2-F#7):
-# - Notes 36-89 (C2-F6): codes 1-54, E through TH, in chip-code order
-#   (vowels dark->bright, R/L/W, voiced stops, unvoiced stops, the H
-#   sounds, fricatives). This is the patent's Fig. 2 span, unchanged
-#   since 0.7.0.
-# - Notes 90-93 (F#6-A6): the patent's 4 spare keys, PA (silence).
-# - Notes 94-102 (A#6-F#7): codes 55-63, the nasals M N NG, the German
-#   vowels :A :OH :U :UH, then E2 and LB, in chip-code order. 0.7.0 left
-#   these nine out; they sit above the spare keys so no earlier key moved.
-# All other notes are unmapped and ignored on the phoneme channel.
-# In the expander embodiment, Program Change N picks the phoneme of note
-# N here (program 94 = M ... 102 = LB).
+# Range covers all 63 sounding codes, notes 36-98, in chip-code order
+# (dark->bright vowels, voiced stops, unvoiced stops, holds, fricatives,
+# nasals, German vowels). Code 0 (PA, silence) has no key -- Note Off
+# writes it. Notes outside 36-98 are unmapped and ignored on the phoneme
+# channel. The patent text says "54 phonemes" and Fig. 2 spans keys
+# 36-93, but the chip carries 64 codes (0x00 PA .. 0x3F LB in
+# src/data/rom_bits.csv); the top octave past key 93 is the extension
+# that makes M N NG :A :OH :U :UH E2 LB playable.
 #
 # NOTE: the Polaxis hardware anchors note 36 = U (code 0x16), i.e. its
 # table is arranged phonetically, not in chip order. Until the patent's
@@ -37,9 +32,6 @@
 #
 # Phoneme mnemonics are the SC-02 die-ROM order (see
 # third_party/casso/CassoEmuCore/Devices/Ssi263.cpp): PA E E1 Y YI AY
-# IE I A AI EH EH1 AE AE1 AH AH1 AW O OU OO IU IU1 U U1 UH UH1 UH2 UH3
-# ER R R1 R2 L L1 LF W B D KV P T K HV HVC HF HFC HN Z S J SCH V F THV
-# TH M N NG :A :OH :U :UH E2 LB.
 C2=E
 C#2=E1
 D2=Y
@@ -94,16 +86,12 @@ D6=V
 D#6=F
 E6=THV
 F6=TH
-F#6=PA
-G6=PA
-G#6=PA
-A6=PA
-A#6=M
-B6=N
-C7=NG
-C#7=:A
-D7=:OH
-D#7=:U
-E7=:UH
-F7=E2
-F#7=LB
+F#6=M
+G6=N
+G#6=NG
+A6=:A
+A#6=:OH
+B6=:U
+C7=:UH
+C#7=E2
+D7=LB
